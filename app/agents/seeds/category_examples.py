@@ -1,0 +1,277 @@
+"""Category examples for embedding indexing.
+
+These examples are used to create embeddings for each category
+in Pinecone, enabling semantic similarity search for categorization.
+"""
+
+# Category examples: each category has multiple example descriptions
+# that represent typical transactions in that category
+CATEGORY_EXAMPLES: dict[str, list[str]] = {
+    "alimentacion": [
+        # Comida para casa
+        "comida del super",
+        "despensa semanal",
+        "frutas y verduras",
+        "carne y pollo",
+        "leche y huevos",
+        "pan y tortillas",
+        "alimentos para la casa",
+        # Supermercados y tiendas
+        "compras en walmart",
+        "despensa en soriana",
+        "super del mes",
+        "costco membresía",
+        "sams club",
+        "heb compras",
+        "chedraui despensa",
+        "oxxo compras rapidas",
+        "mercado de alimentos",
+        "carniceria",
+        "fruteria",
+        "abarrotes",
+    ],
+    "transporte": [
+        "uber al trabajo",
+        "didi a la oficina",
+        "taxi al aeropuerto",
+        "metro y metrobus",
+        "camion urbano",
+        "viaje en uber",
+        "transporte publico",
+        "moto",
+        "bolt al centro",
+        "indriver",
+    ],
+    "vivienda": [
+        "renta del departamento",
+        "pago de hipoteca",
+        "mensualidad del depa",
+        "renta mensual",
+        "alquiler de casa",
+        "mantenimiento del edificio",
+        "impuesto predial",
+        "cuota de condominio o administracion",
+        "arreglos de la casa",
+        "plomero",
+        "electricista",
+    ],
+    "servicios": [
+        "recibo de luz",
+        "pago de agua",
+        "gas natural",
+        "servicio de internet",
+        "telefono de casa",
+        "plan de celular",
+        "recibo de CFE",
+        "pago de telmex",
+        "EPM empresas publicas de medellin",
+        "factura de servicios",
+    ],
+    "salud": [
+        "consulta medica",
+        "medicinas de farmacia",
+        "doctor general",
+        "dentista",
+        "estudios de laboratorio",
+        "farmacia guadalajara",
+        "consulta del pediatra",
+        "medicamentos",
+        "EPS",
+        "planes de salud complementario",
+        "seguro medico",
+        "lentes y optica",
+    ],
+    "entretenimiento": [
+        "cine con amigos",
+        "boletos de concierto",
+        "teatro",
+        "parque de diversiones",
+        "evento deportivo",
+        "entrada al museo",
+        "boletos para el partido",
+        "salidas al centro comercial",
+        "bar con amigos",
+        "fiesta",
+    ],
+    "educacion": [
+        "colegiatura escolar",
+        "libros de texto",
+        "cursos de ingles",
+        "material escolar",
+        "clase de piano",
+        "taller de programacion",
+        "diplomado online",
+        "cursos de udemy",
+        "cursos de coursera",
+        "master maestria",
+        "pregrado posgrado",
+        "doctorado",
+        "certificacion profesional",
+    ],
+    "ropa": [
+        "pantalon nuevo",
+        "zapatos deportivos",
+        "camisa para el trabajo",
+        "ropa interior",
+        "chamarra de invierno",
+        "vestido para fiesta",
+        "tenis nike",
+        "playera o camiseta casual",
+        "gorra o cachucha",
+        "ropa de marca",
+        "accesorios de moda",
+    ],
+    "tecnologia": [
+        "celular nuevo",
+        "audifonos bluetooth",
+        "laptop para trabajo",
+        "tablet para estudiar",
+        "cargador de celular",
+        "funda para telefono",
+        "mouse inalambrico",
+        "memoria USB",
+        "televisor nuevo",
+        "consola de videojuegos",
+        "smartwatch",
+        "bocina bluetooth",
+    ],
+    "viajes": [
+        "vuelo a cancun",
+        "hotel en la playa",
+        "airbnb vacaciones",
+        "boleto de avion",
+        "reservacion de hotel",
+        "paquete todo incluido",
+        "viaje a europa",
+        "vacaciones familiares",
+        "tour turistico",
+        "maletas de viaje",
+    ],
+    "restaurantes": [
+        "almuerzo con colegas",
+        "cena romantica",
+        "desayuno en cafe",
+        "comida en restaurante",
+        "pizza con amigos",
+        "sushi para cenar",
+        "tacos en la calle",
+        "cafe starbucks",
+        "hamburguesa mcdonalds",
+        "comidas en la calle",
+        "domicilio rappi",
+        "uber eats",
+        "didi food",
+    ],
+    "combustible": [
+        "gasolina del carro",
+        "tanque lleno",
+        "carga de gasolina",
+        "diesel para camioneta",
+        "gasolinera pemex",
+        "combustible semanal",
+        "gas del carro",
+    ],
+    "estacionamiento": [
+        "parking del centro comercial",
+        "estacionamiento del trabajo",
+        "parquimetro",
+        "pension del carro",
+        "valet parking",
+        "estacionamiento publico",
+    ],
+    "suscripciones": [
+        "netflix mensual",
+        "spotify premium",
+        "amazon prime",
+        "disney plus",
+        "hbo max",
+        "youtube premium",
+        "apple music",
+        "xbox game pass",
+        "playstation plus",
+        "streaming",
+        "suscripcion mensual",
+        "membresia online",
+    ],
+    "gimnasio": [
+        "mensualidad del gym",
+        "smart fit",
+        "crossfit",
+        "clase de yoga",
+        "entrenador personal",
+        "sport city",
+        "clases de natacion",
+        "pilates",
+        "spinning",
+    ],
+    "mascotas": [
+        "comida para perro",
+        "veterinario",
+        "vacunas del gato",
+        "juguetes para mascota",
+        "arena para gato",
+        "croquetas premium",
+        "estetica canina",
+        "paseo de perros",
+        "accesorios para mascota",
+    ],
+    "regalos": [
+        "regalo de cumpleanos",
+        "regalo de navidad",
+        "detalle para mama",
+        "regalo de boda",
+        "presente para amigo",
+        "regalo del dia del padre",
+        "obsequio para novia",
+        "flores para alguien",
+    ],
+    "imprevistos": [
+        "reparacion del carro",
+        "grua del auto",
+        "emergencia medica",
+        "rotura de celular",
+        "dano en la casa",
+        "multa de transito",
+        "gasto de emergencia",
+        "accidente",
+        "robo o perdida",
+        "reparacion urgente",
+        "imprevisto",
+        "gasto inesperado",
+        "problema con el carro",
+        "falla del electrodomestico",
+        "goteras en casa",
+        "cerrajero de emergencia",
+    ],
+    "otros": [
+        "gasto varios",
+        "compra miscelanea",
+        "otro gasto",
+        "gasto no categorizado",
+        "varios",
+        "pendiente de categorizar",
+    ],
+}
+
+
+def get_all_examples() -> list[tuple[str, str]]:
+    """Get all category examples as (category, example) tuples.
+
+    Returns:
+        List of (category, example_description) tuples.
+    """
+    examples = []
+    for category, descriptions in CATEGORY_EXAMPLES.items():
+        for description in descriptions:
+            examples.append((category, description))
+    return examples
+
+
+def get_category_count() -> int:
+    """Get total number of categories."""
+    return len(CATEGORY_EXAMPLES)
+
+
+def get_example_count() -> int:
+    """Get total number of examples across all categories."""
+    return sum(len(examples) for examples in CATEGORY_EXAMPLES.values())
