@@ -1,23 +1,29 @@
 """Orchestrator agent node.
 
 The orchestrator is the entry point for all user queries.
-It interprets the user's intent and determines which agent should handle it.
+It uses an LLM-based classifier to interpret the user's intent
+and determine which agent should handle the request.
 """
 
+from app.agents.constants import DEFAULT_MAX_ITERATIONS
+from app.agents.nodes.classifier import classify_query
 from app.agents.state import AgentState
+from app.agents.types import AgentName
 from app.core.logging import get_logger
+from app.shared.interfaces.llm import LLMInterface
 
 logger = get_logger(__name__)
 
 
-async def orchestrator_node(state: AgentState) -> AgentState:
-    """Process user input and determine intent and routing.
+async def orchestrator_node(state: AgentState, llm: LLMInterface) -> AgentState:
+    """Process user input and determine intent and routing using LLM.
 
     Args:
         state: Current agent state with user message.
+        llm: LLM client for classification.
 
     Returns:
-        Updated state with detected intent and next agent.
+        Updated state with detected intent, complexity and next agent.
     """
     messages = state.get("messages", [])
     if not messages:
@@ -25,78 +31,29 @@ async def orchestrator_node(state: AgentState) -> AgentState:
         return {
             **state,
             "detected_intent": "unknown",
-            "next_agent": "response_generator",
+            "query_complexity": "simple",
+            "next_agent": AgentName.RESPONSE_GENERATOR.value,
         }
 
-    user_message = messages[-1].content.lower()
+    user_message = messages[-1].content
     logger.info("Orchestrator processing message", message_length=len(user_message))
 
-    # Intent detection logic
-    # TODO: Replace with LLM-based intent classification
-    intent, next_agent = _classify_intent(user_message)
+    # LLM-based intent and complexity classification
+    classification = await classify_query(user_message, llm)
 
     logger.info(
-        "Intent classified",
-        intent=intent,
-        next_agent=next_agent,
+        "Query classified",
+        intent=classification.intent,
+        complexity=classification.complexity,
+        confidence=classification.confidence,
+        next_agent=classification.next_agent,
     )
 
     return {
         **state,
-        "detected_intent": intent,
-        "next_agent": next_agent,
+        "detected_intent": classification.intent,
+        "query_complexity": classification.complexity,
+        "next_agent": classification.next_agent.value if hasattr(classification.next_agent, 'value') else classification.next_agent,
         "iteration_count": 0,
-        "max_iterations": 10,
+        "max_iterations": DEFAULT_MAX_ITERATIONS,
     }
-
-
-def _classify_intent(message: str) -> tuple[str, str]:
-    """Classify user intent based on message content.
-
-    Args:
-        message: Lowercase user message.
-
-    Returns:
-        Tuple of (intent, next_agent).
-    """
-    # Categorization intents
-    if any(
-        term in message
-        for term in ["categoriza", "clasifica", "qué tipo", "categoría"]
-    ):
-        return "categorize", "categorizer"
-
-    # Analysis intents
-    if any(
-        term in message
-        for term in [
-            "cuánto gasté",
-            "análisis",
-            "analiza",
-            "gastos",
-            "resumen",
-            "patrones",
-        ]
-    ):
-        return "analyze", "analyst"
-
-    # Planning intents
-    if any(
-        term in message
-        for term in ["plan", "ahorro", "meta", "objetivo", "estrategia", "ahorrar"]
-    ):
-        return "plan", "planner"
-
-    # Recommendation intents
-    if any(
-        term in message
-        for term in ["recomienda", "sugerencia", "consejo", "optimizar", "mejorar"]
-    ):
-        return "recommend", "recommender"
-
-    # Action intents (registering transactions)
-    if any(term in message for term in ["registra", "agrega", "añade", "gastE"]):
-        return "register", "categorizer"
-
-    # Default to analyst for general queries
-    return "query", "analyst"
