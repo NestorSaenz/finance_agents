@@ -29,11 +29,18 @@ class Settings(BaseSettings):
     # ============================================
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
-    PROJECT_NAME: str = "FinanceGPT"
+    PROJECT_NAME: str = "Safi"
+
+    # Demo user UUID used until real auth (JWT) is wired. Must be a real user in
+    # the `users` table (create one in Supabase Auth, then paste its UUID here).
+    DEMO_USER_ID: str = ""
+
+    # How many recent conversation messages to feed the LLM as context.
+    CHAT_HISTORY_LIMIT: int = 10
 
     BACKEND_CORS_ORIGINS: Annotated[list[AnyUrl] | str, BeforeValidator(parse_cors)] = []
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]  # pydantic computed_field on property
     @property
     def all_cors_origins(self) -> list[str]:
         """Get all CORS origins as strings."""
@@ -43,37 +50,40 @@ class Settings(BaseSettings):
     # Supabase Configuration
     # ============================================
     SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""  # Anon key for client-side
+    SUPABASE_KEY: str = ""  # Secret/service key used by the trusted backend (bypasses RLS)
     SUPABASE_SERVICE_ROLE_KEY: str = ""  # Service role for admin operations
+    SUPABASE_ANON_KEY: str = ""  # Publishable/anon key for user auth (signup/login/JWT)
 
     # ============================================
-    # Groq Configuration (Primary LLM - Free tier)
+    # LLM Provider Selection
+    # ============================================
+    # "vertex": Vertex AI Gemini (primary, GCP credits + ADC) | "groq": fallback
+    LLM_PROVIDER: Literal["vertex", "groq"] = "vertex"
+    # When true, LLM calls fall back through a chain (same-provider rescue +
+    # cross-provider Groq) if the primary model errors/overloads.
+    LLM_FALLBACK_ENABLED: bool = True
+
+    # ============================================
+    # Groq Configuration (LLM - cross-provider fallback)
     # ============================================
     GROQ_API_KEY: str = ""
-    GROQ_MODEL_SIMPLE: str = "llama-3.1-8b-instant"  # Fast, 14.4K req/day
-    GROQ_MODEL_COMPLEX: str = "llama-3.3-70b-versatile"  # Powerful, 1K req/day
+    GROQ_MODEL_SIMPLE: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL_COMPLEX: str = "llama-3.3-70b-versatile"
 
     # ============================================
-    # Cohere Configuration (Embeddings)
+    # Embeddings (Vertex AI Gemini, 768 dims)
     # ============================================
-    COHERE_API_KEY: str = ""
-    COHERE_EMBED_MODEL: str = "embed-multilingual-v3.0"
-    COHERE_LLM_MODEL: str = "command-r-plus"  # Fallback LLM
-    EMBEDDING_DIMENSION: int = 1024
+    EMBEDDING_DIMENSION: int = 768
 
     # ============================================
-    # Gemini Configuration (Google AI - Pro quality)
+    # Google Cloud / Vertex AI Configuration
     # ============================================
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL_SIMPLE: str = "gemini-1.5-flash"  # Fast, cheap
-    GEMINI_MODEL_COMPLEX: str = "gemini-1.5-pro"  # Best quality
-
-    # ============================================
-    # Pinecone Configuration
-    # ============================================
-    PINECONE_API_KEY: str = ""
-    PINECONE_INDEX: str = "financegpt-transactions"
-    PINECONE_ENVIRONMENT: str = "us-east-1"
+    # LLM + embeddings run on Vertex (auth via ADC / service account).
+    GCP_PROJECT: str = ""
+    GCP_LOCATION: str = "us-central1"
+    VERTEX_EMBED_MODEL: str = "gemini-embedding-001"  # Multilingual, configurable dims
+    VERTEX_LLM_MODEL_SIMPLE: str = "gemini-2.5-flash-lite"  # Fast classification/categorization
+    VERTEX_LLM_MODEL_COMPLEX: str = "gemini-2.5-flash"  # Analysis, planning, tools
 
     # ============================================
     # Langfuse Configuration

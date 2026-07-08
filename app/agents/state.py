@@ -1,57 +1,55 @@
-"""Agent state definitions for LangGraph."""
+"""Agent state for the FinanceGPT graph."""
 
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, TypedDict
 
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph.message import add_messages
 
 
-class PlanStep(TypedDict):
-    """Represents a single step in a plan."""
-
-    step_number: int
-    description: str
-    assigned_agent: str
-    status: Literal["pending", "in_progress", "completed", "failed"]
-    result: dict | None
-    error: str | None
-
-
 class AgentState(TypedDict):
-    """Shared state between all agents in the graph.
+    """Shared state flowing through the graph nodes.
 
-    This state flows through all nodes and is used to coordinate
-    the multiagent system.
+    Kept intentionally small: the orchestrator classifies intent and routes to a
+    single terminal node, so there is no plan/execution state to carry.
     """
 
-    # Conversation messages
-    messages: Annotated[list, add_messages]
+    # Conversation (append-only via the add_messages reducer).
+    messages: Annotated[list[BaseMessage], add_messages]
 
-    # User context
+    # Auth + long-term memory.
     user_id: str
-    user_preferences: dict
+    user_context: str  # durable facts about the user (Memory Agent), for personalization
 
-    # Relevant financial data
-    recent_transactions: list[dict]
-    current_budgets: list[dict]
-    active_goals: list[dict]
-
-    # Query classification
+    # Routing / results.
     detected_intent: str
-    query_complexity: Literal["simple", "complex"]
-
-    # Plan-Execute-Replan (complex path only)
-    current_plan: list[PlanStep]
-    current_step_index: int
-    execution_history: list[dict]
-    requires_replan: bool
-
-    # Intermediate results
-    category_suggestion: str | None
-    analysis_results: dict | None
-    recommendations: list[str]
-
-    # Flow control
+    category_suggestion: str | None  # set by the categorizer, phrased by response_generator
     next_agent: str
     should_respond: bool
-    iteration_count: int
-    max_iterations: int
+
+
+def build_initial_state(
+    message: str,
+    user_id: str,
+    history: list[BaseMessage] | None = None,
+    user_context: str = "",
+) -> AgentState:
+    """Build a fresh :class:`AgentState` for a new user turn.
+
+    Args:
+        message: The user's new message.
+        user_id: Identifier of the user owning the conversation.
+        history: Prior conversation messages (oldest first) for multi-turn context.
+        user_context: The user's long-term knowledge facts, for personalization.
+
+    Returns:
+        A fully populated initial state.
+    """
+    return AgentState(
+        messages=[*(history or []), HumanMessage(content=message)],
+        user_id=user_id,
+        user_context=user_context,
+        detected_intent="unknown",
+        category_suggestion=None,
+        next_agent="",
+        should_respond=False,
+    )

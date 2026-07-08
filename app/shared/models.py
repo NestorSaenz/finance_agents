@@ -14,7 +14,6 @@ from app.shared.types import (
     BudgetId,
     BudgetPeriod,
     CategoryId,
-    CategoryType,
     CurrencyType,
     GoalId,
     GoalStatus,
@@ -23,7 +22,6 @@ from app.shared.types import (
     TransactionType,
     UserId,
 )
-
 
 # =============================================================================
 # Transaction Models
@@ -47,7 +45,7 @@ class TransactionBase(BaseModel):
 class TransactionCreate(TransactionBase):
     """Model for creating a new transaction."""
 
-    category: CategoryType | None = Field(
+    category: str | None = Field(
         default=None, description="Category (auto-detected if not provided)"
     )
     tags: list[str] = Field(default_factory=list, description="User-defined tags")
@@ -60,7 +58,7 @@ class Transaction(TransactionBase):
 
     id: TransactionId = Field(..., description="Unique transaction identifier")
     user_id: UserId = Field(..., description="Owner user ID")
-    category: CategoryType = Field(..., description="Transaction category")
+    category: str = Field(..., description="Transaction category")
     category_id: CategoryId | None = Field(
         default=None, description="Reference to categories table"
     )

@@ -1,0 +1,18 @@
+# Backend image: only ship app code + dependency manifests.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+frontend/
+database/
+scripts/
+docs/
+.claude/
+.git/
+.env
+.env.*
+DEPLOY.md
+run_dev.ps1

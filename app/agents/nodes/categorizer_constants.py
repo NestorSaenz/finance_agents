@@ -4,7 +4,7 @@ Contains category definitions, mappings, and prompts used by the categorizer.
 Uses shared types from app.shared.types for consistency across the application.
 """
 
-from app.shared.types import CategoryType, VALID_CATEGORIES
+from app.shared.types import VALID_CATEGORIES, CategoryType
 
 # Thresholds for hybrid categorization
 EMBEDDING_CONFIDENCE_THRESHOLD = 0.85  # Use embedding result if score >= this

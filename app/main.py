@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
+from app.core.error_handlers import register_exception_handlers
 from app.core.lifespan import lifespan
 
 app = FastAPI(
@@ -26,6 +27,9 @@ if settings.all_cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Register centralized exception handlers (domain errors -> proper HTTP codes)
+register_exception_handlers(app)
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)

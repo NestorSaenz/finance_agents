@@ -21,88 +21,100 @@ To switch from Groq to Gemini:
 """
 
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Depends
 
 from app.core.config import settings
-from app.shared.clients.cohere_embedding import CohereEmbeddingClient
-from app.shared.clients.gemini_llm import GeminiLLMClient
-from app.shared.clients.groq_llm import GroqLLMClient
-from app.shared.clients.pinecone_store import PineconeVectorStore
 from app.shared.clients.supabase_client import SupabaseClient
 from app.shared.interfaces.database import DatabaseInterface
 from app.shared.interfaces.embedding import EmbeddingInterface
 from app.shared.interfaces.llm import LLMInterface
 from app.shared.interfaces.vector_store import VectorStoreInterface
 
-
 # =============================================================================
 # LLM Provider Configuration
 # =============================================================================
-# Change this to switch between providers:
+# Selected via settings.LLM_PROVIDER:
 # - "groq": Free tier, fast inference (Llama models)
-# - "gemini": Pro quality, Google Cloud credits (Gemini models)
+# - "gemini": Google AI Studio (API key)
+# - "vertex": Vertex AI Gemini (GCP credits, ADC auth)
 # =============================================================================
-LLM_PROVIDER: Literal["groq", "gemini"] = "groq"
 
 
-# =============================================================================
-# LLM Provider - Groq (Free Tier) / Gemini (Pro Quality)
-# =============================================================================
-# Groq: llama-3.1-8b-instant (14.4K req/day), llama-3.3-70b-versatile (1K req/day)
-# Gemini: gemini-1.5-flash (fast), gemini-1.5-pro (best quality)
-# =============================================================================
+def _build_llm(provider: str, model: str) -> LLMInterface:
+    """Build a single LLM client, tracing it with Langfuse when configured."""
+    client = _raw_llm(provider, model)
+    if settings.has_langfuse():
+        from app.shared.clients.traced_llm import TracedLLMClient
+
+        return TracedLLMClient(client)
+    return client
+
+
+def _raw_llm(provider: str, model: str) -> LLMInterface:
+    """Build a single untraced LLM client for an explicit provider + model.
+
+    Imports are lazy so an unused provider's SDK need not be installed.
+    """
+    if provider == "vertex":
+        from app.shared.clients.vertex_llm import VertexLLMClient
+
+        return VertexLLMClient(
+            project=settings.GCP_PROJECT,
+            location=settings.GCP_LOCATION,
+            model=model,
+        )
+    from app.shared.clients.groq_llm import GroqLLMClient
+
+    return GroqLLMClient(api_key=settings.GROQ_API_KEY, model=model)
+
+
+def _tier_model(provider: str, tier: str) -> str:
+    """Return the model name for a provider and tier ("simple" | "complex")."""
+    models = {
+        "vertex": (settings.VERTEX_LLM_MODEL_SIMPLE, settings.VERTEX_LLM_MODEL_COMPLEX),
+        "groq": (settings.GROQ_MODEL_SIMPLE, settings.GROQ_MODEL_COMPLEX),
+    }.get(provider, (settings.GROQ_MODEL_SIMPLE, settings.GROQ_MODEL_COMPLEX))
+    return models[0] if tier == "simple" else models[1]
+
+
+def _llm_chain(tier: str) -> LLMInterface:
+    """Build the LLM (with fallback chain) for a tier.
+
+    Chain: primary provider/model -> same-provider rescue (Vertex's other Gemini
+    model, for model overload) -> cross-provider fallback (Groq, for a full
+    Vertex outage). Each link covers a different failure mode.
+    """
+    primary = settings.LLM_PROVIDER
+    specs: list[tuple[str, str]] = [(primary, _tier_model(primary, tier))]
+
+    if settings.LLM_FALLBACK_ENABLED:
+        if primary == "vertex":
+            rescue_tier = "complex" if tier == "simple" else "simple"
+            specs.append(("vertex", _tier_model("vertex", rescue_tier)))
+        if primary != "groq" and settings.GROQ_API_KEY:
+            specs.append(("groq", _tier_model("groq", "complex")))
+
+    clients = [_build_llm(provider, model) for provider, model in specs]
+    if len(clients) == 1:
+        return clients[0]
+
+    from app.shared.clients.fallback_llm import FallbackLLMClient
+
+    return FallbackLLMClient(clients)
 
 
 @lru_cache
 def get_llm_simple() -> LLMInterface:
-    """Get LLM for Simple Path (fast, high limits).
-
-    Provider depends on LLM_PROVIDER setting:
-    - Groq: llama-3.1-8b-instant (14.4K requests/day)
-    - Gemini: gemini-1.5-flash (fast, cheap)
-
-    Ideal for: categorization, simple queries, quick responses.
-
-    Returns:
-        LLMInterface implementation for simple tasks.
-    """
-    if LLM_PROVIDER == "gemini":
-        return GeminiLLMClient(
-            api_key=settings.GEMINI_API_KEY,
-            model=settings.GEMINI_MODEL_SIMPLE,
-        )
-    # Default: Groq
-    return GroqLLMClient(
-        api_key=settings.GROQ_API_KEY,
-        model=settings.GROQ_MODEL_SIMPLE,
-    )
+    """Get the fast LLM (with fallback) for classification/categorization."""
+    return _llm_chain("simple")
 
 
 @lru_cache
 def get_llm_complex() -> LLMInterface:
-    """Get LLM for Complex Path (powerful, best quality).
-
-    Provider depends on LLM_PROVIDER setting:
-    - Groq: llama-3.3-70b-versatile (1K requests/day)
-    - Gemini: gemini-1.5-pro (best quality)
-
-    Ideal for: analysis, planning, multi-step reasoning.
-
-    Returns:
-        LLMInterface implementation for complex tasks.
-    """
-    if LLM_PROVIDER == "gemini":
-        return GeminiLLMClient(
-            api_key=settings.GEMINI_API_KEY,
-            model=settings.GEMINI_MODEL_COMPLEX,
-        )
-    # Default: Groq
-    return GroqLLMClient(
-        api_key=settings.GROQ_API_KEY,
-        model=settings.GROQ_MODEL_COMPLEX,
-    )
+    """Get the capable LLM (with fallback) for analysis, planning, tools."""
+    return _llm_chain("complex")
 
 
 # Default LLM (uses complex model for general use)
@@ -119,10 +131,34 @@ def get_llm_client() -> LLMInterface:
     return get_llm_complex()
 
 
+@lru_cache
+def get_llm_vision() -> LLMInterface:
+    """Vision-capable LLM for image ingestion (Vertex Gemini).
+
+    Groq is text-only, so the cross-provider fallback is skipped here: on a Vertex
+    outage a vision request simply fails rather than silently dropping the image.
+    Keeps the same-provider (other Gemini model) rescue for model overload.
+    """
+    if settings.LLM_PROVIDER != "vertex":
+        return get_llm_complex()
+
+    specs: list[tuple[str, str]] = [("vertex", _tier_model("vertex", "complex"))]
+    if settings.LLM_FALLBACK_ENABLED:
+        specs.append(("vertex", _tier_model("vertex", "simple")))
+    clients = [_build_llm(provider, model) for provider, model in specs]
+    if len(clients) == 1:
+        return clients[0]
+
+    from app.shared.clients.fallback_llm import FallbackLLMClient
+
+    return FallbackLLMClient(clients)
+
+
 # Type aliases for FastAPI dependency injection
 LLMDep = Annotated[LLMInterface, Depends(get_llm_client)]
 LLMSimpleDep = Annotated[LLMInterface, Depends(get_llm_simple)]
 LLMComplexDep = Annotated[LLMInterface, Depends(get_llm_complex)]
+LLMVisionDep = Annotated[LLMInterface, Depends(get_llm_vision)]
 
 
 # =============================================================================
@@ -135,14 +171,14 @@ LLMComplexDep = Annotated[LLMInterface, Depends(get_llm_complex)]
 
 @lru_cache
 def get_embedding_client() -> EmbeddingInterface:
-    """Get the embedding client instance.
+    """Get the embedding client (Vertex AI Gemini embeddings, 768 dims)."""
+    from app.shared.clients.vertex_embedding import VertexEmbeddingClient
 
-    Returns:
-        EmbeddingInterface implementation (Cohere Embed v3).
-    """
-    return CohereEmbeddingClient(
-        api_key=settings.COHERE_API_KEY,
-        model=settings.COHERE_EMBED_MODEL,
+    return VertexEmbeddingClient(
+        project=settings.GCP_PROJECT,
+        location=settings.GCP_LOCATION,
+        model=settings.VERTEX_EMBED_MODEL,
+        dimensions=settings.EMBEDDING_DIMENSION,
     )
 
 
@@ -158,18 +194,15 @@ EmbeddingDep = Annotated[EmbeddingInterface, Depends(get_embedding_client)]
 # =============================================================================
 
 
-@lru_cache
 def get_vector_store() -> VectorStoreInterface:
-    """Get the vector store instance.
+    """Get the vector store (Postgres + pgvector inside Supabase).
 
-    Returns:
-        VectorStoreInterface implementation (Pinecone).
+    Not ``lru_cache``d: it wraps the mutable DB singleton, so it must be built
+    fresh against the current connection (run migration 003_pgvector.sql first).
     """
-    return PineconeVectorStore(
-        api_key=settings.PINECONE_API_KEY,
-        index_name=settings.PINECONE_INDEX,
-        dimensions=settings.EMBEDDING_DIMENSION,
-    )
+    from app.shared.clients.pgvector_store import PgVectorStore
+
+    return PgVectorStore(get_database(), dimensions=settings.EMBEDDING_DIMENSION)
 
 
 # Type alias for FastAPI dependency injection

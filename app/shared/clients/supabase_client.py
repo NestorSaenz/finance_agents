@@ -3,8 +3,9 @@
 Uses Supabase's PostgreSQL database with Row Level Security.
 """
 
-from typing import Any
+from typing import Any, cast
 
+from postgrest.types import CountMethod
 from supabase import AsyncClient, create_async_client
 
 from app.core.logging import get_logger
@@ -15,6 +16,11 @@ from app.shared.interfaces.database import (
 )
 
 logger = get_logger(__name__)
+
+
+def _rows(data: object) -> list[dict[str, Any]]:
+    """Narrow the Supabase SDK's loosely-typed response rows to dict rows."""
+    return cast("list[dict[str, Any]]", data)
 
 
 class SupabaseClient(DatabaseInterface):
@@ -92,9 +98,17 @@ class SupabaseClient(DatabaseInterface):
         response = await query.execute()
 
         return QueryResult(
-            data=response.data,
+            data=_rows(response.data),
             count=len(response.data),
         )
+
+    async def count(self, table: str, filters: dict[str, Any]) -> int:
+        """Return the number of matching rows using a server-side exact count."""
+        query = self._client.table(table).select("id", count=CountMethod.exact, head=True)
+        for key, value in filters.items():
+            query = query.eq(key, value)
+        response = await query.execute()
+        return response.count or 0
 
     async def insert(
         self,
@@ -119,9 +133,33 @@ class SupabaseClient(DatabaseInterface):
         response = await self._client.table(table).insert(data).execute()
 
         return QueryResult(
-            data=response.data,
+            data=_rows(response.data),
             count=len(response.data),
         )
+
+    async def upsert(
+        self,
+        table: str,
+        data: dict[str, Any] | list[dict[str, Any]],
+        on_conflict: str,
+    ) -> QueryResult:
+        """Insert or update record(s) on conflict.
+
+        Args:
+            table: Table name.
+            data: Single record or list of records.
+            on_conflict: Comma-separated unique-constraint columns.
+
+        Returns:
+            QueryResult with the upserted data.
+        """
+        logger.info("Upserting into table", table=table, on_conflict=on_conflict)
+
+        response = await self._client.table(table).upsert(
+            data, on_conflict=on_conflict
+        ).execute()
+
+        return QueryResult(data=_rows(response.data), count=len(response.data))
 
     async def update(
         self,
@@ -153,7 +191,7 @@ class SupabaseClient(DatabaseInterface):
         response = await query.execute()
 
         return QueryResult(
-            data=response.data,
+            data=_rows(response.data),
             count=len(response.data),
         )
 
@@ -185,7 +223,7 @@ class SupabaseClient(DatabaseInterface):
         response = await query.execute()
 
         return QueryResult(
-            data=response.data,
+            data=_rows(response.data),
             count=len(response.data),
         )
 
@@ -215,7 +253,7 @@ class SupabaseClient(DatabaseInterface):
         ).execute()
 
         return QueryResult(
-            data=response.data if isinstance(response.data, list) else [response.data],
+            data=_rows(response.data if isinstance(response.data, list) else [response.data]),
             count=1,
         )
 
@@ -226,13 +264,12 @@ class SupabaseClient(DatabaseInterface):
             True if healthy, False otherwise.
         """
         try:
-            # Simple query to check connection
-            await self._client.table("_health_check").select("*").limit(1).execute()
+            # Cheap round-trip that proves the DB answers (users exists per migration 001).
+            await self._client.table("users").select("id").limit(1).execute()
             return True
-        except Exception as e:
-            logger.warning("Health check failed", error=str(e))
-            # Try a simpler check - just ensure client exists
-            return self._client is not None
+        except Exception as e:  # noqa: BLE001 - readiness probe: report down, don't raise.
+            logger.warning("Database health check failed", error=str(e))
+            return False
 
     @property
     def provider(self) -> str:

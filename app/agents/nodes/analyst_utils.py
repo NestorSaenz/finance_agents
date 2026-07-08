@@ -106,7 +106,7 @@ def detect_patterns(
     Returns:
         List of detected pattern descriptions.
     """
-    patterns = []
+    patterns: list[str] = []
 
     if len(transactions) < MIN_TRANSACTIONS_FOR_PATTERNS:
         return patterns

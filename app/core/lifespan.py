@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.shared.dependencies import close_database, init_database
+from app.src.auth.dependencies import close_auth, init_auth
 
 from .config import settings
 from .logging import get_logger, setup_logging
+from .observability import flush_observability, init_observability
 
 logger = get_logger(__name__)
 
@@ -43,6 +45,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await init_database()
         logger.info("Database connection initialized")
 
+    # Initialize the auth service (Supabase Auth via anon key)
+    await init_auth()
+
+    # Initialize observability (Langfuse tracing); no-op if not configured.
+    init_observability()
+
     logger.info("Application startup complete")
 
     yield
@@ -52,33 +60,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ============================================
     logger.info("Shutting down FinanceGPT")
 
-    # Cleanup database connection
+    # Cleanup connections
     await close_database()
+    await close_auth()
+    flush_observability()
     logger.info("Database connection closed")
 
     logger.info("Application shutdown complete")
 
 
 def _validate_settings() -> None:
-    """Validate that required settings are configured."""
+    """Validate that the settings for the active providers are configured."""
     missing = []
 
     if not settings.SUPABASE_URL:
         missing.append("SUPABASE_URL")
     if not settings.SUPABASE_KEY:
         missing.append("SUPABASE_KEY")
-    if not settings.COHERE_API_KEY:
-        missing.append("COHERE_API_KEY")
-    if not settings.PINECONE_API_KEY:
-        missing.append("PINECONE_API_KEY")
+    # Vertex (LLM primary + embeddings) authenticates via ADC but needs a project.
+    if not settings.GCP_PROJECT:
+        missing.append("GCP_PROJECT")
+    # Groq is the cross-provider fallback when enabled.
+    if settings.LLM_FALLBACK_ENABLED and not settings.GROQ_API_KEY:
+        missing.append("GROQ_API_KEY")
 
     if missing and settings.ENVIRONMENT != "local":
         logger.warning(
             "Missing required settings",
             missing_settings=missing,
         )
-
-    if settings.has_langfuse():
-        logger.info("Langfuse observability enabled")
-    else:
-        logger.info("Langfuse observability not configured")

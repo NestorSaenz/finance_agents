@@ -92,3 +92,8 @@ temp/
 *.key
 credentials.json
 service-account.json
+# GCP / Vertex service-account keys
+gcp-key.json
+gcp-*.json
+*-sa.json
+application_default_credentials.json

@@ -17,7 +17,6 @@ Usage:
 
 from typing import Any
 
-
 # =============================================================================
 # Base Exceptions
 # =============================================================================
@@ -318,6 +317,36 @@ class UnauthorizedAccessError(ApplicationError):
             message=f"Unauthorized access to {resource_type}: {resource_id}",
             code="UNAUTHORIZED_ACCESS",
             details={"resource_type": resource_type, "resource_id": resource_id},
+        )
+
+
+# =============================================================================
+# Domain Errors - Auth
+# =============================================================================
+
+
+class AuthenticationError(ApplicationError):
+    """Raised when a token is missing, invalid, or expired."""
+
+    def __init__(self, message: str = "Authentication failed") -> None:
+        super().__init__(message=message, code="UNAUTHORIZED")
+
+
+class InvalidCredentialsError(ApplicationError):
+    """Raised when sign-in credentials are wrong."""
+
+    def __init__(self) -> None:
+        super().__init__(message="Invalid email or password", code="INVALID_CREDENTIALS")
+
+
+class RegistrationError(DomainError):
+    """Raised when sign-up fails (e.g. email already registered, weak password)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            message=f"Registration failed: {reason}",
+            code="REGISTRATION_FAILED",
+            details={"reason": reason},
         )
 
 

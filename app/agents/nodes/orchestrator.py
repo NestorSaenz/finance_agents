@@ -5,17 +5,20 @@ It uses an LLM-based classifier to interpret the user's intent
 and determine which agent should handle the request.
 """
 
-from app.agents.constants import DEFAULT_MAX_ITERATIONS
+from app.agents.context import prior_context
 from app.agents.nodes.classifier import classify_query
 from app.agents.state import AgentState
 from app.agents.types import AgentName
 from app.core.logging import get_logger
 from app.shared.interfaces.llm import LLMInterface
 
+# Prior messages given to the classifier to resolve references ("eso", "el anterior").
+CLASSIFIER_CONTEXT_WINDOW = 4
+
 logger = get_logger(__name__)
 
 
-async def orchestrator_node(state: AgentState, llm: LLMInterface) -> AgentState:
+async def orchestrator_node(state: AgentState, llm: LLMInterface) -> dict[str, object]:
     """Process user input and determine intent and routing using LLM.
 
     Args:
@@ -29,31 +32,25 @@ async def orchestrator_node(state: AgentState, llm: LLMInterface) -> AgentState:
     if not messages:
         logger.warning("Orchestrator received empty messages")
         return {
-            **state,
             "detected_intent": "unknown",
-            "query_complexity": "simple",
             "next_agent": AgentName.RESPONSE_GENERATOR.value,
         }
 
-    user_message = messages[-1].content
+    user_message = str(messages[-1].content)
     logger.info("Orchestrator processing message", message_length=len(user_message))
 
-    # LLM-based intent and complexity classification
-    classification = await classify_query(user_message, llm)
+    # LLM-based intent classification (with recent context for reference resolution).
+    classification = await classify_query(
+        user_message, llm, context=prior_context(state, limit=CLASSIFIER_CONTEXT_WINDOW)
+    )
 
     logger.info(
         "Query classified",
         intent=classification.intent,
-        complexity=classification.complexity,
-        confidence=classification.confidence,
         next_agent=classification.next_agent,
     )
 
     return {
-        **state,
         "detected_intent": classification.intent,
-        "query_complexity": classification.complexity,
-        "next_agent": classification.next_agent.value if hasattr(classification.next_agent, 'value') else classification.next_agent,
-        "iteration_count": 0,
-        "max_iterations": DEFAULT_MAX_ITERATIONS,
+        "next_agent": classification.next_agent.value,
     }

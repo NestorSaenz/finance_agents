@@ -31,7 +31,7 @@ async def categorizer_node(
     embedding_client: EmbeddingInterface,
     vector_store: VectorStoreInterface,
     llm: LLMInterface,
-) -> AgentState:
+) -> dict[str, object]:
     """Categorize a transaction using hybrid approach.
 
     Strategy:
@@ -55,15 +55,13 @@ async def categorizer_node(
     if not messages:
         logger.warning("Categorizer received empty messages")
         return {
-            **state,
             "category_suggestion": "otros",
             "should_respond": True,
             "next_agent": AgentName.RESPONSE_GENERATOR.value,
         }
 
     # Extract transaction description from the last message
-    user_message = messages[-1].content
-    description = _extract_description(user_message)
+    description = _extract_description(str(messages[-1].content))
 
     logger.info(
         "Categorizer processing",
@@ -87,7 +85,6 @@ async def categorizer_node(
     )
 
     return {
-        **state,
         "category_suggestion": suggestion.category,
         "should_respond": True,
         "next_agent": AgentName.RESPONSE_GENERATOR.value,

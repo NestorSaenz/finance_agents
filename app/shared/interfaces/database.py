@@ -91,6 +91,22 @@ class DatabaseInterface(ABC):
         pass
 
     @abstractmethod
+    async def count(self, table: str, filters: dict[str, Any]) -> int:
+        """Return the number of rows matching ``filters`` (server-side count).
+
+        Uses the database's native count so no rows are transferred, avoiding a
+        full-table fetch just to compute a length.
+
+        Args:
+            table: Table name.
+            filters: Equality filters to match rows.
+
+        Returns:
+            The number of matching rows.
+        """
+        pass
+
+    @abstractmethod
     async def insert(
         self,
         table: str,
@@ -107,6 +123,25 @@ class DatabaseInterface(ABC):
 
         Raises:
             DatabaseError: If the insertion fails.
+        """
+        pass
+
+    @abstractmethod
+    async def upsert(
+        self,
+        table: str,
+        data: dict[str, Any] | list[dict[str, Any]],
+        on_conflict: str,
+    ) -> QueryResult:
+        """Insert record(s), updating on conflict with ``on_conflict`` columns.
+
+        Args:
+            table: Table name.
+            data: Single record or list of records.
+            on_conflict: Comma-separated columns defining the unique constraint.
+
+        Returns:
+            QueryResult with the upserted data.
         """
         pass
 

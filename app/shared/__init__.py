@@ -14,14 +14,14 @@ Architecture:
 """
 
 from app.shared.types import (
-    CategoryType,
-    TransactionType,
-    CurrencyType,
+    VALID_CATEGORIES,
     BudgetPeriod,
+    CategoryType,
+    CurrencyType,
     GoalStatus,
     GoalType,
     RiskTolerance,
-    VALID_CATEGORIES,
+    TransactionType,
     is_valid_category,
 )
 

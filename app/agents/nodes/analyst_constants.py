@@ -1,4 +1,4 @@
- """Constants for the analyst agent.
+"""Constants for the analyst agent.
 
 Contains prompts, thresholds, and configuration for financial analysis.
 """
@@ -35,6 +35,11 @@ personalizados basados en los datos de gastos del usuario.
 - Destaca patrones positivos y negativos
 - Máximo 3-4 insights por análisis
 - Cada insight debe ser conciso (1-2 oraciones)
+
+## Reglas estrictas (no inventar información):
+- Usa ÚNICAMENTE los datos proporcionados en este mensaje; NO inventes cifras, fechas, categorías ni transacciones.
+- No extrapoles ni estimes montos que no aparezcan en los datos.
+- Si un dato no está disponible, no lo supongas: omítelo o indica que no se dispone de esa información.
 """
 
 INSIGHT_GENERATION_PROMPT = """Analiza los siguientes datos financieros y genera insights útiles.

@@ -8,9 +8,10 @@ Implementations:
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 
 class MessageRole(str, Enum):
@@ -23,6 +24,14 @@ class MessageRole(str, Enum):
 
 
 @dataclass
+class ImagePart:
+    """An image attached to a message, for multimodal (vision) models."""
+
+    data: bytes  # raw image bytes
+    mime_type: str  # e.g. "image/jpeg", "image/png"
+
+
+@dataclass
 class Message:
     """A message in a conversation."""
 
@@ -30,6 +39,7 @@ class Message:
     content: str
     name: str | None = None  # For tool messages
     tool_call_id: str | None = None  # For tool responses
+    images: list[ImagePart] | None = None  # Attached images (vision models only)
 
 
 @dataclass

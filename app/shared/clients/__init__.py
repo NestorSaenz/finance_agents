@@ -1,31 +1,15 @@
-"""Concrete implementations of interfaces.
+"""Concrete client implementations of the shared interfaces.
 
-Current implementations:
-- GroqLLMClient: LLM using Groq (Llama 3.3/3.1) - Free tier
-- GeminiLLMClient: LLM using Google Gemini (1.5 Pro/Flash) - Pro quality
-- CohereLLMClient: LLM using Cohere Command R+ - Fallback
-- CohereEmbeddingClient: Embeddings using Cohere Embed v3
-- PineconeVectorStore: Vector storage using Pinecone Serverless
-- SupabaseClient: Database using Supabase (PostgreSQL)
+Active stack:
+- VertexLLMClient: LLM via Vertex AI Gemini (primary)
+- GroqLLMClient: LLM via Groq (cross-provider fallback)
+- FallbackLLMClient: ordered chain over the above
+- TracedLLMClient: Langfuse-tracing decorator for any LLM client
+- VertexEmbeddingClient: embeddings via Vertex AI (gemini-embedding-001, 768 dims)
+- PgVectorStore: vector storage via Postgres + pgvector (Supabase)
+- SupabaseClient: database via Supabase (PostgreSQL)
 
-To add a new provider:
-1. Create a new client file (e.g., openai_client.py)
-2. Implement the corresponding interface
-3. Register it in dependencies.py
+Clients are imported lazily in ``app/shared/dependencies.py``; this module only
+documents the active set (no eager re-exports, so an unused provider's SDK need
+not be installed).
 """
-
-from app.shared.clients.cohere_embedding import CohereEmbeddingClient
-from app.shared.clients.cohere_llm import CohereLLMClient
-from app.shared.clients.gemini_llm import GeminiLLMClient
-from app.shared.clients.groq_llm import GroqLLMClient
-from app.shared.clients.pinecone_store import PineconeVectorStore
-from app.shared.clients.supabase_client import SupabaseClient
-
-__all__ = [
-    "GroqLLMClient",
-    "GeminiLLMClient",
-    "CohereLLMClient",
-    "CohereEmbeddingClient",
-    "PineconeVectorStore",
-    "SupabaseClient",
-]

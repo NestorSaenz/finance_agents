@@ -1,34 +1,27 @@
-# FinanceGPT Dockerfile
-FROM python:3.11-slim
+# Safi backend (FastAPI) — container for Cloud Run.
+# Vertex AI auth uses the Cloud Run service account (ADC); no key files needed.
+FROM python:3.12-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV UV_SYSTEM_PYTHON=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-# Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# uv for fast, reproducible installs from uv.lock.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+# Install ONLY dependencies (the app runs from source, so we don't build the
+# root package — avoids needing README.md and speeds up the build).
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
 
-# Copy dependency files
-COPY pyproject.toml uv.lock* ./
-
-# Install dependencies
-RUN uv sync --frozen --no-dev
-
-# Copy application code
+# App code.
 COPY ./app ./app
 
-# Expose port
-EXPOSE 8000
+ENV PATH="/app/.venv/bin:$PATH"
 
-# Run the application
-CMD ["uv", "run", "fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+# Cloud Run injects $PORT (default 8080). Bind to it.
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

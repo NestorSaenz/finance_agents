@@ -189,6 +189,10 @@ def _get_status_code_for_application_error(exc: ApplicationError) -> int:
     if exc.code in not_found_codes:
         return status.HTTP_404_NOT_FOUND
 
+    # Authentication errors
+    if exc.code in {"UNAUTHORIZED", "INVALID_CREDENTIALS"}:
+        return status.HTTP_401_UNAUTHORIZED
+
     # Unauthorized/Forbidden errors
     if exc.code == "UNAUTHORIZED_ACCESS":
         return status.HTTP_403_FORBIDDEN

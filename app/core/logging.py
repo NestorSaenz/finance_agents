@@ -54,10 +54,24 @@ def setup_logging() -> None:
         level=get_log_level(),
     )
 
-    # Silence noisy loggers
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Silence noisy third-party loggers. Critically, hpack/h2 log full HTTP/2
+    # headers at DEBUG — including the Supabase secret key — so they must never
+    # emit even when the app runs at DEBUG.
+    for noisy in (
+        "hpack",
+        "h2",
+        "hyperframe",
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "google_genai",
+        "google.generativeai",
+        "google.auth",
+        "openai",
+        "groq",
+        "uvicorn.access",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
@@ -73,7 +87,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         >>> logger = get_logger(__name__)
         >>> logger.info("User logged in", user_id="123")
     """
-    return structlog.get_logger(name)
+    return structlog.get_logger(name)  # type: ignore[no-any-return]  # structlog returns Any
 
 
 def log_with_context(logger: structlog.stdlib.BoundLogger, **context: Any) -> structlog.stdlib.BoundLogger:

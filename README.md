@@ -1,134 +1,80 @@
-# FinanceGPT
+# Safi
 
-Asistente Inteligente Multiagente para Gestión de Finanzas Personales.
+**Asistente conversacional multiagente para la gestión de finanzas personales, basado en IA Generativa.**
 
-## Descripción
+Safi permite registrar, consultar, corregir y analizar movimientos económicos escribiendo en lenguaje
+natural, en lugar de rellenar formularios o mantener una hoja de cálculo. Además, admite la carga de
+una imagen de una hoja de cálculo para extraer de ella los movimientos de forma asistida.
 
-FinanceGPT es un asistente financiero personal inteligente basado en arquitectura multiagente con IA Generativa que permite gestionar finanzas personales de forma conversacional y automatizada.
+> Trabajo Final de Máster — Máster en Ingeniería y Desarrollo de Soluciones de IA Generativa.
+> Autor: Néstor Raúl Sáenz Chajín.
 
-### Características principales
+## Características
 
-- **Chat conversacional** para gestión de finanzas
-- **Categorización automática** de transacciones usando IA
-- **Análisis de patrones** de gasto
-- **Planificación financiera** personalizada
-- **Alertas proactivas** de presupuesto
-- **Búsqueda semántica** sobre historial financiero
+- **Gestión conversacional** de transacciones, presupuestos, metas de ahorro y tarjetas de crédito
+  (crear, consultar, corregir y eliminar en lenguaje natural).
+- **Categorización automática** mediante RAG, con soporte de **categorías propias** definidas por el
+  usuario.
+- **Ingesta multimodal**: extracción de movimientos a partir de una imagen, con confirmación previa.
+- **Memoria** conversacional (corto plazo) y conocimiento persistente del usuario (largo plazo).
+- **Autenticación** con aislamiento estricto de datos por usuario.
+- **Observabilidad** de coste y comportamiento, y **panel de resumen** (dashboard).
 
-## Stack Tecnológico
+## Arquitectura
+
+La aplicación se compone de un backend (FastAPI) y un frontend (Next.js). El backend orquesta con
+**LangGraph** un clasificador de intención económico (enrutador) y un **agente ReAct** con
+*tool-calling* que ejecuta acciones sobre datos reales a través de herramientas por dominio. La
+categorización se apoya en RAG (embeddings + pgvector) y la lógica sigue una arquitectura limpia por
+capas (rutas → servicios → repositorios).
+
+## Stack tecnológico
 
 | Componente | Tecnología |
 |------------|------------|
-| Backend | FastAPI + Python 3.11+ |
-| LLM | Cohere Command R+ |
-| Embeddings | Cohere Embed v3 Multilingual |
-| Vector DB | Pinecone Serverless |
-| Base de Datos | Supabase (PostgreSQL) |
-| Auth | Supabase Auth |
-| Orquestación | LangGraph |
-| Observabilidad | Langfuse |
-| Frontend | React + TypeScript |
+| Backend | Python 3.12, FastAPI |
+| Orquestación de agentes | LangGraph, LangChain |
+| Modelo de lenguaje | Vertex AI (Gemini 2.5) con respaldo en Groq (Llama 3.3) |
+| Embeddings | Vertex AI (gemini-embedding-001, 768) |
+| Base de datos y vectores | Supabase (PostgreSQL + pgvector) |
+| Autenticación | Supabase Auth (JWT) |
+| Observabilidad | Langfuse, Sentry, Grafana |
+| Frontend | Next.js, React, TypeScript, Tailwind CSS |
+| Despliegue | Docker, Google Cloud Run, Secret Manager |
 
-## Requisitos
-
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) (gestor de paquetes)
-- Docker (opcional, para desarrollo)
-- Cuentas en: Supabase, Cohere, Pinecone, Langfuse
-
-## Instalación
-
-### 1. Clonar repositorio
+## Puesta en marcha (local)
 
 ```bash
-git clone <repo-url>
-cd financegpt
-```
-
-### 2. Instalar dependencias
-
-```bash
+# Backend (desde la raíz)
 uv sync
+uv run uvicorn app.main:app --port 8000 --reload
+
+# Frontend (en otra terminal)
+cd frontend
+npm install
+cp .env.local.example .env.local
+npm run dev            # http://localhost:3000
 ```
 
-### 3. Configurar variables de entorno
+Las credenciales se externalizan en un archivo `.env` (a partir de `.env.example`). El despliegue en
+Google Cloud Run está documentado en [`DEPLOY.md`](DEPLOY.md).
 
-```bash
-cp .env.example .env
-# Editar .env con tus credenciales
-```
-
-### 4. Ejecutar en desarrollo
-
-```bash
-uv run fastapi dev app/main.py
-```
-
-La API estará disponible en `http://localhost:8000`.
-
-## Estructura del Proyecto
+## Estructura del proyecto
 
 ```
-financegpt/
-├── app/
-│   ├── api/              # Endpoints FastAPI
-│   ├── core/             # Configuración, logging, clients
-│   └── src/              # Módulos de dominio
-│       ├── agents/       # Sistema multiagente (LangGraph)
-│       ├── embeddings/   # Cohere + Pinecone
-│       ├── transactions/ # Gestión de transacciones
-│       ├── budgets/      # Presupuestos
-│       ├── goals/        # Objetivos financieros
-│       ├── chat/         # Servicio de chat
-│       └── users/        # Gestión de usuarios
-├── tests/                # Tests
-├── docs/                 # Documentación
-└── scripts/              # Scripts de utilidad
+app/          Backend: api/ (rutas), agents/ (LangGraph), src/ (módulos de dominio),
+              shared/ (clientes e interfaces), core/ (configuración, logging, observabilidad)
+frontend/     Aplicación web (Next.js)
+database/     Esquema y migraciones SQL
+tests/        Pruebas unitarias e integración
+docs/         Documentación (incluida la memoria del TFM)
 ```
 
-## Documentación
+## Calidad
 
-- [Guía de Estructura de Módulos](docs/MODULE_STRUCTURE_GUIDE.md)
-- [Arquitectura del Sistema](docs/ARCHITECTURE.md)
-
-## Desarrollo
-
-### Ejecutar tests
-
-```bash
-uv run pytest
-```
-
-### Linting y formateo
-
-```bash
-uv run ruff check .
-uv run ruff format .
-```
-
-### Type checking
-
-```bash
-uv run mypy app/
-```
-
-## API Endpoints
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/api/v1/chat` | Enviar mensaje al asistente |
-| GET | `/api/v1/transactions` | Listar transacciones |
-| POST | `/api/v1/transactions` | Crear transacción |
-| GET | `/api/v1/budgets` | Listar presupuestos |
-| POST | `/api/v1/budgets` | Crear presupuesto |
-| GET | `/api/v1/goals` | Listar objetivos |
-| POST | `/api/v1/goals` | Crear objetivo |
-| GET | `/health` | Health check |
-
-## Licencia
-
-Este proyecto es parte del Trabajo Final de Máster en Ingeniería y Desarrollo de Soluciones de IA Generativa.
+El proyecto se valida con análisis de tipos estricto (mypy), *linting* (ruff) y una batería de
+pruebas automatizadas (backend y frontend).
 
 ## Autor
 
-Néstor Raúl Sáenz Chajín - 2024
+Néstor Raúl Sáenz Chajín — 2026

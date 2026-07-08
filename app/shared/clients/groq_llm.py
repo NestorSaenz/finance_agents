@@ -6,7 +6,9 @@ Free tier limits (as of 2024):
 - llama-3.1-8b-instant: 14.4K req/day, 500K tokens/day
 """
 
-from typing import Any, AsyncIterator
+import json
+from collections.abc import AsyncIterator
+from typing import Any
 
 from groq import AsyncGroq
 
@@ -19,6 +21,15 @@ from app.shared.interfaces.llm import (
     MessageRole,
     ToolCall,
 )
+
+
+def _parse_tool_arguments(raw: str) -> dict[str, Any]:
+    """Parse a tool-call arguments JSON string into a dict (empty on failure)."""
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 logger = get_logger(__name__)
 
@@ -98,7 +109,7 @@ class GroqLLMClient(LLMInterface):
 
         response = await self._client.chat.completions.create(
             model=self._model,
-            messages=groq_messages,
+            messages=groq_messages,  # type: ignore[arg-type]  # SDK wants typed msg params
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             top_p=config.top_p,
@@ -128,7 +139,7 @@ class GroqLLMClient(LLMInterface):
             },
         )
 
-    async def generate_stream(
+    async def generate_stream(  # type: ignore[override,misc]  # async gen vs ABC coroutine
         self,
         messages: list[Message],
         config: LLMConfig | None = None,
@@ -149,14 +160,14 @@ class GroqLLMClient(LLMInterface):
 
         stream = await self._client.chat.completions.create(
             model=self._model,
-            messages=groq_messages,
+            messages=groq_messages,  # type: ignore[arg-type]  # SDK wants typed msg params
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             top_p=config.top_p,
             stream=True,
         )
 
-        async for chunk in stream:
+        async for chunk in stream:  # type: ignore[union-attr]  # stream=True -> AsyncStream
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
@@ -187,17 +198,18 @@ class GroqLLMClient(LLMInterface):
 
         response = await self._client.chat.completions.create(
             model=self._model,
-            messages=groq_messages,
+            messages=groq_messages,  # type: ignore[arg-type]  # SDK wants typed msg params
             temperature=config.temperature,
             max_tokens=config.max_tokens,
-            tools=tools if tools else None,
+            tools=tools if tools else None,  # type: ignore[arg-type]  # SDK tool param type
             tool_choice="auto" if tools else None,
         )
 
         choice = response.choices[0]
         usage = response.usage
 
-        # Extract tool calls if present
+        # Extract tool calls if present. Groq returns arguments as a JSON string;
+        # parse to a dict so callers receive structured args.
         tool_calls = []
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
@@ -205,7 +217,7 @@ class GroqLLMClient(LLMInterface):
                     ToolCall(
                         id=tc.id,
                         name=tc.function.name,
-                        arguments=tc.function.arguments,  # JSON string
+                        arguments=_parse_tool_arguments(tc.function.arguments),
                     )
                 )
 
