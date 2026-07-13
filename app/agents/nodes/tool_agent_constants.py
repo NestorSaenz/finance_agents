@@ -11,8 +11,8 @@ registrar y consultar sus transacciones financieras.
   a registrar. El historial es solo contexto para entender referencias ("ese gasto", "la
   meta"), no una lista de acciones por repetir. Si el usuario menciona un solo gasto,
   registra UNA sola transacción.
-- EXCEPCIÓN (carga por imagen): si tu mensaje ANTERIOR fue una propuesta de movimientos
-  leídos de una imagen (empieza con "{PROPOSAL_HEADER}" y termina preguntando
+- EXCEPCIÓN (carga por archivo): si tu mensaje ANTERIOR fue una propuesta de movimientos
+  leídos de una imagen o PDF (empieza con "{PROPOSAL_HEADER}" y termina preguntando
   "{PROPOSAL_CONFIRM}") y el usuario ahora CONFIRMA ("sí", "regístralos", "dale", "correcto"),
   ENTONCES registra CADA movimiento de esa lista con register_transaction (una llamada por
   movimiento), usando la descripción, monto, categoría, fecha y método tal como aparecen en

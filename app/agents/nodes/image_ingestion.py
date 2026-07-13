@@ -38,12 +38,12 @@ MAX_LISTED_MOVEMENTS: Final[int] = 200
 # Marker phrases shared with the tool agent's prompt: the proposal starts with the
 # header and ends with the confirm question, which is how a "sí" is recognized as a
 # batch registration. Keep these as the single source of truth for both sides.
-PROPOSAL_HEADER: Final[str] = "Leí esto de tu imagen:"
+PROPOSAL_HEADER: Final[str] = "Leí esto de tu archivo:"
 PROPOSAL_CONFIRM: Final[str] = "¿Los registro tal cual?"
 
 _SYSTEM_PROMPT: Final[str] = (
-    "Eres un asistente financiero que lee una imagen (foto o captura de un Excel, "
-    "una tabla o un recibo) y extrae los movimientos de dinero. Responde ÚNICAMENTE "
+    "Eres un asistente financiero que lee una imagen o un PDF (foto o captura de un "
+    "Excel, una tabla o un recibo) y extrae los movimientos de dinero. Responde ÚNICAMENTE "
     "con un objeto JSON válido, sin texto adicional ni ```.\n\n"
     "Formato exacto:\n"
     "{\n"
@@ -64,16 +64,16 @@ _SYSTEM_PROMPT: Final[str] = (
     "- Extrae el MÁXIMO de movimientos que veas.\n"
     "- Contexto colombiano: los montos suelen escribirse con puntos de miles "
     "('200.000' significa 200000, no 200).\n"
-    "- Respeta las CATEGORÍAS que aparezcan en la imagen aunque no sean estándar "
+    "- Respeta las CATEGORÍAS que aparezcan en el documento aunque no sean estándar "
     "(p. ej. 'jardinería', 'diezmo'); no las fuerces a otras.\n"
     "- Si una celda es ambigua o dudosa, incluye tu mejor interpretación y AÑADE "
     "una pregunta clara en 'questions'.\n"
     "- Si no hay fecha, usa null (se asumirá la fecha de hoy).\n"
-    "- Si la imagen no contiene movimientos financieros, devuelve movements vacío."
+    "- Si el documento no contiene movimientos financieros, devuelve movements vacío."
 )
 
 _USER_PROMPT: Final[str] = (
-    "Extrae los movimientos financieros de esta imagen y devuélvelos en el JSON pedido."
+    "Extrae los movimientos financieros de este documento y devuélvelos en el JSON pedido."
 )
 
 
@@ -134,8 +134,8 @@ class ImageIngestionService(ImageIngestionServiceABC):
         except Exception as e:  # noqa: BLE001 - vision/LLM boundary: degrade gracefully.
             logger.error("Image ingestion failed", error=str(e))
             return (
-                "No pude leer la imagen con claridad. ¿Puedes enviarla de nuevo, "
-                "más nítida o mejor encuadrada?"
+                "No pude leer el archivo con claridad. ¿Puedes enviarlo de nuevo, "
+                "más nítido o mejor encuadrado?"
             )
 
         logger.info("Image ingestion parsed", movements=len(result.movements))
@@ -161,7 +161,7 @@ def _parse_extraction(raw: str) -> ExtractionResult:
 def _format_proposal(result: ExtractionResult) -> str:
     """Render the extracted movements as a Spanish proposal awaiting confirmation."""
     if not result.movements:
-        base = "No encontré movimientos financieros en la imagen."
+        base = "No encontré movimientos financieros en el archivo."
         if result.notes:
             base += f" {result.notes}"
         return base

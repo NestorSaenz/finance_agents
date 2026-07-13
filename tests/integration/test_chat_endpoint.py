@@ -142,13 +142,25 @@ class TestChatEndpoint:
         assert body["response"] == INGESTION_REPLY  # from ingestion, not the graph
         assert body["agent_used"] == "ingestion"
 
+    def test_pdf_triggers_ingestion_flow(self, client_with_fake_graph: TestClient) -> None:
+        pdf_b64 = base64.b64encode(b"%PDF-1.4 fake").decode()
+        response = client_with_fake_graph.post(
+            CHAT_URL,
+            json={"message": "", "image": pdf_b64, "image_mime_type": "application/pdf"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["response"] == INGESTION_REPLY  # PDF is a valid attachment
+        assert body["agent_used"] == "ingestion"
+
     def test_image_with_invalid_mime_is_rejected_gracefully(
         self, client_with_fake_graph: TestClient
     ) -> None:
         image_b64 = base64.b64encode(b"x").decode()
         response = client_with_fake_graph.post(
             CHAT_URL,
-            json={"message": "", "image": image_b64, "image_mime_type": "application/pdf"},
+            json={"message": "", "image": image_b64, "image_mime_type": "image/gif"},
         )
 
         assert response.status_code == 200

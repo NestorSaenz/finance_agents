@@ -16,7 +16,7 @@ interface ChatInputProps {
 }
 
 const MAX_HEIGHT = 160; // px — grow up to ~6 lines, then scroll.
-const ACCEPTED_IMAGES = "image/jpeg,image/png,image/webp";
+const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp,application/pdf";
 
 export function ChatInput({
   value,
@@ -87,7 +87,7 @@ export function ChatInput({
           <input
             ref={fileRef}
             type="file"
-            accept={ACCEPTED_IMAGES}
+            accept={ACCEPTED_TYPES}
             onChange={handleFileChange}
             className="hidden"
           />
@@ -95,7 +95,7 @@ export function ChatInput({
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={disabled}
-            aria-label="Adjuntar imagen"
+            aria-label="Adjuntar imagen o PDF"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ImagePlus className="h-5 w-5" aria-hidden />

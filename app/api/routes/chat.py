@@ -30,9 +30,9 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-# Accepted image types and max decoded size for ingestion uploads.
-ALLOWED_IMAGE_MIME_TYPES: Final[frozenset[str]] = frozenset(
-    {"image/jpeg", "image/png", "image/webp"}
+# Accepted attachment types (image or PDF) and max decoded size for ingestion uploads.
+ALLOWED_ATTACHMENT_MIME_TYPES: Final[frozenset[str]] = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 )
 MAX_IMAGE_BYTES: Final[int] = 8 * 1024 * 1024  # 8 MB (decoded)
 # Reject oversized payloads before decoding: base64 inflates size by ~4/3 plus padding.
@@ -207,9 +207,9 @@ async def _handle_image(
 ) -> ChatResponse:
     """Extract movements from an attached image and propose them for confirmation."""
     mime_type = (request.image_mime_type or "").lower()
-    if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+    if mime_type not in ALLOWED_ATTACHMENT_MIME_TYPES:
         return ChatResponse(
-            response="Ese formato de imagen no es válido. Envíame un JPG, PNG o WebP.",
+            response="Ese formato no es válido. Envíame un JPG, PNG, WebP o PDF.",
             session_id=conversation_id,
             agent_used="ingestion",
         )

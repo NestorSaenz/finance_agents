@@ -15,7 +15,7 @@ import { TypingIndicator } from "./TypingIndicator";
 const ERROR_MESSAGE =
   "Lo siento, tuve un problema procesando tu solicitud. Inténtalo de nuevo en un momento.";
 
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
 
 interface AttachedImage {
@@ -72,12 +72,12 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   }));
 
   const attachImage = useCallback(async (file: File) => {
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      setAttachError("Formato no válido. Usa JPG, PNG o WebP.");
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setAttachError("Formato no válido. Usa JPG, PNG, WebP o PDF.");
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setAttachError("La imagen supera los 8 MB.");
+      setAttachError("El archivo supera los 8 MB.");
       return;
     }
     try {
@@ -85,7 +85,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
       setImage({ base64, mime: file.type, name: file.name });
       setAttachError(null);
     } catch {
-      setAttachError("No pude leer la imagen. Intenta con otra.");
+      setAttachError("No pude leer el archivo. Intenta con otro.");
     }
   }, []);
 
@@ -181,7 +181,11 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
         onSend={send}
         disabled={sending}
         imageName={image?.name ?? null}
-        imagePreview={image ? `data:${image.mime};base64,${image.base64}` : null}
+        imagePreview={
+          image && image.mime.startsWith("image/")
+            ? `data:${image.mime};base64,${image.base64}`
+            : null
+        }
         attachError={attachError}
         onAttach={attachImage}
         onClearImage={() => setImage(null)}

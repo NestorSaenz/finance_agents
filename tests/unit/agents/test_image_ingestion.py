@@ -69,4 +69,4 @@ async def test_propose_degrades_on_unparseable_output() -> None:
 
     proposal = await service.propose(b"x", "image/png")
 
-    assert "No pude leer la imagen" in proposal
+    assert "No pude leer el archivo" in proposal
