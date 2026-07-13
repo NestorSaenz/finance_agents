@@ -3,10 +3,12 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from langchain_core.messages import AIMessage, HumanMessage
+
 from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, tool_agent_node
 from app.agents.state import build_initial_state
 from app.agents.tools.transaction_tools import TransactionToolkit
-from app.shared.interfaces.llm import LLMResponse, ToolCall
+from app.shared.interfaces.llm import LLMResponse, MessageRole, ToolCall
 from app.shared.types import CategoryType, CurrencyType, TransactionType
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
@@ -87,6 +89,41 @@ def _text(content: str) -> LLMResponse:
 
 
 class TestToolAgentNode:
+    async def test_prior_turn_is_context_not_a_new_instruction(self) -> None:
+        """A past expense in history must be context, not re-executed as a new action."""
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        captured: dict[str, list] = {}
+
+        class CapturingLLM(ScriptedToolLLM):
+            async def generate_with_tools(self, messages, tools, config=None):  # type: ignore[no-untyped-def]
+                captured.setdefault("messages", list(messages))
+                return await super().generate_with_tools(messages, tools, config)
+
+        # Current, unrelated request; model answers without any tool call.
+        llm = CapturingLLM([_text("Listo.")])
+        history = [
+            HumanMessage(content="gasté 50 en jardinería"),
+            AIMessage(content="Registré tu gasto de 50 en jardinería."),
+        ]
+        state = build_initial_state(
+            message="agrega una tarjeta BBVA", user_id="u1", history=history
+        )
+
+        await tool_agent_node(state, llm, toolkit)
+
+        msgs = captured["messages"]
+        # Only the current message is a live user instruction.
+        assert msgs[-1].role == MessageRole.USER
+        assert msgs[-1].content == "agrega una tarjeta BBVA"
+        # The past expense lives in the system prompt as context, never as a live user turn.
+        assert "jardinería" in msgs[0].content
+        assert all(
+            m.content != "gasté 50 en jardinería"
+            for m in msgs
+            if m.role == MessageRole.USER
+        )
+
     async def test_executes_tool_then_responds(self) -> None:
         service = FakeTxService()
         toolkit = TransactionToolkit(service)

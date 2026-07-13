@@ -2,6 +2,8 @@
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from difflib import SequenceMatcher
+from typing import Final
 
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
@@ -24,6 +26,10 @@ from ..models import (
 )
 
 logger = get_logger(__name__)
+
+# Minimum name similarity (0-1) to resolve a card by a fuzzy/typo'd name. High
+# enough that distinct cards don't collide, low enough to catch "rapid"->"rappid".
+_FUZZY_MATCH_CUTOFF: Final[float] = 0.8
 
 
 class CreditCardService(CreditCardServiceABC):
@@ -126,7 +132,14 @@ class CreditCardService(CreditCardServiceABC):
             cname = card.name.lower()
             if target in cname or cname in target:
                 return card
-        return None
+        # Typo-tolerant fallback: pick the closest name if it's clearly close
+        # (e.g. "rapid" -> "rappid"). High cutoff so distinct cards don't collide.
+        best, best_ratio = None, 0.0
+        for card in cards:
+            ratio = SequenceMatcher(None, target, card.name.lower()).ratio()
+            if ratio > best_ratio:
+                best, best_ratio = card, ratio
+        return best if best_ratio >= _FUZZY_MATCH_CUTOFF else None
 
     async def _build_status(
         self, card: CreditCard, reference: date

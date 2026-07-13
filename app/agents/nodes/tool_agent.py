@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 from langchain_core.messages import AIMessage
 
-from app.agents.context import conversation_messages, user_context_block
+from app.agents.context import prior_context, user_context_block
 from app.agents.nodes.tool_agent_constants import TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
@@ -42,15 +42,19 @@ async def tool_agent_node(
         Updated state with the assistant's final message appended.
     """
     user_id = state.get("user_id", "")
-    conversation = conversation_messages(state)
+    # History (prior turns) goes into the prompt as labeled CONTEXT; only the
+    # current message is the actionable instruction. This stops the model from
+    # re-executing a past turn's action (e.g. re-registering a previous expense)
+    # when the user asks for something unrelated.
+    history = prior_context(state)
     user_message = _last_message(state)
     user_block = user_context_block(state)
 
-    logger.info("Tool agent processing", user_id=user_id, turns=len(conversation))
+    logger.info("Tool agent processing", user_id=user_id, turns=len(history))
 
     try:
         final_text = await _run_tool_loop(
-            llm, toolkit, conversation, user_message, user_id, user_block
+            llm, toolkit, history, user_message, user_id, user_block
         )
     except Exception as e:  # noqa: BLE001 - LLM/tool boundary: degrade gracefully.
         logger.error("Tool agent failed", error=str(e))
@@ -64,7 +68,7 @@ async def tool_agent_node(
 async def _run_tool_loop(
     llm: LLMInterface,
     toolkit: Toolkit,
-    conversation: list[Message],
+    history: list[Message],
     user_message: str,
     user_id: str,
     user_block: str = "",
@@ -89,8 +93,14 @@ async def _run_tool_loop(
         "Si necesitas varios datos independientes, pide todas esas herramientas "
         "en el mismo turno para resolverlo más rápido."
         f"{user_block}"
+        f"{_history_block(history)}"
     )
-    messages = [Message(role=MessageRole.SYSTEM, content=system_prompt), *conversation]
+    # The current message is the ONLY actionable instruction; prior turns live in
+    # the system prompt as context, so they can't be mistaken for new requests.
+    messages = [
+        Message(role=MessageRole.SYSTEM, content=system_prompt),
+        Message(role=MessageRole.USER, content=user_message),
+    ]
 
     for _ in range(MAX_TOOL_ROUNDS):
         response = await llm.generate_with_tools(messages, toolkit.schemas, config)
@@ -108,6 +118,32 @@ async def _run_tool_loop(
 
     # Rounds exhausted: force a final plain-text answer from what we gathered.
     return await _force_answer(llm, user_message, messages, config)
+
+
+def _history_block(history: list[Message]) -> str:
+    """Render prior turns as a labeled transcript for the system prompt.
+
+    Kept as CONTEXT (not as live user/assistant messages) so the model resolves
+    references ("ese gasto", "la meta") without treating a past instruction as a
+    new one to act on. The current message is passed separately as the only
+    actionable turn.
+    """
+    if not history:
+        return ""
+    lines = [
+        f"{'Safi' if message.role == MessageRole.ASSISTANT else 'Usuario'}: {message.content}"
+        for message in history
+    ]
+    return (
+        "\n\n## Conversación previa (contexto). Reglas al leerla:\n"
+        "- Las transacciones, pagos o metas que en turnos anteriores YA quedaron "
+        "REGISTRADOS no se vuelven a registrar: no los repitas.\n"
+        "- PERO si tu último turno fue una PREGUNTA (p. ej. '¿efectivo o crédito?', "
+        "'¿con cuál tarjeta?', '¿qué categoría?'), el mensaje ACTUAL del usuario es la "
+        "RESPUESTA: completa esa acción pendiente ahora (aún no estaba registrada).\n"
+        "- Actúa solo sobre el mensaje actual del usuario, no sobre pedidos ya resueltos.\n\n"
+        "Transcripción:\n" + "\n".join(lines)
+    )
 
 
 def _tool_call_note(calls: list[ToolCall]) -> Message:

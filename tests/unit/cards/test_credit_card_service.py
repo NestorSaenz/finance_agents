@@ -185,6 +185,22 @@ async def test_resolve_by_name_is_fuzzy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_by_name_tolerates_typos() -> None:
+    service = CreditCardService(
+        FakeCardRepo(cards=[_card(name="rappid"), _card(name="falabella")]),
+        FakePaymentRepo(),
+        FakeSpending(Decimal("0"), Decimal("0")),
+    )
+
+    # "rapid" (missing a p) is not a substring of "rappid" but is clearly it.
+    matched = await service.resolve_by_name("rapid", "u1")
+    assert matched is not None and matched.name == "rappid"
+
+    # An unrelated word must not fuzzy-match any card.
+    assert await service.resolve_by_name("pizza", "u1") is None
+
+
+@pytest.mark.asyncio
 async def test_update_card_changes_limit_and_name() -> None:
     service = CreditCardService(
         FakeCardRepo(), FakePaymentRepo(), FakeSpending(Decimal("0"), Decimal("0"))

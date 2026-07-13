@@ -68,23 +68,33 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "category": {
                         "type": "string",
-                        "description": "Categoría opcional; si se omite se detecta automáticamente",
+                        "description": (
+                            "Categoría del gasto: pásala SIEMPRE. Si el usuario la nombra, "
+                            "úsala tal cual. Si no, dedúcela de la descripción: usa una "
+                            "categoría conocida si encaja, o una PROPIA corta y con sentido "
+                            "si es algo distinto (p. ej. 'envíos', 'donaciones'). No fuerces "
+                            "una categoría conocida que no corresponde."
+                        ),
                     },
                     "payment_method": {
                         "type": "string",
                         "enum": ["efectivo", "credito"],
                         "description": (
-                            "Método de pago si el usuario lo menciona: 'credito' para "
-                            "tarjeta de crédito; 'efectivo' para efectivo, débito o "
-                            "transferencia. Omítelo si no lo dice."
+                            "Método de pago SOLO si el usuario lo menciona para ESTE gasto: "
+                            "'credito' para tarjeta de crédito; 'efectivo' para efectivo, "
+                            "débito o transferencia. Omítelo si no lo dice en este gasto. "
+                            "NUNCA lo asumas de un gasto anterior ni de la conversación."
                         ),
                     },
                     "card_name": {
                         "type": "string",
                         "description": (
-                            "Nombre de la tarjeta de crédito usada (p. ej. 'Visa BBVA'). "
-                            "Solo cuando payment_method es 'credito' y el usuario tiene "
-                            "tarjetas; sirve para vincular el cargo a esa tarjeta."
+                            "Nombre de la tarjeta de crédito SOLO si el usuario la nombra "
+                            "para ESTE gasto. Pásalo EXACTAMENTE como lo escribió (si dijo "
+                            "'rappid', pasa 'rappid'); no lo corrijas ni lo cambies por una "
+                            "marca (no 'RappiCard'). Se busca por coincidencia parcial. "
+                            "NUNCA la infieras de un gasto anterior: si no dijo cuál, omítela "
+                            "y el sistema preguntará."
                         ),
                     },
                 },
