@@ -47,7 +47,6 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   const { login, signup, token, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const copy = COPY[mode];
@@ -65,7 +64,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
       if (mode === "login") {
         await login({ email: email.trim(), password });
       } else {
-        await signup({ email: email.trim(), password, full_name: fullName.trim() || undefined });
+        await signup({ email: email.trim(), password });
       }
       router.replace("/chat");
     } catch (err) {
@@ -86,16 +85,6 @@ export function AuthScreen({ mode }: { mode: Mode }) {
           <h1 className="mb-5 text-xl font-semibold text-ink">{copy.title}</h1>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
-            {mode === "signup" && (
-              <Input
-                label="Nombre (opcional)"
-                type="text"
-                autoComplete="name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Néstor Sáenz"
-              />
-            )}
             <Input
               label="Correo"
               type="email"
