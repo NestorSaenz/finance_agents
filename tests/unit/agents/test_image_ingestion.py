@@ -70,3 +70,45 @@ async def test_propose_degrades_on_unparseable_output() -> None:
     proposal = await service.propose(b"x", "image/png")
 
     assert "No pude leer el archivo" in proposal
+
+
+async def test_propose_asks_payment_method_when_missing() -> None:
+    # Expense with no payment_method and a question that isn't about payment.
+    json_no_method = """
+    {"movements": [{"description": "Factura gimnasio", "amount": 199966,
+      "transaction_type": "expense", "category": "gimnasio", "payment_method": null}],
+     "questions": [], "notes": null}
+    """
+    service = ImageIngestionService(FakeLLM(json_no_method))
+
+    proposal = await service.propose(b"x", "application/pdf")
+
+    assert "efectivo" in proposal.lower() and "crédito" in proposal.lower()
+
+
+async def test_propose_asks_category_when_missing() -> None:
+    # Expense with no category → Safi asks instead of silently auto-categorizing.
+    json_no_category = """
+    {"movements": [{"description": "SPORT LINE S.A.", "amount": 199966,
+      "transaction_type": "expense", "category": null, "payment_method": "efectivo"}],
+     "questions": [], "notes": null}
+    """
+    service = ImageIngestionService(FakeLLM(json_no_category))
+
+    proposal = await service.propose(b"x", "application/pdf")
+
+    assert "categoría" in proposal.lower() and "clasifico" in proposal.lower()
+
+
+async def test_propose_does_not_duplicate_payment_question() -> None:
+    # The model already asked about the method → no extra deterministic question.
+    json_asked = """
+    {"movements": [{"description": "Compra", "amount": 50000,
+      "transaction_type": "expense", "payment_method": null}],
+     "questions": ["¿Lo pagaste en efectivo o con tarjeta?"], "notes": null}
+    """
+    service = ImageIngestionService(FakeLLM(json_asked))
+
+    proposal = await service.propose(b"x", "image/png")
+
+    assert proposal.lower().count("efectivo") == 1  # not asked twice

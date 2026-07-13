@@ -41,6 +41,29 @@ MAX_LISTED_MOVEMENTS: Final[int] = 200
 PROPOSAL_HEADER: Final[str] = "Leí esto de tu archivo:"
 PROPOSAL_CONFIRM: Final[str] = "¿Los registro tal cual?"
 
+# Asked (deterministically) when an expense has no payment method and the model
+# didn't already ask: a factura rarely states cash vs. credit, but Safi needs it.
+_PAYMENT_QUESTION: Final[str] = (
+    "¿Cómo lo pagaste? Dime si fue en efectivo o con tarjeta de crédito."
+)
+# If any of these appear in the model's questions, it already covers payment method.
+_PAYMENT_KEYWORDS: Final[tuple[str, ...]] = (
+    "efectivo",
+    "crédito",
+    "credito",
+    "tarjeta",
+    "pagaste",
+    "pagó",
+    "método de pago",
+)
+
+# Asked when an expense has no category and the model didn't already ask: better to
+# confirm than to silently auto-categorize an ambiguous charge (e.g. a store name).
+_CATEGORY_QUESTION: Final[str] = (
+    "¿En qué categoría lo clasifico? (por ejemplo: gimnasio, mercado, servicios…)"
+)
+_CATEGORY_KEYWORDS: Final[tuple[str, ...]] = ("categoría", "categoria", "clasifico", "clasificar")
+
 _SYSTEM_PROMPT: Final[str] = (
     "Eres un asistente financiero que lee una imagen o un PDF (foto o captura de un "
     "Excel, una tabla o un recibo) y extrae los movimientos de dinero. Responde ÚNICAMENTE "
@@ -66,8 +89,14 @@ _SYSTEM_PROMPT: Final[str] = (
     "('200.000' significa 200000, no 200).\n"
     "- Respeta las CATEGORÍAS que aparezcan en el documento aunque no sean estándar "
     "(p. ej. 'jardinería', 'diezmo'); no las fuerces a otras.\n"
+    "- Si NO puedes deducir la categoría del gasto con confianza (p. ej. solo hay un "
+    "nombre de comercio ambiguo), deja category en null y AÑADE en 'questions' una "
+    "pregunta para que el usuario la indique. NO inventes una categoría.\n"
     "- Si una celda es ambigua o dudosa, incluye tu mejor interpretación y AÑADE "
     "una pregunta clara en 'questions'.\n"
+    "- MÉTODO DE PAGO: una factura casi nunca dice cómo se pagó. Si el documento no "
+    "indica claramente 'efectivo' o 'crédito', deja payment_method en null y AÑADE en "
+    "'questions' una pregunta para saber cómo lo pagó el usuario.\n"
     "- Si no hay fecha, usa null (se asumirá la fecha de hoy).\n"
     "- Si el documento no contiene movimientos financieros, devuelve movements vacío."
 )
@@ -178,14 +207,52 @@ def _format_proposal(result: ExtractionResult) -> str:
             "los de arriba; envíame otra imagen con los que falten."
         )
 
-    if result.questions:
+    questions = list(result.questions)
+    if _needs_category_question(result):
+        questions.append(_CATEGORY_QUESTION)
+    if _needs_payment_question(result):
+        questions.append(_PAYMENT_QUESTION)
+
+    if questions:
         lines.append("")
         lines.append("Antes de registrar, cuéntame:")
-        lines.extend(f"- {question}" for question in result.questions)
+        lines.extend(f"- {question}" for question in questions)
 
     lines.append("")
     lines.append(f"{PROPOSAL_CONFIRM} Dime *sí* para guardarlos, o indícame qué corregir.")
     return "\n".join(lines)
+
+
+def _needs_category_question(result: ExtractionResult) -> bool:
+    """True when a listed expense has no category and no question asks for it."""
+    missing = any(
+        movement.transaction_type != "income" and not movement.category
+        for movement in result.movements[:MAX_LISTED_MOVEMENTS]
+    )
+    if not missing:
+        return False
+    already_asked = any(
+        keyword in question.lower()
+        for question in result.questions
+        for keyword in _CATEGORY_KEYWORDS
+    )
+    return not already_asked
+
+
+def _needs_payment_question(result: ExtractionResult) -> bool:
+    """True when a listed expense lacks a payment method and no question asks for it."""
+    missing = any(
+        movement.transaction_type != "income" and not movement.payment_method
+        for movement in result.movements[:MAX_LISTED_MOVEMENTS]
+    )
+    if not missing:
+        return False
+    already_asked = any(
+        keyword in question.lower()
+        for question in result.questions
+        for keyword in _PAYMENT_KEYWORDS
+    )
+    return not already_asked
 
 
 def _format_movement(movement: ExtractedMovement) -> str:

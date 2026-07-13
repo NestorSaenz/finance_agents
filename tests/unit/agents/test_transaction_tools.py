@@ -17,6 +17,7 @@ from app.core.exceptions import TransactionNotFoundError
 from app.shared.types import CategoryType, CurrencyType, PaymentMethod, TransactionType
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
+from tests.unit.agents.test_card_tools import FakeCardService, _card
 
 
 def _transaction(
@@ -166,6 +167,68 @@ class TestRegister:
         )
 
         assert service.created[0][0].payment_method == PaymentMethod.CREDITO
+
+    async def test_credit_with_several_cards_asks_which_without_registering(self) -> None:
+        service = FakeTransactionService()
+        cards = [_card("Rappid").model_copy(update={"id": "c1"}),
+                 _card("Falabella").model_copy(update={"id": "c2"})]
+        toolkit = TransactionToolkit(service, cards=FakeCardService(cards))
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 200, "description": "super", "transaction_type": "expense",
+             "payment_method": "credito"},
+            user_id="u1",
+        )
+
+        assert service.created == []  # not registered until the card is known
+        assert "Rappid" in result and "Falabella" in result
+
+    async def test_credit_with_named_card_links_and_registers(self) -> None:
+        service = FakeTransactionService()
+        cards = [_card("Rappid").model_copy(update={"id": "c1"}),
+                 _card("Falabella").model_copy(update={"id": "c2"})]
+        toolkit = TransactionToolkit(service, cards=FakeCardService(cards))
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 200, "description": "super", "transaction_type": "expense",
+             "payment_method": "credito", "card_name": "rappid"},
+            user_id="u1",
+        )
+
+        assert service.created[0][0].card_id == "c1"
+
+    async def test_credit_with_single_card_auto_links(self) -> None:
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(
+            service, cards=FakeCardService([_card("Rappid").model_copy(update={"id": "c1"})])
+        )
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 200, "description": "super", "transaction_type": "expense",
+             "payment_method": "credito"},
+            user_id="u1",
+        )
+
+        assert service.created[0][0].card_id == "c1"
+
+    async def test_credit_with_unknown_card_name_asks(self) -> None:
+        service = FakeTransactionService()
+        cards = [_card("Rappid").model_copy(update={"id": "c1"}),
+                 _card("Falabella").model_copy(update={"id": "c2"})]
+        toolkit = TransactionToolkit(service, cards=FakeCardService(cards))
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 200, "description": "super", "transaction_type": "expense",
+             "payment_method": "credito", "card_name": "Visa"},
+            user_id="u1",
+        )
+
+        assert service.created == []
+        assert "no encontré" in result.lower()
 
     async def test_invalid_amount_returns_error_without_calling_service(self) -> None:
         service = FakeTransactionService()

@@ -20,6 +20,15 @@ def get_log_level() -> int:
 def setup_logging() -> None:
     """Configure structured logging for the application."""
 
+    # Force UTF-8 on the console streams so non-ASCII in logs (e.g. the "✅" in
+    # tool results) never crashes the handler. Windows consoles default to cp1252,
+    # which raises UnicodeEncodeError on such characters; on Linux/Cloud Run this
+    # is already UTF-8, so it's a safe no-op there.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
     # Shared processors for all environments
     shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,

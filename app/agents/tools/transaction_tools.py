@@ -23,6 +23,7 @@ from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
 from app.src.cards.interfaces import CreditCardServiceABC
+from app.src.cards.models import CreditCard
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import Transaction, TransactionCreate
 
@@ -255,7 +256,11 @@ class TransactionToolkit:
 
     async def _register(self, args: dict[str, Any], user_id: UserId) -> str:
         payment_method = _to_payment_method(args.get("payment_method"))
-        card_id = await self._resolve_card_id(args, payment_method, user_id)
+        card_id, clarification = await self._resolve_card_id(args, payment_method, user_id)
+        # Credit charge with an ambiguous card: ask which one instead of registering
+        # it unlinked. Deterministic, so it never depends on the prompt remembering.
+        if clarification is not None:
+            return clarification
         try:
             transaction = TransactionCreate(
                 amount=_to_decimal(args.get("amount")),
@@ -283,22 +288,29 @@ class TransactionToolkit:
 
     async def _resolve_card_id(
         self, args: dict[str, Any], payment_method: PaymentMethod | None, user_id: UserId
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         """Resolve the credit card a charge belongs to.
 
-        By name if the user said one; otherwise, if the user has exactly one
-        card, use it automatically (so single-card users never need to specify).
-        With several cards and no name, leave it unlinked — the prompt asks which.
+        Returns ``(card_id, clarification)``. By name if the user said one;
+        otherwise, if the user has exactly one card, use it automatically. When
+        the charge is on credit and the card is ambiguous (several cards and no
+        name, or a name we can't find), returns a clarification question and no
+        id, so the caller asks which card instead of leaving the charge unlinked.
         """
         if payment_method != PaymentMethod.CREDITO or self._cards is None:
-            return None
+            return None, None
+        cards = await self._cards.list_cards(user_id)
+        if not cards:
+            return None, None  # No cards on file: nothing to link or ask about.
         card_name = str(args.get("card_name", "")).strip()
         if card_name:
             card = await self._cards.resolve_by_name(card_name, user_id)
             if card is not None:
-                return card.id
-        cards = await self._cards.list_cards(user_id)
-        return cards[0].id if len(cards) == 1 else None
+                return card.id, None
+            return None, _which_card_message(cards, unknown=card_name)
+        if len(cards) == 1:
+            return cards[0].id, None
+        return None, _which_card_message(cards)
 
     async def _query(self, args: dict[str, Any], user_id: UserId) -> str:
         items, total = await self._service.list_transactions(
@@ -505,6 +517,16 @@ def _to_category(value: Any) -> str | None:
     if not value:
         return None
     return normalize_category(str(value))
+
+
+def _which_card_message(cards: list[CreditCard], unknown: str = "") -> str:
+    """Ask which credit card a charge belongs to, listing the user's cards."""
+    names = ", ".join(card.name for card in cards)
+    prefix = f"No encontré una tarjeta llamada «{unknown}». " if unknown else ""
+    return (
+        f"{prefix}¿A cuál de tus tarjetas cargo este gasto? "
+        f"Tienes: {names}. Dime el nombre y lo registro."
+    )
 
 
 def _to_type(value: Any) -> TransactionType | None:
