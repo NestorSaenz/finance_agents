@@ -97,3 +97,6 @@ gcp-key.json
 gcp-*.json
 *-sa.json
 application_default_credentials.json
+
+# Borradores de la memoria del TFM (no van al repo)
+docs/memoria/
