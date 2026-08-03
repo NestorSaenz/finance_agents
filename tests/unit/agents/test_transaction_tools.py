@@ -53,6 +53,15 @@ class FakeTransactionService(TransactionServiceABC):
         self.created.append((transaction, user_id))
         return _transaction(transaction.category or CategoryType.OTROS)
 
+    async def create_installments(
+        self, base: TransactionCreate, installments: int, user_id: str
+    ) -> list[Transaction]:
+        per = base.amount / installments
+        return [
+            await self.create_transaction(base.model_copy(update={"amount": per}), user_id)
+            for _ in range(installments)
+        ]
+
     async def get_transaction(self, transaction_id: str, user_id: str) -> Transaction:
         return _transaction()
 
@@ -229,6 +238,20 @@ class TestRegister:
 
         assert service.created == []
         assert "no encontré" in result.lower()
+
+    async def test_cuotas_registers_one_transaction_per_month(self) -> None:
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service)
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 100000, "description": "nevera", "transaction_type": "expense",
+             "category": "hogar", "cuotas": 4},
+            user_id="u1",
+        )
+
+        assert len(service.created) == 4  # one per month, not one lump sum
+        assert "4 cuotas" in result
 
     async def test_invalid_amount_returns_error_without_calling_service(self) -> None:
         service = FakeTransactionService()

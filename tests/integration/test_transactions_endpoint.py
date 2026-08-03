@@ -48,6 +48,13 @@ class StubService(TransactionServiceABC):
         self.created.append(transaction)
         return _sample_transaction(transaction.category or CategoryType.OTROS)
 
+    async def create_installments(
+        self, base: TransactionCreate, installments: int, user_id: str
+    ) -> list[Transaction]:
+        return [
+            await self.create_transaction(base, user_id) for _ in range(installments)
+        ]
+
     async def get_transaction(self, transaction_id: str, user_id: str) -> Transaction:
         if not self.found:
             raise TransactionNotFoundError(transaction_id)

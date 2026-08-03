@@ -79,6 +79,16 @@ class TransactionServiceABC(ABC):
         """Create a transaction, auto-categorizing it when no category is given."""
 
     @abstractmethod
+    async def create_installments(
+        self, base: TransactionCreate, installments: int, user_id: UserId
+    ) -> list[Transaction]:
+        """Split a deferred purchase into ``installments`` monthly transactions.
+
+        The purchase total is divided across the installments (first at the base
+        date, each next one a month later) so a budget sees the per-month cost.
+        """
+
+    @abstractmethod
     async def get_transaction(
         self, transaction_id: TransactionId, user_id: UserId
     ) -> Transaction:

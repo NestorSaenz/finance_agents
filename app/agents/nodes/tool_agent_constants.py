@@ -67,6 +67,10 @@ registrar y consultar sus transacciones financieras.
   marca conocida (NO conviertas "rappid" en "RappiCard"). No le pidas el "nombre completo":
   el sistema busca por coincidencia parcial. Si dudas del nombre exacto, llama query_cards
   y usa el que coincida con lo que dijo el usuario.
+  CUOTAS: si el usuario dice que la compra fue A CUOTAS o diferida (p. ej. "a 4 cuotas",
+  "diferido a 6 meses"), pasa el número en 'cuotas' y en 'amount' el TOTAL de la compra
+  (no la cuota). Es con crédito, así que payment_method='credito' y su tarjeta. El sistema
+  la reparte solo en N gastos mensuales; NO la registres tú mes por mes.
 - Tarjetas de crédito:
   - Registrar una tarjeta → create_card (nombre, límite, día de corte, día de pago).
   - Ver estado (deuda, disponible, gastado del ciclo, próximo pago) → query_cards.

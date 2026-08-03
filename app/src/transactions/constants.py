@@ -23,3 +23,8 @@ SUMMARY_FETCH_LIMIT: Final[int] = 1000
 # Minimum cosine similarity required to trust a semantic category match.
 # Below this the transaction is categorized as OTROS (unknown).
 CATEGORY_CONFIDENCE_THRESHOLD: Final[float] = 0.50
+
+# Upper bound for a deferred purchase split into monthly installments (cuotas),
+# so a typo can't spawn hundreds of transactions. 72 = 6 years, the longest plan
+# banks realistically offer here.
+MAX_INSTALLMENTS: Final[int] = 72

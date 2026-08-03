@@ -1,7 +1,8 @@
 """Transaction use cases (business logic)."""
 
+import calendar
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
@@ -45,6 +46,45 @@ class TransactionService(TransactionServiceABC):
             logger.info("Transaction auto-categorized", category=category)
 
         return await self._repository.create(transaction, user_id)
+
+    async def create_installments(
+        self, base: TransactionCreate, installments: int, user_id: UserId
+    ) -> list[Transaction]:
+        """Split a deferred purchase into ``installments`` monthly transactions.
+
+        The total (``base.amount``) is divided across the installments — the first
+        dated at ``base.transaction_date`` and each next one a month later — so a
+        household budget sees the per-month cost, not the full amount up front. The
+        last installment absorbs any rounding remainder so the parts sum exactly to
+        the total. The category is resolved once and shared across the installments.
+        """
+        if installments < 2:
+            return [await self.create_transaction(base, user_id)]
+
+        if base.category is None:
+            category = await self._categorizer.categorize(base.description)
+            base = base.model_copy(update={"category": category})
+            logger.info("Installment purchase auto-categorized", category=category)
+
+        # Each installment is its own insert; the project has no unit-of-work, so a
+        # mid-way failure could leave a partial split. Acceptable here (single-user
+        # home use, reliable inserts); a proper DB transaction would be the fix.
+        amounts = _split_amount(base.amount, installments)
+        created = [
+            await self._repository.create(
+                base.model_copy(
+                    update={
+                        "amount": amount,
+                        "description": f"{base.description} (cuota {index + 1}/{installments})",
+                        "transaction_date": _add_months(base.transaction_date, index),
+                    }
+                ),
+                user_id,
+            )
+            for index, amount in enumerate(amounts)
+        ]
+        logger.info("Installments registered", installments=installments, user_id=user_id)
+        return created
 
     async def get_transaction(
         self, transaction_id: TransactionId, user_id: UserId
@@ -171,3 +211,21 @@ class TransactionService(TransactionServiceABC):
             credit_expenses=credit,
             cash_expenses=cash,
         )
+
+
+def _split_amount(total: Decimal, parts: int) -> list[Decimal]:
+    """Split ``total`` into ``parts`` amounts; the last absorbs the remainder.
+
+    Guarantees the parts sum exactly to ``total`` (no pesos lost to rounding).
+    """
+    each = (total / parts).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return [each] * (parts - 1) + [total - each * (parts - 1)]
+
+
+def _add_months(reference: date, months: int) -> date:
+    """Return ``reference`` advanced by ``months``, clamping the day to month length."""
+    absolute = reference.month - 1 + months
+    year = reference.year + absolute // 12
+    month = absolute % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(reference.day, last_day))

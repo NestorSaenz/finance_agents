@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.core.exceptions import TransactionNotFoundError
-from app.shared.types import CategoryType, CurrencyType, TransactionType
+from app.shared.types import CategoryType, CurrencyType, PaymentMethod, TransactionType
 from app.src.transactions.interfaces import (
     TransactionCategorizerABC,
     TransactionRepositoryABC,
@@ -99,6 +99,76 @@ class TestCreateTransaction:
 
         assert categorizer.called_with == []
         assert repo.created[0].category == CategoryType.VIAJES
+
+
+class TestCreateInstallments:
+    async def test_splits_amount_exactly_across_months(self) -> None:
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+
+        parts = await service.create_installments(_new_transaction(CategoryType.TECNOLOGIA), 3, "u1")
+
+        assert len(parts) == 3
+        amounts = [t.amount for t in repo.created]
+        # First two equal; the last absorbs the rounding remainder → sums exactly to 100.
+        assert amounts == [Decimal("33.33"), Decimal("33.33"), Decimal("33.34")]
+        assert sum(amounts) == Decimal("100")
+
+    async def test_dates_advance_one_month_each(self) -> None:
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.create_installments(_new_transaction(CategoryType.TECNOLOGIA), 3, "u1")
+
+        dates = [t.transaction_date for t in repo.created]
+        assert dates == [date(2024, 12, 20), date(2025, 1, 20), date(2025, 2, 20)]
+
+    async def test_labels_each_installment(self) -> None:
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.create_installments(_new_transaction(CategoryType.TECNOLOGIA), 3, "u1")
+
+        assert [t.description for t in repo.created] == [
+            "Cena en restaurante (cuota 1/3)",
+            "Cena en restaurante (cuota 2/3)",
+            "Cena en restaurante (cuota 3/3)",
+        ]
+
+    async def test_categorizes_once_for_all_installments(self) -> None:
+        repo = FakeRepository()
+        categorizer = FakeCategorizer(CategoryType.RESTAURANTES)
+        service = TransactionService(repo, categorizer)
+
+        await service.create_installments(_new_transaction(None), 4, "u1")
+
+        assert categorizer.called_with == ["Cena en restaurante"]  # a single call, not four
+        assert all(t.category == CategoryType.RESTAURANTES for t in repo.created)
+
+    async def test_clamps_day_to_month_length(self) -> None:
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+        base = _new_transaction(CategoryType.TECNOLOGIA).model_copy(
+            update={"transaction_date": date(2025, 1, 31)}
+        )
+
+        await service.create_installments(base, 2, "u1")
+
+        # Jan 31 + 1 month → Feb 28 (2025 is not a leap year).
+        assert repo.created[1].transaction_date == date(2025, 2, 28)
+
+    async def test_installments_keep_card_and_payment_method(self) -> None:
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+        base = _new_transaction(CategoryType.TECNOLOGIA).model_copy(
+            update={"payment_method": PaymentMethod.CREDITO, "card_id": "card-1"}
+        )
+
+        await service.create_installments(base, 3, "u1")
+
+        # A deferred purchase is on credit: every installment keeps the card and method.
+        assert all(t.payment_method == PaymentMethod.CREDITO for t in repo.created)
+        assert all(t.card_id == "card-1" for t in repo.created)
 
 
 class TestGetTransaction:

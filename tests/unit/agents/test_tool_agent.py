@@ -35,6 +35,15 @@ class FakeTxService(TransactionServiceABC):
             created_at=datetime(2024, 12, 20, tzinfo=UTC),
         )
 
+    async def create_installments(
+        self, base: TransactionCreate, installments: int, user_id: str
+    ) -> list[Transaction]:
+        per = base.amount / installments
+        return [
+            await self.create_transaction(base.model_copy(update={"amount": per}), user_id)
+            for _ in range(installments)
+        ]
+
     async def get_transaction(self, transaction_id: str, user_id: str) -> Transaction:
         raise NotImplementedError
 

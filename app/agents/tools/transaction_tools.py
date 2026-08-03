@@ -24,6 +24,7 @@ from app.core.logging import get_logger
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
+from app.src.transactions.constants import MAX_INSTALLMENTS
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import Transaction, TransactionCreate
 
@@ -95,6 +96,16 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
                             "marca (no 'RappiCard'). Se busca por coincidencia parcial. "
                             "NUNCA la infieras de un gasto anterior: si no dijo cuál, omítela "
                             "y el sistema preguntará."
+                        ),
+                    },
+                    "cuotas": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Número de cuotas si la compra fue DIFERIDA a plazos (p. ej. 'a 4 "
+                            "cuotas'). En ese caso 'amount' es el TOTAL de la compra y el "
+                            "sistema lo reparte en N gastos mensuales. Omítelo o 1 si fue pago "
+                            "único. Una compra a cuotas es con tarjeta de crédito."
                         ),
                     },
                 },
@@ -286,6 +297,26 @@ class TransactionToolkit:
             return (
                 "No pude registrar la transacción: los datos no son válidos "
                 "(revisa el monto, que debe ser mayor a 0, y el tipo)."
+            )
+
+        # Deferred purchase: the service spreads the total across N monthly installments.
+        requested = _to_int(args.get("cuotas"), default=1, minimum=1)
+        installments = min(requested, MAX_INSTALLMENTS)
+        if installments > 1:
+            parts = await self._service.create_installments(transaction, installments, user_id)
+            first = parts[0]
+            logger.info("Tool registered installments", installments=installments, user_id=user_id)
+            # Be explicit when we capped the request, so the reply never claims a
+            # different number than what the user asked for.
+            capped = (
+                f" (pediste {requested}; el máximo es {MAX_INSTALLMENTS})"
+                if requested > MAX_INSTALLMENTS
+                else ""
+            )
+            return (
+                f"✅ Registré tu compra de ${transaction.amount} en {installments} cuotas de "
+                f"${first.amount} ({first.category}), desde {transaction.transaction_date} "
+                f"y una cada mes.{capped}"
             )
 
         created = await self._service.create_transaction(transaction, user_id)
