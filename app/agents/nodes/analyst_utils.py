@@ -134,6 +134,35 @@ def detect_patterns(
     return patterns[:5]
 
 
+def top_expenses(
+    transactions: list[dict], limit: int
+) -> list[tuple[str, float, str]]:
+    """Return the largest individual expenses as (description, amount, category).
+
+    Surfaces concrete purchases (with their descriptions) so the analysis can be
+    richer than category totals — e.g. "tu mayor gasto fue X". Income is excluded.
+
+    Args:
+        transactions: List of transaction dictionaries.
+        limit: Maximum number of expenses to return.
+
+    Returns:
+        Up to ``limit`` (description, amount, category) tuples, largest first.
+    """
+    expenses = [
+        (
+            str(tx.get("description", "")).strip() or "(sin descripción)",
+            amount,
+            str(tx.get("category", "otros")),
+        )
+        for tx in transactions
+        if tx.get("transaction_type") != "income"
+        and (amount := float(tx.get("amount", 0))) > 0
+    ]
+    expenses.sort(key=lambda item: item[1], reverse=True)
+    return expenses[:limit]
+
+
 def find_recurring_transactions(
     transactions: list[dict],
 ) -> list[tuple[str, int, float]]:

@@ -13,11 +13,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.agents.nodes.analyst_constants import get_category_label
+from app.agents.nodes.analyst_constants import TOP_EXPENSES_LIMIT, get_category_label
 from app.agents.nodes.analyst_utils import (
     aggregate_by_category,
     calculate_totals,
     detect_patterns,
+    top_expenses,
 )
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
@@ -389,7 +390,8 @@ class TransactionToolkit:
         income, expenses = calculate_totals(transactions)
         by_category = aggregate_by_category(transactions)
         patterns = detect_patterns(transactions, by_category, expenses)
-        return _format_analysis(period, income, expenses, by_category, patterns)
+        top = top_expenses(transactions, TOP_EXPENSES_LIMIT)
+        return _format_analysis(period, income, expenses, by_category, patterns, top)
 
     async def _update(self, args: dict[str, Any], user_id: UserId) -> str:
         target = await self._resolve_transaction(args, user_id)
@@ -488,6 +490,7 @@ def _format_analysis(
     expenses: float,
     by_category: dict[str, float],
     patterns: list[str],
+    top: list[tuple[str, float, str]],
 ) -> str:
     """Format the spending analysis for the LLM to phrase back to the user."""
     lines = [
@@ -504,6 +507,13 @@ def _format_analysis(
             lines.append(f"- {get_category_label(category)}: ${amount:,.2f} ({pct:.0f}%)")
     else:
         lines.append("- Sin gastos en el periodo")
+    if top:
+        lines.append("")
+        lines.append("Mayores gastos individuales (usa sus descripciones para dar detalle):")
+        lines.extend(
+            f"- {desc}: ${amount:,.2f} ({get_category_label(category)})"
+            for desc, amount, category in top
+        )
     if patterns:
         lines.append("")
         lines.append("Patrones detectados:")

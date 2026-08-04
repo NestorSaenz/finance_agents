@@ -3,6 +3,8 @@
 Contains prompts, thresholds, and configuration for financial analysis.
 """
 
+from typing import Final
+
 from app.shared.types import CategoryType
 
 # =============================================================================
@@ -12,6 +14,10 @@ from app.shared.types import CategoryType
 # Percentage thresholds for spending alerts
 HIGH_SPENDING_THRESHOLD = 0.30  # Alert if category > 30% of total
 UNUSUAL_SPENDING_MULTIPLIER = 1.5  # Alert if spending > 1.5x average
+
+# Number of largest individual expenses surfaced in the analysis, so the LLM can
+# comment on concrete purchases (descriptions), not just category totals.
+TOP_EXPENSES_LIMIT: Final[int] = 5
 
 # Minimum transactions for pattern detection
 MIN_TRANSACTIONS_FOR_PATTERNS = 5
