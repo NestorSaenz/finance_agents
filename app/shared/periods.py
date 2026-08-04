@@ -57,7 +57,11 @@ def resolve_period(period: str, today: date | None = None) -> tuple[date, date]:
     if period == MES_PASADO:
         last_month_end = reference.replace(day=1) - timedelta(days=1)
         return last_month_end.replace(day=1), last_month_end
-    return reference.replace(day=1), reference
+    # "este_mes" spans the whole current month (1 -> last day), not 1 -> today.
+    # Capping at today hides transactions dated later in the month (e.g. a bill
+    # dated the 15th while today is the 4th), which read as zero spending.
+    last_day = calendar.monthrange(reference.year, reference.month)[1]
+    return reference.replace(day=1), reference.replace(day=last_day)
 
 
 def period_label(period: str) -> str:
