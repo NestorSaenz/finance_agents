@@ -48,6 +48,12 @@ jobs:
           uv run mypy app/
 
       - name: Tests
+        # Integration tests exercise authenticated endpoints via the demo-user
+        # fallback (active only outside production when DEMO_USER_ID is set). No
+        # .env exists in CI, so provide these explicitly; the value is arbitrary.
+        env:
+          ENVIRONMENT: local
+          DEMO_USER_ID: 00000000-0000-0000-0000-000000000000
         run: uv run pytest -q
 
       - id: auth
