@@ -48,6 +48,11 @@ jobs:
           npm run lint
           npm test
 
+      - name: Build
+        # Fail fast on a broken production build before touching GCP (Cloud Build
+        # rebuilds from the Dockerfile on deploy; this is the pre-deploy gate).
+        run: npm run build
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:
