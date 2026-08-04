@@ -6,7 +6,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
-from app.shared.periods import PeriodName, resolve_period
+from app.shared.periods import resolve_period
 from app.src.auth.dependencies import CurrentUserId
 from app.src.cards.dependencies import CreditCardServiceDep
 from app.src.cards.dto import (
@@ -56,7 +56,10 @@ async def get_cards_status(
 async def list_card_payments(
     service: CreditCardServiceDep,
     user_id: CurrentUserId,
-    period: PeriodName = Query(default="este_mes", description="Reporting period"),
+    period: str = Query(
+        default="este_mes",
+        description="Reporting period: 'este_mes', 'mes_pasado', 'todo' or a month 'YYYY-MM'",
+    ),
 ) -> CardPaymentsListResponse:
     """List the card payments made in the period (to show them as events)."""
     start, end = resolve_period(period)

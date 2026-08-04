@@ -172,6 +172,14 @@ class TestSpendingSummary:
         assert body["credit_expenses"] == "0"
         assert body["cash_expenses"] == "0"
 
-    def test_rejects_unknown_period(self, client: TestClient) -> None:
+    def test_accepts_a_specific_month(self, client: TestClient) -> None:
+        # A month is passed as YYYY-MM so the dashboard can view any past month.
+        response = client.get(f"{BASE_URL}/summary", params={"period": "2026-02"})
+        assert response.status_code == 200
+        assert response.json()["period"] == "2026-02"
+
+    def test_unknown_period_falls_back_gracefully(self, client: TestClient) -> None:
+        # Period is now free-form (to allow YYYY-MM); an unrecognized value is
+        # resolved leniently to the current month instead of rejected.
         response = client.get(f"{BASE_URL}/summary", params={"period": "manana"})
-        assert response.status_code == 422
+        assert response.status_code == 200

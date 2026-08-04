@@ -7,7 +7,7 @@ business logic lives in ``app.src.transactions``.
 from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
-from app.shared.periods import PeriodName, resolve_period
+from app.shared.periods import resolve_period
 from app.shared.types import TransactionType, normalize_category
 from app.src.auth.dependencies import CurrentUserId
 from app.src.transactions.dependencies import TransactionServiceDep
@@ -76,7 +76,10 @@ async def list_transactions(
 async def get_spending_summary(
     service: TransactionServiceDep,
     user_id: CurrentUserId,
-    period: PeriodName = Query(default="este_mes", description="Reporting period"),
+    period: str = Query(
+        default="este_mes",
+        description="Reporting period: 'este_mes', 'mes_pasado', 'todo' or a month 'YYYY-MM'",
+    ),
 ) -> SpendingSummaryResponse:
     """Aggregate income and expenses-by-category for the given period (dashboard)."""
     period_start, period_end = resolve_period(period)

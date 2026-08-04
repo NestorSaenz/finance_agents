@@ -24,6 +24,20 @@ const PERIODS: { value: SummaryPeriod; label: string }[] = [
   { value: "todo", label: "Todo" },
 ];
 
+/** The last `count` months as { value: "YYYY-MM", label: "Agosto de 2026" } for the picker. */
+function buildMonthOptions(count: number): { value: string; label: string }[] {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("es", { month: "long", year: "numeric" });
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = fmt.format(d);
+    return { value, label: label.charAt(0).toUpperCase() + label.slice(1) };
+  });
+}
+
+const MONTH_OPTIONS = buildMonthOptions(12);
+
 interface DashboardPanelProps {
   open: boolean;
   onClose: () => void;
@@ -33,7 +47,7 @@ interface DashboardPanelProps {
 
 export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanelProps) {
   const { token } = useAuth();
-  const [period, setPeriod] = useState<SummaryPeriod>("este_mes");
+  const [period, setPeriod] = useState<string>("este_mes");
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
   const [budget, setBudget] = useState<BudgetStatusList | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -130,6 +144,31 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               {p.label}
             </button>
           ))}
+        </div>
+
+        <div className="px-5 pt-2">
+          <label htmlFor="month-picker" className="sr-only">
+            Elegir un mes
+          </label>
+          <select
+            id="month-picker"
+            value={MONTH_OPTIONS.some((m) => m.value === period) ? period : ""}
+            onChange={(e) => {
+              if (e.target.value) setPeriod(e.target.value);
+            }}
+            className={`w-full rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+              MONTH_OPTIONS.some((m) => m.value === period)
+                ? "border-brand-400 bg-brand-50 font-medium text-brand-700"
+                : "border-line bg-surface text-muted"
+            }`}
+          >
+            <option value="">O elige un mes…</option>
+            {MONTH_OPTIONS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">

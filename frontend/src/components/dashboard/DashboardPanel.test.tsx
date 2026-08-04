@@ -197,6 +197,27 @@ describe("DashboardPanel", () => {
     );
   });
 
+  it("requests a specific month and skips budgets when a month is picked", async () => {
+    summaryMock.mockResolvedValue(
+      summary({ total_income: "0", total_expenses: "0", balance: "0", by_category: [] }),
+    );
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText(/Aún no hay movimientos/i);
+    budgetMock.mockClear();
+
+    const select = screen.getByLabelText("Elegir un mes") as HTMLSelectElement;
+    const monthValue = select.options[1].value; // first real month (skip the placeholder)
+    await userEvent.selectOptions(select, monthValue);
+
+    await waitFor(() =>
+      expect(summaryMock).toHaveBeenLastCalledWith(monthValue, "tok"),
+    );
+    expect(paymentsMock).toHaveBeenLastCalledWith(monthValue, "tok");
+    // Budgets are current-period only; a specific month must not fetch them.
+    expect(budgetMock).not.toHaveBeenCalled();
+  });
+
   it("shows an error with a retry action when the request fails", async () => {
     summaryMock.mockRejectedValue(new ApiError(500, "boom"));
 
