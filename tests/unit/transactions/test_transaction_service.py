@@ -263,3 +263,83 @@ class TestListTransactions:
         assert len(items) == 1
         assert repo.list_kwargs["offset"] == 40  # (3 - 1) * 20
         assert repo.list_kwargs["limit"] == 20
+
+
+def _tx(
+    when: date,
+    *,
+    tx_type: TransactionType = TransactionType.EXPENSE,
+    category: CategoryType = CategoryType.OTROS,
+) -> Transaction:
+    return Transaction(
+        id=f"tx-{when.isoformat()}",
+        user_id="u1",
+        amount=Decimal("100"),
+        currency=CurrencyType.MXN,
+        transaction_type=tx_type,
+        description="x",
+        category=category,
+        transaction_date=when,
+        source="manual",
+        created_at=datetime.now(UTC),
+    )
+
+
+class _MultiRepo(FakeRepository):
+    """Repository returning a fixed list, honoring the equality filters like the
+    real repo, to exercise the service's in-period (date-range) filtering."""
+
+    def __init__(self, items: list[Transaction]) -> None:
+        super().__init__()
+        self._items = items
+
+    async def list_page(self, user_id: str, **kwargs: object) -> list[Transaction]:
+        tx_type = kwargs.get("transaction_type")
+        category = kwargs.get("category")
+        return [
+            t
+            for t in self._items
+            if (tx_type is None or t.transaction_type == tx_type)
+            and (category is None or t.category == category)
+        ]
+
+
+class TestListByPeriod:
+    async def test_keeps_only_in_range_and_sorts_newest_first(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 8, 10)),
+                _tx(date(2026, 7, 30)),  # before the period
+                _tx(date(2026, 8, 20)),
+                _tx(date(2026, 9, 1)),  # after the period
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1", period_start=date(2026, 8, 1), period_end=date(2026, 8, 31)
+        )
+
+        assert [t.transaction_date for t in result] == [
+            date(2026, 8, 20),
+            date(2026, 8, 10),
+        ]
+
+    async def test_applies_type_and_category_filters(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 8, 5), category=CategoryType.TECNOLOGIA),
+                _tx(date(2026, 8, 6), category=CategoryType.OTROS),
+                _tx(date(2026, 8, 7), tx_type=TransactionType.INCOME),
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1",
+            period_start=date(2026, 8, 1),
+            period_end=date(2026, 8, 31),
+            category=CategoryType.TECNOLOGIA,
+        )
+
+        assert [t.category for t in result] == [CategoryType.TECNOLOGIA]

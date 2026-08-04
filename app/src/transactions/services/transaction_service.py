@@ -118,6 +118,32 @@ class TransactionService(TransactionServiceABC):
         )
         return items, total
 
+    async def list_by_period(
+        self,
+        user_id: UserId,
+        *,
+        period_start: date,
+        period_end: date,
+        transaction_type: TransactionType | None = None,
+        category: Category | None = None,
+    ) -> list[Transaction]:
+        # Push type/category to the repo (equality filters it supports) so a
+        # filtered query doesn't miss older matches beyond the fetch window, then
+        # filter the date range in-memory (the repo has no range filter). Capped
+        # at SUMMARY_FETCH_LIMIT, newest first — enough for personal-finance use.
+        items = await self._repository.list_page(
+            user_id,
+            limit=SUMMARY_FETCH_LIMIT,
+            offset=0,
+            transaction_type=transaction_type,
+            category=category,
+        )
+        in_period = [
+            t for t in items if period_start <= t.transaction_date <= period_end
+        ]
+        in_period.sort(key=lambda t: (t.transaction_date, t.created_at), reverse=True)
+        return in_period
+
     async def update_transaction(
         self,
         transaction_id: TransactionId,

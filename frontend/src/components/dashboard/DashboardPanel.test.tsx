@@ -6,6 +6,7 @@ import { DashboardPanel } from "./DashboardPanel";
 
 const {
   summaryMock,
+  transactionsMock,
   budgetMock,
   profileMock,
   goalsMock,
@@ -23,6 +24,7 @@ const {
   }
   return {
     summaryMock: vi.fn(),
+    transactionsMock: vi.fn(),
     budgetMock: vi.fn(),
     profileMock: vi.fn(),
     goalsMock: vi.fn(),
@@ -35,6 +37,7 @@ const {
 vi.mock("@/lib/api", () => ({
   api: {
     spendingSummary: (...args: unknown[]) => summaryMock(...args),
+    transactions: (...args: unknown[]) => transactionsMock(...args),
     budgetStatus: (...args: unknown[]) => budgetMock(...args),
     profile: (...args: unknown[]) => profileMock(...args),
     goals: (...args: unknown[]) => goalsMock(...args),
@@ -77,6 +80,12 @@ const PROFILE = {
 
 beforeEach(() => {
   summaryMock.mockReset();
+  transactionsMock.mockReset().mockResolvedValue({
+    transactions: [],
+    total: 0,
+    page: 1,
+    page_size: 0,
+  });
   budgetMock.mockReset().mockResolvedValue(EMPTY_BUDGET);
   profileMock.mockReset().mockResolvedValue(PROFILE);
   goalsMock.mockReset().mockResolvedValue({ goals: [], total: 0 });
@@ -216,6 +225,37 @@ describe("DashboardPanel", () => {
     expect(paymentsMock).toHaveBeenLastCalledWith(monthValue, "tok");
     // Budgets are current-period only; a specific month must not fetch them.
     expect(budgetMock).not.toHaveBeenCalled();
+  });
+
+  it("lists individual movements when the Movimientos tab is opened", async () => {
+    summaryMock.mockResolvedValue(summary());
+    transactionsMock.mockResolvedValue({
+      transactions: [
+        {
+          id: "tx-1",
+          amount: "250000",
+          description: "Televisor (cuota 1/4)",
+          transaction_type: "expense",
+          category: "tecnologia",
+          payment_method: "credito",
+          transaction_date: "2026-08-04",
+          created_at: "2026-08-04T00:00:00Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 1,
+    });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText("Balance");
+
+    await userEvent.click(screen.getByRole("button", { name: "Movimientos" }));
+
+    // The description (with its installment marker) and category are shown.
+    expect(await screen.findByText("Televisor (cuota 1/4)")).toBeInTheDocument();
+    expect(screen.getByText(/Tecnología/)).toBeInTheDocument();
+    expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok");
   });
 
   it("shows an error with a retry action when the request fails", async () => {

@@ -126,6 +126,24 @@ export interface CardPaymentsList {
   total: string;
 }
 
+export interface Transaction {
+  id: string;
+  amount: string;
+  description: string;
+  transaction_type: "income" | "expense";
+  category: string;
+  payment_method: "credito" | "efectivo" | null;
+  transaction_date: string;
+  created_at: string;
+}
+
+export interface TransactionList {
+  transactions: Transaction[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface UserProfile {
   display_name: string | null;
   monthly_income: string | null;

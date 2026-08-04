@@ -12,11 +12,20 @@ import type {
   Goal,
   SpendingSummary,
   SummaryPeriod,
+  Transaction,
   UserProfile,
 } from "@/lib/types";
 
 import { Spinner } from "@/components/ui/Spinner";
+import { MovementsList } from "./MovementsList";
 import { SummaryContent } from "./SummaryContent";
+
+type DashboardView = "resumen" | "movimientos";
+
+const VIEWS: { value: DashboardView; label: string }[] = [
+  { value: "resumen", label: "Resumen" },
+  { value: "movimientos", label: "Movimientos" },
+];
 
 const PERIODS: { value: SummaryPeriod; label: string }[] = [
   { value: "este_mes", label: "Este mes" },
@@ -48,7 +57,9 @@ interface DashboardPanelProps {
 export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanelProps) {
   const { token } = useAuth();
   const [period, setPeriod] = useState<string>("este_mes");
+  const [view, setView] = useState<DashboardView>("resumen");
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
+  const [movements, setMovements] = useState<Transaction[]>([]);
   const [budget, setBudget] = useState<BudgetStatusList | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -63,16 +74,25 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
     try {
       // Budgets are current-period, so only fetch them for the "este_mes" view.
       // Cards/goals reflect current state, so they load in every view.
-      const [summaryData, budgetData, profileData, goalsData, cardsData, paymentsData] =
-        await Promise.all([
-          api.spendingSummary(period, token),
-          period === "este_mes" ? api.budgetStatus(token) : Promise.resolve(null),
-          api.profile(token),
-          api.goals(token),
-          api.cardsStatus(token),
-          api.cardPayments(period, token),
-        ]);
+      const [
+        summaryData,
+        movementsData,
+        budgetData,
+        profileData,
+        goalsData,
+        cardsData,
+        paymentsData,
+      ] = await Promise.all([
+        api.spendingSummary(period, token),
+        api.transactions(period, token),
+        period === "este_mes" ? api.budgetStatus(token) : Promise.resolve(null),
+        api.profile(token),
+        api.goals(token),
+        api.cardsStatus(token),
+        api.cardPayments(period, token),
+      ]);
       setSummary(summaryData);
+      setMovements(movementsData.transactions);
       setBudget(budgetData);
       setProfile(profileData);
       setGoals(goalsData.goals);
@@ -82,9 +102,10 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       const message =
         err instanceof ApiError
           ? err.message
-          : "No se pudo cargar el resumen. Inténtalo de nuevo.";
+          : "No se pudieron cargar los datos. Inténtalo de nuevo.";
       setError(message);
       setSummary(null);
+      setMovements([]);
       setBudget(null);
       setProfile(null);
       setGoals([]);
@@ -130,7 +151,28 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
           </button>
         </header>
 
-        <div className="flex gap-1 px-5 pt-4">
+        <div
+          className="flex gap-1 px-5 pt-4"
+          role="group"
+          aria-label="Vista del panel"
+        >
+          {VIEWS.map((v) => (
+            <button
+              key={v.value}
+              aria-pressed={view === v.value}
+              onClick={() => setView(v.value)}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                view === v.value
+                  ? "bg-ink text-white"
+                  : "bg-slate-100 text-muted hover:text-ink"
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 px-5 pt-3">
           {PERIODS.map((p) => (
             <button
               key={p.value}
@@ -186,6 +228,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
                 Reintentar
               </button>
             </div>
+          ) : view === "movimientos" ? (
+            <MovementsList transactions={movements} />
           ) : summary ? (
             <SummaryContent
               summary={summary}

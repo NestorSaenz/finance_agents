@@ -15,6 +15,7 @@ import type {
   SessionResponse,
   SignupPayload,
   SpendingSummary,
+  TransactionList,
   UserProfile,
 } from "./types";
 
@@ -98,6 +99,12 @@ export const api = {
     token: string | null,
   ): Promise<SpendingSummary> =>
     request(`/transactions/summary?period=${encodeURIComponent(period)}`, { token }),
+
+  transactions: (
+    period: string,
+    token: string | null,
+  ): Promise<TransactionList> =>
+    request(`/transactions?period=${encodeURIComponent(period)}`, { token }),
 
   budgetStatus: (token: string | null): Promise<BudgetStatusList> =>
     request("/budgets/status", { token }),

@@ -38,8 +38,11 @@ def _sample_transaction(category: CategoryType = CategoryType.RESTAURANTES) -> T
 
 
 class StubService(TransactionServiceABC):
-    def __init__(self, found: bool = True) -> None:
+    def __init__(
+        self, found: bool = True, movements: list[Transaction] | None = None
+    ) -> None:
         self.found = found
+        self.movements = movements
         self.created: list[TransactionCreate] = []
 
     async def create_transaction(
@@ -64,6 +67,11 @@ class StubService(TransactionServiceABC):
         self, user_id: str, **kwargs: object
     ) -> tuple[list[Transaction], int]:
         return [_sample_transaction()], 1
+
+    async def list_by_period(
+        self, user_id: str, **kwargs: object
+    ) -> list[Transaction]:
+        return self.movements if self.movements is not None else [_sample_transaction()]
 
     async def update_transaction(
         self, transaction_id: str, user_id: str, **kwargs: object
@@ -138,6 +146,42 @@ class TestListTransactions:
         assert body["total"] == 1
         assert len(body["transactions"]) == 1
         assert body["page"] == 1
+
+    def test_period_returns_the_full_movement_list(self, client: TestClient) -> None:
+        # With a period the endpoint returns every movement in range (no paging).
+        response = client.get(BASE_URL, params={"period": "este_mes"})
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["transactions"]) == body["total"] == 1
+        assert body["transactions"][0]["description"]
+
+    def test_period_with_no_movements_returns_empty_ok(self) -> None:
+        # An empty period must be 200 with page_size=0, not a 500 from the DTO.
+        gen = _client_with_service(StubService(movements=[]))
+        client = next(gen)
+        try:
+            response = client.get(BASE_URL, params={"period": "2020-01"})
+            assert response.status_code == 200
+            body = response.json()
+            assert body["transactions"] == []
+            assert body["total"] == 0
+            assert body["page_size"] == 0
+        finally:
+            gen.close()
+
+    def test_period_with_over_100_movements_is_not_capped_by_the_dto(self) -> None:
+        # A full list larger than the request page window (100) must still serialize.
+        many = [_sample_transaction() for _ in range(150)]
+        gen = _client_with_service(StubService(movements=many))
+        client = next(gen)
+        try:
+            response = client.get(BASE_URL, params={"period": "todo"})
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == 150
+            assert len(body["transactions"]) == 150
+        finally:
+            gen.close()
 
 
 class TestGetTransaction:

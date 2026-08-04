@@ -107,6 +107,21 @@ class TransactionServiceABC(ABC):
         """Return a page of transactions and the total count."""
 
     @abstractmethod
+    async def list_by_period(
+        self,
+        user_id: UserId,
+        *,
+        period_start: date,
+        period_end: date,
+        transaction_type: TransactionType | None = None,
+        category: Category | None = None,
+    ) -> list[Transaction]:
+        """Return the transactions in the date range, newest date first.
+
+        Capped at the service fetch limit (ample for personal-finance volumes).
+        """
+
+    @abstractmethod
     async def update_transaction(
         self,
         transaction_id: TransactionId,

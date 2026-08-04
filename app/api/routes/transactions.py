@@ -55,14 +55,38 @@ async def list_transactions(
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
     transaction_type: TransactionType | None = None,
     category: str | None = Query(default=None, description="Filter by category (known or custom)"),
+    period: str | None = Query(
+        default=None,
+        description="Return every movement in a period ('este_mes', 'mes_pasado', "
+        "'todo' or 'YYYY-MM'), newest first. Overrides pagination.",
+    ),
 ) -> TransactionListResponse:
     """List the current user's transactions with pagination and filters."""
+    normalized_category = normalize_category(category) if category else None
+    # A period returns the full movement list for that range (dashboard detail),
+    # so pagination does not apply.
+    if period is not None:
+        period_start, period_end = resolve_period(period)
+        movements = await service.list_by_period(
+            user_id,
+            period_start=period_start,
+            period_end=period_end,
+            transaction_type=transaction_type,
+            category=normalized_category,
+        )
+        return TransactionListResponse(
+            transactions=[TransactionResponse.from_domain(t) for t in movements],
+            total=len(movements),
+            page=1,
+            page_size=len(movements),
+        )
+
     items, total = await service.list_transactions(
         user_id,
         page=page,
         page_size=page_size,
         transaction_type=transaction_type,
-        category=normalize_category(category) if category else None,
+        category=normalized_category,
     )
     return TransactionListResponse(
         transactions=[TransactionResponse.from_domain(t) for t in items],

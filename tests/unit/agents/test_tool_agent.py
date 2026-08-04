@@ -51,6 +51,9 @@ class FakeTxService(TransactionServiceABC):
         self.list_calls.append(user_id)
         return [], 0
 
+    async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
+        return []
+
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         raise NotImplementedError
 

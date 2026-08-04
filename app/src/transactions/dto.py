@@ -13,7 +13,7 @@ from app.shared.types import (
     normalize_category,
 )
 
-from .constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+from .constants import DEFAULT_PAGE_SIZE
 from .models import SpendingSummary, Transaction
 
 
@@ -91,8 +91,11 @@ class TransactionListResponse(BaseModel):
     )
     total: int = Field(..., ge=0, description="Total transaction count")
     page: int = Field(..., ge=1, description="Current page number")
+    # Response field: the number of items in THIS response. Request-side paging is
+    # validated by the Query params; the period path returns the full list (0..N),
+    # so this must not be constrained to the request's [1, MAX_PAGE_SIZE] window.
     page_size: int = Field(
-        ..., ge=1, le=MAX_PAGE_SIZE, description="Items per page", examples=[DEFAULT_PAGE_SIZE]
+        ..., ge=0, description="Items in this response", examples=[DEFAULT_PAGE_SIZE]
     )
 
 

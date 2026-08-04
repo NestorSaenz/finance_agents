@@ -69,6 +69,9 @@ class FakeTransactionService(TransactionServiceABC):
         self.list_calls.append((user_id, kwargs))
         return self.items, self.total
 
+    async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
+        return self.items
+
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         if self.not_found:
             raise TransactionNotFoundError(transaction_id)
