@@ -75,6 +75,29 @@ Abre la URL del frontend → ahí está Safi en vivo. 🎉
 Verifica el proxy: `https://<frontend-url>/api/v1/health` debe devolver
 `{"status":"healthy","service":"Safi"}`.
 
+## Despliegue continuo (GitHub Actions + WIF)
+
+Además del despliegue manual de arriba, cada **merge a `main`** despliega solo lo que
+cambió, con un **gate de calidad** antes (si falla, no se despliega):
+
+- `.github/workflows/deploy-backend.yml` — se dispara con cambios en `app/**`,
+  `tests/**`, `pyproject.toml`, `uv.lock` o `Dockerfile`. Corre `ruff` + `mypy` +
+  `pytest` y luego `gcloud run deploy safi-backend --source .`.
+- `.github/workflows/deploy-frontend.yml` — se dispara con cambios en `frontend/**`.
+  Corre `typecheck` + `lint` + `test` y luego `gcloud run deploy safi-frontend --source frontend`.
+
+**Autenticación sin llaves (Workload Identity Federation):** GitHub se identifica ante GCP
+por OIDC; no hay ninguna service-account key en el repo. La identidad de deploy es
+`github-deployer@…` y el provider está **restringido al repo** `NestorSaenz/finance_agents`
+(atributo `assertion.repository`). Los valores (provider y SA) no son secretos y viven en
+el `env` de cada workflow.
+
+Setup de infra (una vez, ya aplicado): pool + provider OIDC, la SA `github-deployer` con
+roles `run.admin`, `cloudbuild.builds.editor`, `artifactregistry.writer`, `storage.admin`,
+`iam.serviceAccountUser`, y binding `workloadIdentityUser` para el repo.
+
+Se puede lanzar a mano desde la pestaña **Actions** (ambos workflows tienen `workflow_dispatch`).
+
 ## Notas
 
 - **ENVIRONMENT=production** desactiva el usuario demo: la app exige login real (correcto).

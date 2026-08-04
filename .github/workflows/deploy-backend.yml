@@ -1,0 +1,67 @@
+name: Deploy backend
+
+# On merge to main, gate on lint+types+tests, then build & deploy to Cloud Run.
+# Auth is keyless via Workload Identity Federation (no service-account JSON).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+permissions:
+  contents: read
+  id-token: write # required for the WIF OIDC token
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: true
+
+env:
+  GCP_PROJECT: project-19dc8dc2-da3d-4f8d-834
+  GCP_REGION: us-central1
+  WIF_PROVIDER: projects/887687060494/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  DEPLOY_SA: github-deployer@project-19dc8dc2-da3d-4f8d-834.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint & type-check
+        run: |
+          uv run ruff check .
+          uv run mypy app/
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy safi-backend \
+            --source . \
+            --region "${GCP_REGION}" \
+            --quiet
