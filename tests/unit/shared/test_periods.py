@@ -29,8 +29,10 @@ class TestResolvePeriod:
     def test_mes_pasado(self) -> None:
         assert resolve_period("mes_pasado", today=REF) == (date(2026, 7, 1), date(2026, 7, 31))
 
-    def test_todo_is_open_from_epoch(self) -> None:
-        assert resolve_period("todo", today=REF) == (date(1970, 1, 1), REF)
+    def test_todo_is_open_from_epoch_through_end_of_current_month(self) -> None:
+        # Like "este_mes", "todo" ends at the last day of the current month so a
+        # bill dated later in the month is not hidden from the historical view.
+        assert resolve_period("todo", today=REF) == (date(1970, 1, 1), date(2026, 8, 31))
 
     def test_invalid_month_falls_back_to_este_mes(self) -> None:
         # 2026-13 is not a real month -> treated as the default (este_mes).

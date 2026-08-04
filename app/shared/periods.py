@@ -47,21 +47,23 @@ def _parse_month(period: str) -> tuple[int, int] | None:
 def resolve_period(period: str, today: date | None = None) -> tuple[date, date]:
     """Return the (start, end) date range for a named period or a ``YYYY-MM`` month."""
     reference = today or datetime.now(UTC).date()
+    # Both "este_mes" and "todo" end at the last day of the current month, not at
+    # today: capping at today hides transactions dated later in the month (e.g. a
+    # bill dated the 15th while today is the 4th), which would read as zero spending.
+    current_month_end = reference.replace(
+        day=calendar.monthrange(reference.year, reference.month)[1]
+    )
     month = _parse_month(period)
     if month is not None:
         year, mon = month
         last_day = calendar.monthrange(year, mon)[1]
         return date(year, mon, 1), date(year, mon, last_day)
     if period == TODO:
-        return date(1970, 1, 1), reference
+        return date(1970, 1, 1), current_month_end
     if period == MES_PASADO:
         last_month_end = reference.replace(day=1) - timedelta(days=1)
         return last_month_end.replace(day=1), last_month_end
-    # "este_mes" spans the whole current month (1 -> last day), not 1 -> today.
-    # Capping at today hides transactions dated later in the month (e.g. a bill
-    # dated the 15th while today is the 4th), which read as zero spending.
-    last_day = calendar.monthrange(reference.year, reference.month)[1]
-    return reference.replace(day=1), reference.replace(day=last_day)
+    return reference.replace(day=1), current_month_end
 
 
 def period_label(period: str) -> str:
