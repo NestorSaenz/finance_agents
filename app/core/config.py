@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     PROJECT_NAME: str = "Safi"
+    # Deployed code version (git SHA), set by the CI deploy; tags every Langfuse
+    # trace so behavior can be correlated to a release. Empty on local runs.
+    RELEASE: str = ""
 
     # Demo user UUID used until real auth (JWT) is wired. Must be a real user in
     # the `users` table (create one in Supabase Auth, then paste its UUID here).

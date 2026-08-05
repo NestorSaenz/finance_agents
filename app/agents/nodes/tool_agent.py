@@ -16,6 +16,7 @@ from app.agents.nodes.tool_agent_constants import TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
 from app.core.logging import get_logger
+from app.core.observability import record_tool_span, start_tool_span
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, Message, MessageRole, ToolCall
 
 logger = get_logger(__name__)
@@ -192,15 +193,25 @@ async def _force_answer(
 
 
 async def _safe_dispatch(toolkit: Toolkit, call: ToolCall, user_id: str) -> str:
-    """Execute a tool call, returning an error message instead of raising."""
+    """Execute a tool call, returning an error message instead of raising.
+
+    The execution is wrapped in a Langfuse span (``tool:<name>``) so the trace
+    shows each tool's input, result and latency — not just the LLM's decision to
+    call it. The span nests under the current agent run and is a no-op when
+    tracing is disabled.
+    """
     logger.info("Tool call", tool=call.name, args=call.arguments)
-    try:
-        result = await toolkit.dispatch(call.name, call.arguments, user_id)
-    except ValueError as e:
-        logger.warning("Tool dispatch error", tool=call.name, error=str(e))
-        return f"No pude ejecutar la herramienta solicitada: {e}"
-    logger.info("Tool result", tool=call.name, result=result[:200])
-    return result
+    with start_tool_span(f"tool:{call.name}", call.arguments) as span:
+        try:
+            result = await toolkit.dispatch(call.name, call.arguments, user_id)
+        except ValueError as e:
+            logger.warning("Tool dispatch error", tool=call.name, error=str(e))
+            message = f"No pude ejecutar la herramienta solicitada: {e}"
+            record_tool_span(span, output=message, error=str(e))
+            return message
+        logger.info("Tool result", tool=call.name, result=result[:200])
+        record_tool_span(span, output=result)
+        return result
 
 
 def _last_message(state: AgentState) -> str:

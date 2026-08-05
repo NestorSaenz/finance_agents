@@ -66,8 +66,11 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy to Cloud Run
+        # RELEASE tags every Langfuse trace with the deployed commit, so behavior
+        # can be correlated to a version. --update-env-vars preserves the rest.
         run: |
           gcloud run deploy safi-backend \
             --source . \
             --region "${GCP_REGION}" \
+            --update-env-vars "RELEASE=${GITHUB_SHA}" \
             --quiet

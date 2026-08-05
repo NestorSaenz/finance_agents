@@ -17,6 +17,7 @@ from app.agents.nodes.image_ingestion import (
     ImageIngestionServiceABC,
 )
 from app.agents.state import build_initial_state
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.observability import get_trace_callbacks
 from app.shared.dependencies import LLMVisionDep
@@ -165,6 +166,8 @@ async def chat(
         config["metadata"] = {
             "langfuse_user_id": user_id,
             "langfuse_session_id": conversation_id,
+            # Tags let us filter prod vs local/test traces in Langfuse.
+            "langfuse_tags": [f"env:{settings.ENVIRONMENT}", "channel:chat"],
         }
 
     try:
