@@ -258,6 +258,18 @@ describe("DashboardPanel", () => {
     expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok");
   });
 
+  it("refetches the summary when the refresh button is clicked", async () => {
+    summaryMock.mockResolvedValue(summary());
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText("Balance");
+    summaryMock.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "Actualizar resumen" }));
+
+    await waitFor(() => expect(summaryMock).toHaveBeenCalledTimes(1));
+  });
+
   it("shows an error with a retry action when the request fails", async () => {
     summaryMock.mockRejectedValue(new ApiError(500, "boom"));
 

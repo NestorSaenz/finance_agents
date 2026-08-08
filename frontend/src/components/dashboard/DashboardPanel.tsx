@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -142,13 +142,26 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       >
         <header className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="text-base font-semibold text-ink">Resumen</h2>
-          <button
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink"
-            aria-label="Cerrar resumen"
-          >
-            <X className="h-5 w-5" aria-hidden />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink disabled:opacity-50"
+              aria-label="Actualizar resumen"
+            >
+              <RefreshCw
+                className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+                aria-hidden
+              />
+            </button>
+            <button
+              onClick={onClose}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink"
+              aria-label="Cerrar resumen"
+            >
+              <X className="h-5 w-5" aria-hidden />
+            </button>
+          </div>
         </header>
 
         <div
