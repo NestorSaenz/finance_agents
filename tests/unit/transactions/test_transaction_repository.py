@@ -17,6 +17,7 @@ def _new_transaction(category: CategoryType | None = CategoryType.RESTAURANTES) 
         description="Almuerzo con colegas",
         transaction_type=TransactionType.EXPENSE,
         transaction_date=date(2024, 12, 20),
+        budget_date=date(2024, 12, 20),
         category=category,
     )
 

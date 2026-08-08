@@ -68,13 +68,17 @@ class TransactionSpendingProvider(BudgetSpendingABC):
         if category_value is not None:
             filters["category"] = category_value
 
-        config = QueryConfig(select="amount,transaction_date", filters=filters)
+        config = QueryConfig(
+            select="amount,transaction_date,budget_date", filters=filters
+        )
         result = await self._db.select(TRANSACTIONS_TABLE, config)
 
         total = Decimal("0")
         for row in result.data:
-            tx_date = _parse_date(row.get("transaction_date"))
-            if tx_date is not None and period_start <= tx_date <= period_end:
+            # Attribute by budget_date (credit -> payment month); older rows without
+            # it fall back to transaction_date, matching the sum_expenses SQL.
+            impact = _parse_date(row.get("budget_date") or row.get("transaction_date"))
+            if impact is not None and period_start <= impact <= period_end:
                 total += _parse_decimal(row.get("amount"))
         return total
 

@@ -51,6 +51,8 @@ class FakeRepository(TransactionRepositoryABC):
             description=transaction.description,
             category=transaction.category or CategoryType.OTROS,
             transaction_date=transaction.transaction_date,
+            # Mirror the real repo: budget_date defaults to the purchase date.
+            budget_date=transaction.budget_date or transaction.transaction_date,
             source=transaction.source,
             created_at=datetime.now(UTC),
         )
@@ -88,6 +90,7 @@ def _new_transaction(category: CategoryType | None) -> TransactionCreate:
         description="Cena en restaurante",
         transaction_type=TransactionType.EXPENSE,
         transaction_date=date(2024, 12, 20),
+        budget_date=date(2024, 12, 20),
         category=category,
     )
 
@@ -171,6 +174,24 @@ class TestCreateInstallments:
         # Jan 31 + 1 month → Feb 28 (2025 is not a leap year).
         assert repo.created[1].transaction_date == date(2025, 2, 28)
 
+    async def test_each_installment_uses_its_own_budget_month(self) -> None:
+        # A deferred purchase's budget_date (the first statement's payment date)
+        # must NOT be inherited by every installment; each cuota tracks its own month.
+        repo = FakeRepository()
+        service = TransactionService(repo, FakeCategorizer())
+        base = _new_transaction(CategoryType.TECNOLOGIA).model_copy(
+            update={"budget_date": date(2025, 9, 5)}  # whole-purchase payment date
+        )
+
+        created = await service.create_installments(base, 3, "u1")
+
+        # Each installment's budget month == its own transaction month, not all Sep.
+        assert [t.budget_date for t in created] == [
+            date(2024, 12, 20),
+            date(2025, 1, 20),
+            date(2025, 2, 20),
+        ]
+
     async def test_installments_keep_card_and_payment_method(self) -> None:
         repo = FakeRepository()
         service = TransactionService(repo, FakeCategorizer())
@@ -202,6 +223,7 @@ def _stored_tx() -> Transaction:
         description="x",
         category=CategoryType.OTROS,
         transaction_date=date(2024, 12, 20),
+        budget_date=date(2024, 12, 20),
         source="manual",
         created_at=datetime.now(UTC),
     )
@@ -265,6 +287,7 @@ class TestListTransactions:
             description="x",
             category=CategoryType.OTROS,
             transaction_date=date(2024, 12, 20),
+            budget_date=date(2024, 12, 20),
             source="manual",
             created_at=datetime.now(UTC),
         )
@@ -294,6 +317,7 @@ def _tx(
         description="x",
         category=category,
         transaction_date=when,
+        budget_date=when,
         source="manual",
         created_at=datetime.now(UTC),
     )

@@ -79,6 +79,10 @@ class TransactionService(TransactionServiceABC):
                         "amount": amount,
                         "description": f"{base.description} (cuota {index + 1}/{installments})",
                         "transaction_date": _add_months(base.transaction_date, index),
+                        # Reset so each installment's budget month is its own date,
+                        # not the whole purchase's first-statement date (each cuota
+                        # is already spread month by month).
+                        "budget_date": None,
                     }
                 ),
                 user_id,

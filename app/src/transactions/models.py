@@ -22,6 +22,9 @@ class TransactionCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=500)
     transaction_type: TransactionType
     transaction_date: date
+    # Month a credit charge actually hits the budget (its statement's payment
+    # date). None -> the repository defaults it to transaction_date (cash/debit).
+    budget_date: date | None = None
     category: Category | None = None
     payment_method: PaymentMethod | None = None
     card_id: str | None = None  # credit card this charge belongs to (if any)
@@ -44,6 +47,9 @@ class Transaction(BaseModel):
     payment_method: PaymentMethod | None = None
     card_id: str | None = None
     transaction_date: date
+    # Budget attribution date (= transaction_date for cash; the credit statement's
+    # payment date for credit). Drives which month's budget the charge affects.
+    budget_date: date
     source: str
     created_at: datetime
 

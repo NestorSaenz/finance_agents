@@ -114,7 +114,10 @@ export function SummaryContent({
       )}
 
       {budget && (
-        <Section title="Cómo voy en cada categoría">
+        <Section
+          title="Cómo voy en cada categoría"
+          subtitle="Incluye las compras a crédito según el mes en que las pagas."
+        >
           <BudgetProgress data={budget} />
         </Section>
       )}
@@ -190,10 +193,20 @@ function IncomeGauge({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
+      <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      {subtitle && <p className="mb-3 mt-0.5 text-xs text-muted">{subtitle}</p>}
+      {!subtitle && <div className="mb-3" />}
       {children}
     </div>
   );

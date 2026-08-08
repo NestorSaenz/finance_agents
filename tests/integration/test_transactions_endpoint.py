@@ -32,6 +32,7 @@ def _sample_transaction(category: CategoryType = CategoryType.RESTAURANTES) -> T
         description="Almuerzo con colegas",
         category=category,
         transaction_date=date(2024, 12, 20),
+        budget_date=date(2024, 12, 20),
         source="manual",
         created_at=datetime(2024, 12, 20, 10, 0, tzinfo=UTC),
     )

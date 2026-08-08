@@ -22,7 +22,9 @@ from app.agents.nodes.analyst_utils import (
 )
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
+from app.shared.periods import period_label
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
+from app.src.cards.cycle import compute_cycle, next_payment_date
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
 from app.src.transactions.constants import MAX_INSTALLMENTS
@@ -278,7 +280,7 @@ class TransactionToolkit:
 
     async def _register(self, args: dict[str, Any], user_id: UserId) -> str:
         payment_method = _to_payment_method(args.get("payment_method"))
-        card_id, clarification = await self._resolve_card_id(args, payment_method, user_id)
+        card, clarification = await self._resolve_card_id(args, payment_method, user_id)
         # Credit charge with an ambiguous card: ask which one instead of registering
         # it unlinked. Deterministic, so it never depends on the prompt remembering.
         if clarification is not None:
@@ -289,15 +291,20 @@ class TransactionToolkit:
         category = _to_category(args.get("category"))
         if category is not None:
             category = await self._service.resolve_category(category, user_id)
+        transaction_date = _to_date(args.get("transaction_date"))
+        # A credit charge hits the budget the month its statement is paid, not the
+        # purchase month; cash/debit hit the purchase month.
+        budget_date = _credit_budget_date(card, transaction_date)
         try:
             transaction = TransactionCreate(
                 amount=_to_decimal(args.get("amount")),
                 description=str(args.get("description", "")).strip(),
                 transaction_type=TransactionType(args.get("transaction_type", "expense")),
-                transaction_date=_to_date(args.get("transaction_date")),
+                transaction_date=transaction_date,
+                budget_date=budget_date,
                 category=category,
                 payment_method=payment_method,
-                card_id=card_id,
+                card_id=card.id if card else None,
             )
         except (ValidationError, ValueError) as e:
             logger.warning("Invalid transaction args from tool", error=str(e))
@@ -329,21 +336,27 @@ class TransactionToolkit:
         created = await self._service.create_transaction(transaction, user_id)
         logger.info("Tool registered transaction", transaction_id=created.id, user_id=user_id)
         method = f", {created.payment_method.value}" if created.payment_method else ""
+        # Tell the user when a credit charge lands on a DIFFERENT month's budget
+        # (compare by month, not exact day, to avoid noise within the same month).
+        impact = ""
+        if created.budget_date.strftime("%Y-%m") != created.transaction_date.strftime("%Y-%m"):
+            impact = f" Afectará tu presupuesto de {_budget_month_label(created.budget_date)}."
         return (
             f"✅ Registré: {created.description} — ${created.amount} "
-            f"({created.category}, {created.transaction_date}{method})."
+            f"({created.category}, {created.transaction_date}{method}).{impact}"
         )
 
     async def _resolve_card_id(
         self, args: dict[str, Any], payment_method: PaymentMethod | None, user_id: UserId
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[CreditCard | None, str | None]:
         """Resolve the credit card a charge belongs to.
 
-        Returns ``(card_id, clarification)``. By name if the user said one;
-        otherwise, if the user has exactly one card, use it automatically. When
-        the charge is on credit and the card is ambiguous (several cards and no
-        name, or a name we can't find), returns a clarification question and no
-        id, so the caller asks which card instead of leaving the charge unlinked.
+        Returns ``(card, clarification)`` (the card object, so the caller can also
+        derive the budget/impact date from its cycle). By name if the user said
+        one; otherwise, if the user has exactly one card, use it automatically.
+        When the charge is on credit and the card is ambiguous (several cards and
+        no name, or a name we can't find), returns a clarification question and no
+        card, so the caller asks which card instead of leaving the charge unlinked.
         """
         if payment_method != PaymentMethod.CREDITO or self._cards is None:
             return None, None
@@ -354,10 +367,10 @@ class TransactionToolkit:
         if card_name:
             card = await self._cards.resolve_by_name(card_name, user_id)
             if card is not None:
-                return card.id, None
+                return card, None
             return None, _which_card_message(cards, unknown=card_name)
         if len(cards) == 1:
-            return cards[0].id, None
+            return cards[0], None
         return None, _which_card_message(cards)
 
     async def _query(self, args: dict[str, Any], user_id: UserId) -> str:
@@ -570,6 +583,25 @@ def _to_date(value: Any) -> date:
         except ValueError:
             return datetime.now(UTC).date()
     return datetime.now(UTC).date()
+
+
+def _credit_budget_date(card: CreditCard | None, transaction_date: date) -> date:
+    """Budget/impact date for a charge.
+
+    For a credit charge, the payment date of the statement that contains it
+    (derived from the card's cutoff/payment cycle) — so a purchase after the
+    cutoff lands on the month it is actually paid. For cash/debit (no card),
+    the purchase date itself.
+    """
+    if card is None:
+        return transaction_date
+    _, cycle_end = compute_cycle(card.cutoff_day, transaction_date)
+    return next_payment_date(card.payment_day, cycle_end)
+
+
+def _budget_month_label(value: date) -> str:
+    """Spanish 'mes de año' label for the budget month (e.g. 'septiembre de 2026')."""
+    return period_label(f"{value.year}-{value.month:02d}")
 
 
 def _to_category(value: Any) -> str | None:

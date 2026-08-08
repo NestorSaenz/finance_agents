@@ -134,6 +134,7 @@ export interface Transaction {
   category: string;
   payment_method: "credito" | "efectivo" | null;
   transaction_date: string;
+  budget_date: string; // month this charge hits the budget (credit: payment date)
   created_at: string;
 }
 

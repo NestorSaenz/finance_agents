@@ -24,6 +24,26 @@ class TestGetSpent:
 
         assert spent == Decimal("350.0")
 
+    async def test_fallback_attributes_by_budget_date(self) -> None:
+        # Budgets sum by budget_date (credit -> payment month), not purchase date.
+        rows = [
+            # Bought in November (out of range) but paid in December -> counts.
+            make_transaction_row(
+                id="t1", amount=100.0, transaction_date="2024-11-22", budget_date="2024-12-05"
+            ),
+            # Bought in December but paid in January (budget out of range) -> excluded.
+            make_transaction_row(
+                id="t2", amount=999.0, transaction_date="2024-12-28", budget_date="2025-01-05"
+            ),
+        ]
+        provider = TransactionSpendingProvider(FakeDatabase(rows=rows))
+
+        spent = await provider.get_spent(
+            "u1", CategoryType.RESTAURANTES, date(2024, 12, 1), date(2024, 12, 31)
+        )
+
+        assert spent == Decimal("100.0")
+
     async def test_filters_include_expense_and_category(self) -> None:
         db = FakeDatabase(rows=[])
         provider = TransactionSpendingProvider(db)

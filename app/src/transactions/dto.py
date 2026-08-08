@@ -66,6 +66,9 @@ class TransactionResponse(BaseModel):
         default=None, description="How it was paid (cash vs credit), if known"
     )
     transaction_date: date = Field(..., description="Transaction date")
+    budget_date: date = Field(
+        ..., description="Budget month this charge affects (credit: payment date)"
+    )
     created_at: str = Field(..., description="Creation timestamp (ISO 8601)")
 
     @classmethod
@@ -79,6 +82,7 @@ class TransactionResponse(BaseModel):
             category=transaction.category,
             payment_method=transaction.payment_method,
             transaction_date=transaction.transaction_date,
+            budget_date=transaction.budget_date,
             created_at=transaction.created_at.isoformat(),
         )
 

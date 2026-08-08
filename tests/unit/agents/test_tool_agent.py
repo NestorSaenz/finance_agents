@@ -32,6 +32,7 @@ class FakeTxService(TransactionServiceABC):
             description=transaction.description,
             category=transaction.category or CategoryType.OTROS,
             transaction_date=transaction.transaction_date,
+            budget_date=transaction.transaction_date,
             source="manual",
             created_at=datetime(2024, 12, 20, tzinfo=UTC),
         )

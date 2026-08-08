@@ -12,6 +12,7 @@ from app.agents.tools.transaction_tools import (
     REGISTER_TRANSACTION_TOOL,
     UPDATE_TRANSACTION_TOOL,
     TransactionToolkit,
+    _credit_budget_date,
 )
 from app.core.exceptions import TransactionNotFoundError
 from app.shared.types import CategoryType, CurrencyType, PaymentMethod, TransactionType
@@ -34,6 +35,7 @@ def _transaction(
         description="pizza",
         category=category,
         transaction_date=date(2024, 12, 20),
+        budget_date=date(2024, 12, 20),
         source="manual",
         created_at=datetime(2024, 12, 20, tzinfo=UTC),
     )
@@ -464,3 +466,17 @@ class TestDispatch:
         toolkit = TransactionToolkit(FakeTransactionService())
         with pytest.raises(ValueError, match="Unknown transaction tool"):
             await toolkit.dispatch("nope", {}, user_id="u1")
+
+
+class TestCreditBudgetDate:
+    def test_credit_purchase_after_cutoff_rolls_to_payment_month(self) -> None:
+        # Card cutoff 15, payment 5. Purchase Jul 22 -> statement closes Aug 15
+        # -> paid Sep 5 -> budget impact = September.
+        assert _credit_budget_date(_card(), date(2026, 7, 22)) == date(2026, 9, 5)
+
+    def test_credit_purchase_before_cutoff_pays_next_month(self) -> None:
+        # Purchase Jul 10 -> statement closes Jul 15 -> paid Aug 5.
+        assert _credit_budget_date(_card(), date(2026, 7, 10)) == date(2026, 8, 5)
+
+    def test_cash_keeps_purchase_date(self) -> None:
+        assert _credit_budget_date(None, date(2026, 7, 22)) == date(2026, 7, 22)

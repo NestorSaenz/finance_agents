@@ -54,6 +54,10 @@ class TransactionRepository(TransactionRepositoryABC):
             ),
             "card_id": transaction.card_id,
             "transaction_date": transaction.transaction_date.isoformat(),
+            # Defaults to the purchase date (cash/debit); credit sets its payment date.
+            "budget_date": (
+                transaction.budget_date or transaction.transaction_date
+            ).isoformat(),
             "source": transaction.source,
         }
 
@@ -167,6 +171,8 @@ def _row_to_transaction(row: dict[str, Any]) -> Transaction:
         payment_method=_parse_payment_method(row.get("payment_method")),
         card_id=(str(row["card_id"]) if row.get("card_id") else None),
         transaction_date=_parse_date(row.get("transaction_date")),
+        # Older rows (pre-migration 010) have no budget_date -> use purchase date.
+        budget_date=_parse_date(row.get("budget_date") or row.get("transaction_date")),
         source=row.get("source") or DEFAULT_SOURCE,
         created_at=_parse_datetime(row.get("created_at")),
     )

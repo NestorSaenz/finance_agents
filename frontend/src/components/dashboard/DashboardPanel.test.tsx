@@ -239,12 +239,24 @@ describe("DashboardPanel", () => {
           category: "tecnologia",
           payment_method: "credito",
           transaction_date: "2026-08-04",
+          budget_date: "2026-08-04",
           created_at: "2026-08-04T00:00:00Z",
         },
+        {
+          id: "tx-2",
+          amount: "465192",
+          description: "Rappi SOAT",
+          transaction_type: "expense",
+          category: "transporte",
+          payment_method: "credito",
+          transaction_date: "2026-07-22",
+          budget_date: "2026-09-05", // paid in September -> impact tag
+          created_at: "2026-07-22T00:00:00Z",
+        },
       ],
-      total: 1,
+      total: 2,
       page: 1,
-      page_size: 1,
+      page_size: 2,
     });
 
     render(<DashboardPanel open onClose={() => {}} />);
@@ -255,6 +267,8 @@ describe("DashboardPanel", () => {
     // The description (with its installment marker) and category are shown.
     expect(await screen.findByText("Televisor (cuota 1/4)")).toBeInTheDocument();
     expect(screen.getByText(/Tecnología/)).toBeInTheDocument();
+    // A credit charge paid a later month shows its impact-month tag.
+    expect(screen.getByText(/impacta/)).toBeInTheDocument();
     expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok");
   });
 
