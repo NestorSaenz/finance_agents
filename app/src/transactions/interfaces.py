@@ -107,6 +107,15 @@ class TransactionServiceABC(ABC):
         """Return a page of transactions and the total count."""
 
     @abstractmethod
+    async def resolve_category(self, proposed: Category, user_id: UserId) -> Category:
+        """Snap a proposed category onto one the user already uses when close.
+
+        Reuses the existing spelling on an exact or high-similarity match (typo
+        tolerance) so a variant like "improvistos" does not fragment the user's
+        existing "imprevistos"; otherwise returns the normalized proposal.
+        """
+
+    @abstractmethod
     async def list_by_period(
         self,
         user_id: UserId,

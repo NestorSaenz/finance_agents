@@ -24,6 +24,11 @@ SUMMARY_FETCH_LIMIT: Final[int] = 1000
 # Below this the transaction is categorized as OTROS (unknown).
 CATEGORY_CONFIDENCE_THRESHOLD: Final[float] = 0.50
 
+# Minimum string similarity to snap a proposed category onto one the user already
+# uses (typo tolerance, e.g. "improvistos" -> existing "imprevistos"). High cutoff
+# so genuinely different categories ("ahorro" vs "ahorro carro") are NOT merged.
+CATEGORY_FUZZY_MATCH_CUTOFF: Final[float] = 0.85
+
 # Upper bound for a deferred purchase split into monthly installments (cuotas),
 # so a typo can't spawn hundreds of transactions. 72 = 6 years, the longest plan
 # banks realistically offer here.

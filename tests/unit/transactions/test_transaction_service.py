@@ -12,7 +12,10 @@ from app.src.transactions.interfaces import (
     TransactionRepositoryABC,
 )
 from app.src.transactions.models import Transaction, TransactionCreate
-from app.src.transactions.services.transaction_service import TransactionService
+from app.src.transactions.services.transaction_service import (
+    TransactionService,
+    _match_category,
+)
 
 
 class FakeCategorizer(TransactionCategorizerABC):
@@ -269,7 +272,7 @@ def _tx(
     when: date,
     *,
     tx_type: TransactionType = TransactionType.EXPENSE,
-    category: CategoryType = CategoryType.OTROS,
+    category: str = CategoryType.OTROS,
 ) -> Transaction:
     return Transaction(
         id=f"tx-{when.isoformat()}",
@@ -343,3 +346,38 @@ class TestListByPeriod:
         )
 
         assert [t.category for t in result] == [CategoryType.TECNOLOGIA]
+
+
+class TestMatchCategory:
+    def test_reuses_exact_existing_spelling(self) -> None:
+        assert _match_category("mercado", ["mercado", "gym"]) == "mercado"
+
+    def test_snaps_typo_to_existing(self) -> None:
+        # "improvistos" is a typo of the user's existing "imprevistos".
+        assert _match_category("improvistos", ["imprevistos", "mercado"]) == "imprevistos"
+
+    def test_keeps_genuinely_new_category(self) -> None:
+        assert _match_category("jardineria", ["mercado", "gym"]) == "jardineria"
+
+    def test_does_not_merge_distinct_categories(self) -> None:
+        # "ahorro" must NOT collapse into "ahorro carro" (they are different).
+        assert _match_category("ahorro", ["ahorro carro"]) == "ahorro"
+
+    def test_no_existing_returns_proposed(self) -> None:
+        assert _match_category("mercado", []) == "mercado"
+
+
+class TestResolveCategory:
+    async def test_snaps_to_users_existing_category(self) -> None:
+        repo = _MultiRepo(
+            [_tx(date(2026, 8, 1), category="imprevistos"), _tx(date(2026, 8, 2))]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        assert await service.resolve_category("improvistos", "u1") == "imprevistos"
+
+    async def test_new_category_passes_through_normalized(self) -> None:
+        repo = _MultiRepo([_tx(date(2026, 8, 1), category="mercado")])
+        service = TransactionService(repo, FakeCategorizer())
+
+        assert await service.resolve_category("  Jardinería  ", "u1") == "jardinería"

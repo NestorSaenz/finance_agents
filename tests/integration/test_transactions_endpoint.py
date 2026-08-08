@@ -73,6 +73,9 @@ class StubService(TransactionServiceABC):
     ) -> list[Transaction]:
         return self.movements if self.movements is not None else [_sample_transaction()]
 
+    async def resolve_category(self, proposed: str, user_id: str) -> str:
+        return proposed
+
     async def update_transaction(
         self, transaction_id: str, user_id: str, **kwargs: object
     ) -> Transaction:

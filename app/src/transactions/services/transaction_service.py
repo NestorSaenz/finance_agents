@@ -3,6 +3,7 @@
 import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from difflib import SequenceMatcher
 
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
@@ -13,9 +14,10 @@ from app.shared.types import (
     TransactionId,
     TransactionType,
     UserId,
+    normalize_category,
 )
 
-from ..constants import SUMMARY_FETCH_LIMIT
+from ..constants import CATEGORY_FUZZY_MATCH_CUTOFF, SUMMARY_FETCH_LIMIT
 from ..interfaces import (
     TransactionCategorizerABC,
     TransactionRepositoryABC,
@@ -117,6 +119,25 @@ class TransactionService(TransactionServiceABC):
             category=category,
         )
         return items, total
+
+    async def resolve_category(self, proposed: Category, user_id: UserId) -> Category:
+        normalized = normalize_category(proposed)
+        existing = await self._user_categories(user_id)
+        return _match_category(normalized, existing)
+
+    async def _user_categories(self, user_id: UserId) -> list[str]:
+        """Distinct categories the user has used (most-recent first, deduped).
+
+        Deliberately reuses the wide ``list_page`` fetch (same cap as the summary)
+        rather than a dedicated DISTINCT query: personal-finance volumes are small
+        and the fuzzy match runs over the tiny deduped set. Revisit with a repo-level
+        distinct query only if this ever lands on a hot path.
+        """
+        items = await self._repository.list_page(
+            user_id, limit=SUMMARY_FETCH_LIMIT, offset=0
+        )
+        # dict preserves first-seen order; list_page returns newest first.
+        return list(dict.fromkeys(t.category for t in items if t.category))
 
     async def list_by_period(
         self,
@@ -255,3 +276,25 @@ def _add_months(reference: date, months: int) -> date:
     month = absolute % 12 + 1
     last_day = calendar.monthrange(year, month)[1]
     return date(year, month, min(reference.day, last_day))
+
+
+def _match_category(proposed: str, existing: list[str]) -> str:
+    """Return an existing category equal or highly similar to ``proposed``.
+
+    Exact match reuses the stored spelling; otherwise the closest existing
+    category is reused only when the similarity clears the (high) cutoff, so a
+    typo snaps to the real category but distinct categories never collapse. Falls
+    back to ``proposed`` when nothing is close (a genuinely new category).
+    """
+    target = proposed.strip().lower()
+    if not target:
+        return proposed
+    for category in existing:
+        if category.lower() == target:
+            return category
+    best, best_ratio = "", 0.0
+    for category in existing:
+        ratio = SequenceMatcher(None, target, category.lower()).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = category, ratio
+    return best if best_ratio >= CATEGORY_FUZZY_MATCH_CUTOFF else proposed

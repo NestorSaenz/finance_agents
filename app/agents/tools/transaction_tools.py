@@ -283,13 +283,19 @@ class TransactionToolkit:
         # it unlinked. Deterministic, so it never depends on the prompt remembering.
         if clarification is not None:
             return clarification
+        # Reuse an existing category on a close match (typo tolerance), so a
+        # variant like "improvistos" folds into the user's "imprevistos" instead
+        # of fragmenting. Skipped when no category is given (service auto-tags).
+        category = _to_category(args.get("category"))
+        if category is not None:
+            category = await self._service.resolve_category(category, user_id)
         try:
             transaction = TransactionCreate(
                 amount=_to_decimal(args.get("amount")),
                 description=str(args.get("description", "")).strip(),
                 transaction_type=TransactionType(args.get("transaction_type", "expense")),
                 transaction_date=_to_date(args.get("transaction_date")),
-                category=_to_category(args.get("category")),
+                category=category,
                 payment_method=payment_method,
                 card_id=card_id,
             )
@@ -397,13 +403,17 @@ class TransactionToolkit:
         target = await self._resolve_transaction(args, user_id)
         if target is None:
             return "No encontré esa transacción. ¿Puedes darme más detalles (monto o fecha)?"
+        # Fold a re-categorization onto an existing category when it's a close match.
+        new_category = _to_category(args.get("new_category"))
+        if new_category is not None:
+            new_category = await self._service.resolve_category(new_category, user_id)
         try:
             updated = await self._service.update_transaction(
                 target.id,
                 user_id,
                 amount=_opt_decimal(args.get("new_amount")),
                 description=_opt_str(args.get("new_description")),
-                category=_to_category(args.get("new_category")),
+                category=new_category,
                 transaction_date=_opt_date(args.get("new_transaction_date")),
                 payment_method=_to_payment_method(args.get("payment_method")),
             )

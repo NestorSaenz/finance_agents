@@ -48,6 +48,9 @@ class FakeTransactionService(TransactionServiceABC):
         self.updated: list[tuple[str, str, dict]] = []
         self.deleted: list[tuple[str, str]] = []
         self.not_found = False
+        self.resolve_calls: list[tuple[str, str]] = []
+        # When set, resolve_category returns this (simulates snapping to existing).
+        self.resolved_category: str | None = None
 
     async def create_transaction(self, transaction: TransactionCreate, user_id: str) -> Transaction:
         self.created.append((transaction, user_id))
@@ -71,6 +74,10 @@ class FakeTransactionService(TransactionServiceABC):
 
     async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
         return self.items
+
+    async def resolve_category(self, proposed: str, user_id: str) -> str:
+        self.resolve_calls.append((proposed, user_id))
+        return self.resolved_category if self.resolved_category is not None else proposed
 
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         if self.not_found:
@@ -148,6 +155,28 @@ class TestRegister:
 
         created, _user = service.created[0]
         assert created.category == "jardinería"  # normalized (lowercased), not "otros"
+
+    async def test_register_snaps_category_onto_existing(self) -> None:
+        # A typo variant folds into the user's existing category via the service.
+        service = FakeTransactionService()
+        service.resolved_category = "imprevistos"
+        toolkit = TransactionToolkit(service)
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": 90000,
+                "description": "dollarcity",
+                "transaction_type": "expense",
+                "category": "improvistos",
+            },
+            user_id="u1",
+        )
+
+        # The normalized proposal reached resolve_category, and its result was stored.
+        assert service.resolve_calls == [("improvistos", "u1")]
+        created, _user = service.created[0]
+        assert created.category == "imprevistos"
 
     async def test_omitted_category_defers_to_auto_categorization(self) -> None:
         service = FakeTransactionService()
@@ -383,6 +412,20 @@ class TestUpdateDelete:
         assert fields["amount"] == Decimal("99")
         assert fields["category"] == CategoryType.VIAJES
         assert "actualic" in result.lower()
+
+    async def test_update_snaps_category_onto_existing(self) -> None:
+        # Re-categorizing to a typo variant folds into the existing category.
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        service.resolved_category = "imprevistos"
+        await TransactionToolkit(service).dispatch(
+            UPDATE_TRANSACTION_TOOL,
+            {"description": "pizza", "new_category": "improvistos"},
+            user_id="u1",
+        )
+        assert service.resolve_calls == [("improvistos", "u1")]
+        _tx_id, _user, fields = service.updated[0]
+        assert fields["category"] == "imprevistos"
 
     async def test_update_sets_payment_method(self) -> None:
         service = FakeTransactionService()
