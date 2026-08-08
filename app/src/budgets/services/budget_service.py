@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
-from app.shared.types import BudgetId, UserId
+from app.shared.types import BudgetId, UserId, normalize_category
 
 from ..interfaces import BudgetRepositoryABC, BudgetServiceABC, BudgetSpendingABC
 from ..models import Budget, BudgetCreate, BudgetStatus
@@ -99,6 +99,23 @@ class BudgetService(BudgetServiceABC):
                 (b for b in budgets if target in b.name.lower() or b.name.lower() in target),
                 None,
             )
+        )
+
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        old_norm, new_norm = normalize_category(old), normalize_category(new)
+        if old_norm == new_norm:
+            return 0
+        # If the target category already has a tope, relabeling would leave TWO
+        # budget rows for one category (resolve_budget/get_all_status would pick or
+        # double-count them). Merge by deleting the source tope, keeping the target.
+        active = await self._repository.list_active(user_id)
+        if any((b.category or "") == new_norm for b in active):
+            return await self._repository.delete_by_category(user_id, old_norm)
+        return await self._repository.recategorize(user_id, old_norm, new_norm)
+
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        return await self._repository.delete_by_category(
+            user_id, normalize_category(category)
         )
 
     async def _build_status(self, budget: Budget, reference: date) -> BudgetStatus:

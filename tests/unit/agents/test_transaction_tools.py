@@ -79,6 +79,18 @@ class FakeTransactionService(TransactionServiceABC):
         self.resolve_calls.append((proposed, user_id))
         return self.resolved_category if self.resolved_category is not None else proposed
 
+    async def count_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
+    async def list_categories(self, user_id: str) -> list[str]:
+        return []
+
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        return 0
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         if self.not_found:
             raise TransactionNotFoundError(transaction_id)

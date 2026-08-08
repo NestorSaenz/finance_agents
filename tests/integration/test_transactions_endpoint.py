@@ -76,6 +76,18 @@ class StubService(TransactionServiceABC):
     async def resolve_category(self, proposed: str, user_id: str) -> str:
         return proposed
 
+    async def count_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
+    async def list_categories(self, user_id: str) -> list[str]:
+        return []
+
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        return 0
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
     async def update_transaction(
         self, transaction_id: str, user_id: str, **kwargs: object
     ) -> Transaction:

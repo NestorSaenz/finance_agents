@@ -36,6 +36,9 @@ class FakeRepository(TransactionRepositoryABC):
         self.list_kwargs: dict = {}
         self.updated: list[tuple[str, dict]] = []
         self.deleted: list[str] = []
+        self.recategorized: list[tuple[str, str]] = []
+        self.deleted_categories: list[str] = []
+        self.bulk_result = 0
 
     async def create(self, transaction: TransactionCreate, user_id: str) -> Transaction:
         self.created.append(transaction)
@@ -69,6 +72,14 @@ class FakeRepository(TransactionRepositoryABC):
 
     async def delete(self, transaction_id: str, user_id: str) -> None:
         self.deleted.append(transaction_id)
+
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        self.recategorized.append((old, new))
+        return self.bulk_result
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        self.deleted_categories.append(category)
+        return self.bulk_result
 
 
 def _new_transaction(category: CategoryType | None) -> TransactionCreate:
@@ -381,3 +392,39 @@ class TestResolveCategory:
         service = TransactionService(repo, FakeCategorizer())
 
         assert await service.resolve_category("  Jardinería  ", "u1") == "jardinería"
+
+
+class TestBulkCategory:
+    async def test_recategorize_normalizes_and_delegates(self) -> None:
+        repo = FakeRepository()
+        repo.bulk_result = 4
+        service = TransactionService(repo, FakeCategorizer())
+
+        moved = await service.recategorize("u1", " Improvistos ", "Imprevistos")
+
+        assert moved == 4
+        assert repo.recategorized == [("improvistos", "imprevistos")]  # normalized
+
+    async def test_recategorize_noop_when_same(self) -> None:
+        repo = FakeRepository()
+        repo.bulk_result = 9
+        service = TransactionService(repo, FakeCategorizer())
+
+        moved = await service.recategorize("u1", "gym", "GYM")
+
+        assert moved == 0
+        assert repo.recategorized == []  # repo never touched
+
+    async def test_delete_by_category_normalizes(self) -> None:
+        repo = FakeRepository()
+        repo.bulk_result = 2
+        service = TransactionService(repo, FakeCategorizer())
+
+        assert await service.delete_by_category("u1", " Imprevistos ") == 2
+        assert repo.deleted_categories == ["imprevistos"]
+
+    async def test_count_by_category(self) -> None:
+        repo = FakeRepository(total=7)
+        service = TransactionService(repo, FakeCategorizer())
+
+        assert await service.count_by_category("u1", "imprevistos") == 7

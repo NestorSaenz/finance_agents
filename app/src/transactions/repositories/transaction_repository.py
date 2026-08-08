@@ -126,6 +126,18 @@ class TransactionRepository(TransactionRepositoryABC):
         # Scoped by user_id so a user can only delete their own transactions.
         await self._db.delete(TRANSACTIONS_TABLE, {"id": transaction_id, "user_id": user_id})
 
+    async def recategorize(self, user_id: UserId, old: Category, new: Category) -> int:
+        result = await self._db.update(
+            TRANSACTIONS_TABLE, {"category": new}, {"user_id": user_id, "category": old}
+        )
+        return result.count or 0
+
+    async def delete_by_category(self, user_id: UserId, category: Category) -> int:
+        result = await self._db.delete(
+            TRANSACTIONS_TABLE, {"user_id": user_id, "category": category}
+        )
+        return result.count or 0
+
 
 def _build_filters(
     user_id: UserId,

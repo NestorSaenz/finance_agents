@@ -63,6 +63,14 @@ class BudgetRepositoryABC(ABC):
     async def delete(self, budget_id: BudgetId, user_id: UserId) -> Budget | None:
         """Delete a budget; return it, or ``None`` if missing."""
 
+    @abstractmethod
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        """Move budgets from category ``old`` to ``new``; return rows changed."""
+
+    @abstractmethod
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        """Delete budgets in ``category``; return rows deleted."""
+
 
 class BudgetServiceABC(ABC):
     """Contract for budget use cases (business logic)."""
@@ -117,3 +125,11 @@ class BudgetServiceABC(ABC):
     @abstractmethod
     async def resolve_budget(self, reference: str, user_id: UserId) -> Budget | None:
         """Find a budget by name or category so the LLM never handles ids."""
+
+    @abstractmethod
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        """Move the tope(s) of category ``old`` to ``new``; return rows changed."""
+
+    @abstractmethod
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        """Delete the tope(s) of ``category``; return rows deleted."""

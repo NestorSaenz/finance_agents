@@ -68,6 +68,14 @@ class TransactionRepositoryABC(ABC):
     async def delete(self, transaction_id: TransactionId, user_id: UserId) -> None:
         """Delete a user's transaction (scoped by ``user_id``)."""
 
+    @abstractmethod
+    async def recategorize(self, user_id: UserId, old: Category, new: Category) -> int:
+        """Reassign every transaction in ``old`` to ``new``; return rows changed."""
+
+    @abstractmethod
+    async def delete_by_category(self, user_id: UserId, category: Category) -> int:
+        """Delete every transaction in ``category``; return rows deleted."""
+
 
 class TransactionServiceABC(ABC):
     """Contract for transaction use cases (business logic)."""
@@ -114,6 +122,22 @@ class TransactionServiceABC(ABC):
         tolerance) so a variant like "improvistos" does not fragment the user's
         existing "imprevistos"; otherwise returns the normalized proposal.
         """
+
+    @abstractmethod
+    async def list_categories(self, user_id: UserId) -> list[Category]:
+        """Distinct categories the user has used (for reuse/injection)."""
+
+    @abstractmethod
+    async def count_by_category(self, user_id: UserId, category: Category) -> int:
+        """Number of the user's transactions in ``category``."""
+
+    @abstractmethod
+    async def recategorize(self, user_id: UserId, old: Category, new: Category) -> int:
+        """Move every transaction from category ``old`` to ``new``; rows changed."""
+
+    @abstractmethod
+    async def delete_by_category(self, user_id: UserId, category: Category) -> int:
+        """Delete every transaction in ``category``; rows deleted."""
 
     @abstractmethod
     async def list_by_period(

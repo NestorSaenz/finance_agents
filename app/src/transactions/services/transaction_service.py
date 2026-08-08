@@ -125,6 +125,25 @@ class TransactionService(TransactionServiceABC):
         existing = await self._user_categories(user_id)
         return _match_category(normalized, existing)
 
+    async def list_categories(self, user_id: UserId) -> list[Category]:
+        return await self._user_categories(user_id)
+
+    async def count_by_category(self, user_id: UserId, category: Category) -> int:
+        return await self._repository.count(
+            user_id, category=normalize_category(category)
+        )
+
+    async def recategorize(self, user_id: UserId, old: Category, new: Category) -> int:
+        old_norm, new_norm = normalize_category(old), normalize_category(new)
+        if old_norm == new_norm:
+            return 0
+        return await self._repository.recategorize(user_id, old_norm, new_norm)
+
+    async def delete_by_category(self, user_id: UserId, category: Category) -> int:
+        return await self._repository.delete_by_category(
+            user_id, normalize_category(category)
+        )
+
     async def _user_categories(self, user_id: UserId) -> list[str]:
         """Distinct categories the user has used (most-recent first, deduped).
 

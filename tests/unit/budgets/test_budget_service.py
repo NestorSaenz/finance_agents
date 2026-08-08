@@ -49,6 +49,8 @@ class FakeBudgetRepository(BudgetRepositoryABC):
         self.budget = budget
         self.active = active or []
         self.created: list[BudgetCreate] = []
+        self.recategorized: list[tuple[str, str]] = []
+        self.deleted_categories: list[str] = []
 
     async def create(self, budget: BudgetCreate, user_id: UserId) -> Budget:
         self.created.append(budget)
@@ -89,6 +91,14 @@ class FakeBudgetRepository(BudgetRepositoryABC):
         deleted = self.budget
         self.budget = None
         return deleted
+
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        self.recategorized.append((old, new))
+        return 1
+
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        self.deleted_categories.append(category)
+        return 1
 
 
 REF = date(2024, 12, 15)
@@ -211,3 +221,39 @@ class TestResolveBudget:
         service = BudgetService(repo, FakeSpending(Decimal("0")))
 
         assert await service.resolve_budget("gimnasio", "u1") is None
+
+
+class TestBulkCategory:
+    async def test_recategorize_normalizes_and_delegates(self) -> None:
+        repo = FakeBudgetRepository()
+        service = BudgetService(repo, FakeSpending(Decimal("0")))
+
+        changed = await service.recategorize("u1", " Improvistos ", "Imprevistos")
+
+        assert changed == 1
+        assert repo.recategorized == [("improvistos", "imprevistos")]
+
+    async def test_recategorize_noop_when_same(self) -> None:
+        repo = FakeBudgetRepository()
+        service = BudgetService(repo, FakeSpending(Decimal("0")))
+
+        assert await service.recategorize("u1", "gym", "GYM") == 0
+        assert repo.recategorized == []
+
+    async def test_delete_by_category_normalizes(self) -> None:
+        repo = FakeBudgetRepository()
+        service = BudgetService(repo, FakeSpending(Decimal("0")))
+
+        assert await service.delete_by_category("u1", " Imprevistos ") == 1
+        assert repo.deleted_categories == ["imprevistos"]
+
+    async def test_recategorize_merges_into_existing_tope(self) -> None:
+        # Target category already has a tope (restaurantes): merge by deleting the
+        # source tope, never relabel (would leave two rows for one category).
+        repo = FakeBudgetRepository(active=[_budget()])  # category restaurantes
+        service = BudgetService(repo, FakeSpending(Decimal("0")))
+
+        await service.recategorize("u1", "salud", "restaurantes")
+
+        assert repo.deleted_categories == ["salud"]
+        assert repo.recategorized == []

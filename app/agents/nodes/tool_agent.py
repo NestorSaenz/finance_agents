@@ -7,11 +7,16 @@ time — never from the model.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from langchain_core.messages import AIMessage
 
-from app.agents.context import prior_context, user_context_block
+from app.agents.context import (
+    category_context_block,
+    prior_context,
+    user_context_block,
+)
 from app.agents.nodes.tool_agent_constants import TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
@@ -26,11 +31,27 @@ logger = get_logger(__name__)
 # ones span rounds. 4 is ample for personal-finance requests.
 MAX_TOOL_ROUNDS = 4
 
+# Fetches the user's existing categories so the agent can reuse them (injected
+# via binding, like llm/toolkit). Optional: tests and simple wiring may omit it.
+CategoriesProvider = Callable[[str], Awaitable[list[str]]]
+
+
+async def _fetch_categories(provider: CategoriesProvider | None, user_id: str) -> list[str]:
+    """Best-effort fetch of the user's categories; never breaks the turn."""
+    if provider is None:
+        return []
+    try:
+        return await provider(user_id)
+    except Exception as e:  # noqa: BLE001 - context enrichment must not break the turn.
+        logger.warning("Could not load user categories", error=str(e))
+        return []
+
 
 async def tool_agent_node(
     state: AgentState,
     llm: LLMInterface,
     toolkit: Toolkit,
+    categories_provider: CategoriesProvider | None = None,
 ) -> dict[str, object]:
     """Run a bounded tool-calling loop and produce the final response.
 
@@ -49,7 +70,10 @@ async def tool_agent_node(
     # when the user asks for something unrelated.
     history = prior_context(state)
     user_message = _last_message(state)
-    user_block = user_context_block(state)
+    # Inject the user's existing categories so the agent reuses them (prevents a
+    # synonym like "medicamentos" spawning a duplicate of "consultas y medicamentos").
+    categories = await _fetch_categories(categories_provider, user_id)
+    user_block = user_context_block(state) + category_context_block(categories)
 
     logger.info("Tool agent processing", user_id=user_id, turns=len(history))
 

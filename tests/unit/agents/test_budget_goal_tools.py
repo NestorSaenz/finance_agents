@@ -96,6 +96,12 @@ class FakeBudgetService(BudgetServiceABC):
             return budget
         return None
 
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        return 0
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
 
 class FakeGoalService(GoalServiceABC):
     def __init__(self, goals: list[Goal] | None = None) -> None:

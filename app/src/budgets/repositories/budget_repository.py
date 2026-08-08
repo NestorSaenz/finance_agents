@@ -123,6 +123,18 @@ class BudgetRepository(BudgetRepositoryABC):
         logger.info("Budget deleted", budget_id=budget_id, user_id=user_id)
         return deleted
 
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        result = await self._db.update(
+            BUDGETS_TABLE, {"category": new}, {"user_id": user_id, "category": old}
+        )
+        return result.count or 0
+
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        result = await self._db.delete(
+            BUDGETS_TABLE, {"user_id": user_id, "category": category}
+        )
+        return result.count or 0
+
 
 def _row_to_budget(row: dict[str, Any]) -> Budget:
     """Map a raw database row to a domain ``Budget``."""

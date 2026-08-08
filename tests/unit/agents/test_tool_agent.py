@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agents.context import category_context_block
 from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, tool_agent_node
 from app.agents.state import build_initial_state
 from app.agents.tools.transaction_tools import TransactionToolkit
@@ -56,6 +57,18 @@ class FakeTxService(TransactionServiceABC):
 
     async def resolve_category(self, proposed: str, user_id: str) -> str:
         return proposed
+
+    async def count_by_category(self, user_id: str, category: str) -> int:
+        return 0
+
+    async def list_categories(self, user_id: str) -> list[str]:
+        return []
+
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        return 0
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        return 0
 
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         raise NotImplementedError
@@ -139,6 +152,29 @@ class TestToolAgentNode:
             if m.role == MessageRole.USER
         )
 
+    async def test_injects_user_categories_into_context(self) -> None:
+        """The user's existing categories reach the agent so it reuses them."""
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        captured: dict[str, list] = {}
+
+        class CapturingLLM(ScriptedToolLLM):
+            async def generate_with_tools(self, messages, tools, config=None):  # type: ignore[no-untyped-def]
+                captured.setdefault("messages", list(messages))
+                return await super().generate_with_tools(messages, tools, config)
+
+        async def provider(user_id: str) -> list[str]:
+            return ["venezuela", "consultas y medicamentos"]
+
+        llm = CapturingLLM([_text("Listo.")])
+        state = build_initial_state(message="cuánto gasté en venezuela", user_id="u1")
+
+        await tool_agent_node(state, llm, toolkit, categories_provider=provider)
+
+        system_prompt = captured["messages"][0].content
+        assert "venezuela" in system_prompt
+        assert "consultas y medicamentos" in system_prompt
+
     async def test_executes_tool_then_responds(self) -> None:
         service = FakeTxService()
         toolkit = TransactionToolkit(service)
@@ -212,3 +248,14 @@ class TestToolAgentNode:
         result = await tool_agent_node(state, BrokenLLM("x"), toolkit)
 
         assert "no pude completar" in result["messages"][-1].content.lower()
+
+
+class TestCategoryContextBlock:
+    def test_empty_when_no_categories(self) -> None:
+        assert category_context_block([]) == ""
+
+    def test_lists_categories_for_reuse(self) -> None:
+        block = category_context_block(["venezuela", "consultas y medicamentos"])
+        assert "venezuela" in block
+        assert "consultas y medicamentos" in block
+        assert "REUTIL" in block.upper()

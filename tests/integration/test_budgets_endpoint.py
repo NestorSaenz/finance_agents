@@ -102,6 +102,12 @@ class StubBudgetService(BudgetServiceABC):
     async def resolve_budget(self, reference: str, user_id: UserId) -> Budget | None:
         return _budget() if self.found else None
 
+    async def recategorize(self, user_id: UserId, old: str, new: str) -> int:
+        return 0
+
+    async def delete_by_category(self, user_id: UserId, category: str) -> int:
+        return 0
+
 
 def _client(service: BudgetServiceABC) -> Iterator[TestClient]:
     app.dependency_overrides[get_budget_service] = lambda: service

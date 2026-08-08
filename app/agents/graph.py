@@ -19,7 +19,7 @@ from app.agents.nodes.categorizer import categorizer_node
 from app.agents.nodes.orchestrator import orchestrator_node
 from app.agents.nodes.refusal import refusal_node
 from app.agents.nodes.response_generator import response_generator_node
-from app.agents.nodes.tool_agent import tool_agent_node
+from app.agents.nodes.tool_agent import CategoriesProvider, tool_agent_node
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
 from app.agents.types import AgentName
@@ -60,6 +60,7 @@ def create_financegpt_graph(
     embedding_client: EmbeddingInterface,
     vector_store: VectorStoreInterface,
     toolkit: Toolkit,
+    categories_provider: "CategoriesProvider | None" = None,
 ) -> "CompiledStateGraph":
     """Create and compile the FinanceGPT graph.
 
@@ -92,7 +93,15 @@ def create_financegpt_graph(
             llm=llm_simple,
         ),
     )
-    graph.add_node("tool_agent", partial(tool_agent_node, llm=llm_complex, toolkit=toolkit))
+    graph.add_node(
+        "tool_agent",
+        partial(
+            tool_agent_node,
+            llm=llm_complex,
+            toolkit=toolkit,
+            categories_provider=categories_provider,
+        ),
+    )
     graph.add_node("response_generator", partial(response_generator_node, llm=llm_complex))
     graph.add_node("refusal", refusal_node)
 
@@ -122,6 +131,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.agents.tools.analysis_tools import AnalysisToolkit
     from app.agents.tools.budget_tools import BudgetToolkit
     from app.agents.tools.card_tools import CardToolkit
+    from app.agents.tools.category_tools import CategoryToolkit
     from app.agents.tools.composite_toolkit import CompositeToolkit
     from app.agents.tools.goal_tools import GoalToolkit
     from app.agents.tools.transaction_tools import TransactionToolkit
@@ -177,6 +187,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
             GoalToolkit(goal_service),
             CardToolkit(card_service),
             AnalysisToolkit(analysis_service),
+            CategoryToolkit(transaction_service, budget_service),
         ]
     )
 
@@ -186,4 +197,5 @@ def get_compiled_graph() -> "CompiledStateGraph":
         embedding_client=embedding_client,
         vector_store=vector_store,
         toolkit=toolkit,
+        categories_provider=transaction_service.list_categories,
     )

@@ -50,6 +50,27 @@ def user_context_block(state: AgentState) -> str:
     return f"\n\n## Lo que sabemos del usuario (memoria):\n{context}\n"
 
 
+def category_context_block(categories: list[str]) -> str:
+    """Prompt block listing the categories the user already uses, or "" if none.
+
+    Lets the agent REUSE the user's own category (even a synonym it would name
+    differently, e.g. 'medicamentos' -> 'consultas y medicamentos') instead of
+    inventing a duplicate, which string-similarity alone can't bridge.
+    """
+    if not categories:
+        return ""
+    joined = ", ".join(categories)
+    return (
+        "\n\n## Categorías que este usuario YA usa (REUTILÍZALAS):\n"
+        f"{joined}\n"
+        "Cuando el usuario mencione un gasto/categoría que encaje en una de estas, usa "
+        "EXACTAMENTE esa —tanto para REGISTRAR como para CONSULTAR/FILTRAR— aunque él la "
+        "nombre distinto (p. ej. 'medicamentos' → 'consultas y medicamentos', o preguntar "
+        "'cuánto gasté en Venezuela' → filtra por la categoría 'venezuela'). Crea una "
+        "categoría nueva solo si de verdad no encaja en ninguna.\n"
+    )
+
+
 def _convert(messages: list) -> list[Message]:
     result: list[Message] = []
     for message in messages:
