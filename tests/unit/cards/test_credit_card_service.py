@@ -87,8 +87,13 @@ class FakeCardRepo(CreditCardRepositoryABC):
 
 
 class FakePaymentRepo(CardPaymentRepositoryABC):
-    def __init__(self, total: Decimal = Decimal("0")) -> None:
+    def __init__(
+        self,
+        total: Decimal = Decimal("0"),
+        dated: list[tuple[date, Decimal]] | None = None,
+    ) -> None:
         self.total = total
+        self.dated = dated  # (payment_date, amount) pairs to honor `as_of`
         self.created: list[tuple[str, Decimal]] = []
 
     async def create(
@@ -104,8 +109,15 @@ class FakePaymentRepo(CardPaymentRepositoryABC):
             created_at=datetime(2026, 7, 3, tzinfo=UTC),
         )
 
-    async def total_paid(self, user_id: UserId, card_id: CardId) -> Decimal:
-        return self.total
+    async def total_paid(
+        self, user_id: UserId, card_id: CardId, as_of: date | None = None
+    ) -> Decimal:
+        if self.dated is None:
+            return self.total
+        return sum(
+            (amt for d, amt in self.dated if as_of is None or d <= as_of),
+            Decimal("0"),
+        )
 
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date
@@ -114,14 +126,23 @@ class FakePaymentRepo(CardPaymentRepositoryABC):
 
 
 class FakeSpending(CreditCardSpendingABC):
-    def __init__(self, cycle: Decimal, total: Decimal) -> None:
+    def __init__(
+        self, cycle: Decimal, total: Decimal, period: Decimal | None = None
+    ) -> None:
         self.cycle = cycle
         self.total = total
+        self.period = period  # the selected-month total when a period is requested
 
     async def charges_summary(
-        self, user_id: UserId, card_id: CardId, cycle_start: date, as_of: date
-    ) -> tuple[Decimal, Decimal]:
-        return self.total, self.cycle
+        self,
+        user_id: UserId,
+        card_id: CardId,
+        cycle_start: date,
+        as_of: date,
+        period: tuple[date, date] | None = None,
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        period_total = self.period if self.period is not None else Decimal("0")
+        return self.total, self.cycle, period_total
 
 
 @pytest.mark.asyncio
@@ -140,6 +161,86 @@ async def test_status_computes_balance_and_available() -> None:
     assert s.balance == Decimal("500000")
     assert s.available == Decimal("4500000")
     assert s.spent_cycle == Decimal("200000")
+    assert s.cycle_start == date(2026, 6, 16)
+    assert s.cycle_end == date(2026, 7, 15)
+    assert s.next_payment_date == date(2026, 8, 5)
+
+
+@pytest.mark.asyncio
+async def test_available_never_exceeds_limit_when_overpaid() -> None:
+    # Paid more than charged -> negative balance (credit in favor); available must
+    # be capped at the limit, never limit + overpayment.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("1000000")),
+        FakeSpending(cycle=Decimal("0"), total=Decimal("300000")),
+    )
+
+    s = (await service.get_all_status("u1", as_of=REF))[0]
+
+    assert s.balance == Decimal("-700000")  # overpaid
+    assert s.available == Decimal("5000000")  # capped at the limit, not 5.7M
+
+
+@pytest.mark.asyncio
+async def test_spent_reflects_selected_period() -> None:
+    # With a period, 'spent' comes from the selected-month total in charges_summary,
+    # not the current cycle.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("200000"), total=Decimal("800000"), period=Decimal("588770")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1", as_of=REF, period_start=date(2026, 6, 1), period_end=date(2026, 6, 30)
+        )
+    )[0]
+
+    assert s.spent_cycle == Decimal("588770")  # the June figure, not the cycle's 200k
+
+
+@pytest.mark.asyncio
+async def test_historical_balance_excludes_later_payments() -> None:
+    # Viewing June: charges up to June-end are 588,770; a payment made in AUGUST
+    # must NOT reduce June's balance (reconstructed at the month-end, not today).
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(dated=[(date(2026, 8, 8), Decimal("1645349"))]),
+        FakeSpending(cycle=Decimal("0"), total=Decimal("588770"), period=Decimal("588770")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1", period_start=date(2026, 6, 1), period_end=date(2026, 6, 30)
+        )
+    )[0]
+
+    assert s.balance == Decimal("588770")  # August abono excluded at June month-end
+    assert s.available == Decimal("5000000") - Decimal("588770")
+
+
+@pytest.mark.asyncio
+async def test_current_month_stays_live_not_month_end() -> None:
+    # The CURRENT month's period_end is in the future (end of month). The cycle and
+    # next payment must be computed at TODAY, not month-end (which would jump a cycle).
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("200000"), total=Decimal("800000"), period=Decimal("200000")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1",
+            as_of=REF,  # 2026-07-03
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),  # future relative to REF
+        )
+    )[0]
+
+    # cutoff 15 -> cycle at Jul 3 is Jun16–Jul15, next payment Aug 5 (NOT Sep 5).
     assert s.cycle_start == date(2026, 6, 16)
     assert s.cycle_end == date(2026, 7, 15)
     assert s.next_payment_date == date(2026, 8, 5)

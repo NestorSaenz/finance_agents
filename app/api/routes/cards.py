@@ -41,9 +41,20 @@ async def create_card(
 async def get_cards_status(
     service: CreditCardServiceDep,
     user_id: CurrentUserId,
+    period: str | None = Query(
+        default=None,
+        description=(
+            "If given ('este_mes', 'mes_pasado', 'todo' or 'YYYY-MM'), every figure "
+            "(spent, balance, available, payment date) is reconstructed at that "
+            "month-end; otherwise it's the live state today."
+        ),
+    ),
 ) -> CreditCardStatusListResponse:
-    """Return every card with cycle spend, balance owed and available credit."""
-    statuses = await service.get_all_status(user_id)
+    """Return every card's status (spend, balance, available) for the month or today."""
+    period_start, period_end = resolve_period(period) if period else (None, None)
+    statuses = await service.get_all_status(
+        user_id, period_start=period_start, period_end=period_end
+    )
     return CreditCardStatusListResponse(
         cards=[CreditCardStatusResponse.from_domain(s) for s in statuses],
         total_limit=sum((s.card.credit_limit for s in statuses), Decimal("0")),

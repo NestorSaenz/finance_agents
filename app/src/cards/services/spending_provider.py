@@ -23,11 +23,17 @@ class TransactionCardSpendingProvider(CreditCardSpendingABC):
         self._db = db
 
     async def charges_summary(
-        self, user_id: UserId, card_id: CardId, cycle_start: date, as_of: date
-    ) -> tuple[Decimal, Decimal]:
+        self,
+        user_id: UserId,
+        card_id: CardId,
+        cycle_start: date,
+        as_of: date,
+        period: tuple[date, date] | None = None,
+    ) -> tuple[Decimal, Decimal, Decimal]:
         # Fetch the card's charges ONCE (equality filters server-side; date
         # windows applied in Python since PostgREST filters can't do ranges),
-        # then derive both the running total and the current-cycle total.
+        # then derive the running total, the current-cycle total, and the
+        # optional selected-period total from the same rows.
         config = QueryConfig(
             select="amount,transaction_date",
             filters={"user_id": user_id, "type": "expense", "card_id": card_id},
@@ -35,14 +41,16 @@ class TransactionCardSpendingProvider(CreditCardSpendingABC):
         )
         result = await self._db.select(TRANSACTIONS_TABLE, config)
 
-        total = Decimal("0")
-        cycle = Decimal("0")
+        total = cycle = period_total = Decimal("0")
         for row in result.data:
             tx_date = _parse_date(row.get("transaction_date"))
-            if tx_date is None or tx_date > as_of:
+            if tx_date is None:
                 continue
             amount = _parse_decimal(row.get("amount"))
-            total += amount
-            if tx_date >= cycle_start:
-                cycle += amount
-        return total, cycle
+            if tx_date <= as_of:
+                total += amount
+                if tx_date >= cycle_start:
+                    cycle += amount
+            if period is not None and period[0] <= tx_date <= period[1]:
+                period_total += amount
+        return total, cycle, period_total

@@ -66,11 +66,13 @@ class CardPaymentView(BaseModel):
 class CreditCardStatus(BaseModel):
     """A credit card evaluated against charges, payments and its cycle."""
 
+    # When evaluated for a selected month (dashboard), every figure is the
+    # HISTORICAL state at that month-end; with no month, it's the live state today.
     card: CreditCard
     cycle_start: date
     cycle_end: date
-    spent_cycle: Decimal  # charges on this card within the current cycle
-    balance: Decimal  # amount owed = all charges - all payments
-    available: Decimal  # credit_limit - balance
-    utilization: float  # percentage of the limit used by the balance (0-100+)
+    spent_cycle: Decimal  # charges in the selected month, or the current cycle
+    balance: Decimal  # amount owed = charges - payments (up to the eval date)
+    available: Decimal  # credit_limit - max(balance, 0)
+    utilization: float  # percentage of the limit used by the balance (0-100)
     next_payment_date: date

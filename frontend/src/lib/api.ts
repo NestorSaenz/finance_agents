@@ -111,8 +111,11 @@ export const api = {
 
   goals: (token: string | null): Promise<GoalList> => request("/goals", { token }),
 
-  cardsStatus: (token: string | null): Promise<CreditCardStatusList> =>
-    request("/cards/status", { token }),
+  cardsStatus: (
+    period: string,
+    token: string | null,
+  ): Promise<CreditCardStatusList> =>
+    request(`/cards/status?period=${encodeURIComponent(period)}`, { token }),
 
   cardPayments: (
     period: string,

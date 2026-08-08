@@ -73,7 +73,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
     setError(null);
     try {
       // Budgets are current-period, so only fetch them for the "este_mes" view.
-      // Cards/goals reflect current state, so they load in every view.
+      // Cards are reconstructed for the selected month (deuda/disponible/pago at
+      // that month-end); goals reflect current state. Both load in every view.
       const [
         summaryData,
         movementsData,
@@ -88,7 +89,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         period === "este_mes" ? api.budgetStatus(token) : Promise.resolve(null),
         api.profile(token),
         api.goals(token),
-        api.cardsStatus(token),
+        api.cardsStatus(period, token),
         api.cardPayments(period, token),
       ]);
       setSummary(summaryData);
@@ -189,6 +190,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
           {PERIODS.map((p) => (
             <button
               key={p.value}
+              aria-pressed={period === p.value}
               onClick={() => setPeriod(p.value)}
               className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                 period === p.value
@@ -251,6 +253,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               goals={goals}
               cards={cards}
               payments={payments}
+              period={period}
             />
           ) : null}
         </div>

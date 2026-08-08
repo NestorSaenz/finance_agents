@@ -59,8 +59,14 @@ class CardPaymentRepositoryABC(ABC):
         """Persist a payment toward a card and return it."""
 
     @abstractmethod
-    async def total_paid(self, user_id: UserId, card_id: CardId) -> Decimal:
-        """Return the sum of all payments made toward ``card_id``."""
+    async def total_paid(
+        self, user_id: UserId, card_id: CardId, as_of: date | None = None
+    ) -> Decimal:
+        """Return the sum of payments toward ``card_id``.
+
+        With ``as_of`` set, only payments on or before that date count (used to
+        reconstruct a card's balance at a past month-end).
+        """
 
     @abstractmethod
     async def list_in_period(
@@ -74,12 +80,17 @@ class CreditCardSpendingABC(ABC):
 
     @abstractmethod
     async def charges_summary(
-        self, user_id: UserId, card_id: CardId, cycle_start: date, as_of: date
-    ) -> tuple[Decimal, Decimal]:
-        """Return ``(total charged up to as_of, charged within the cycle)``.
+        self,
+        user_id: UserId,
+        card_id: CardId,
+        cycle_start: date,
+        as_of: date,
+        period: tuple[date, date] | None = None,
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        """Return ``(total up to as_of, current-cycle total, selected-period total)``.
 
-        Both figures come from a single fetch of the card's charges to avoid
-        querying the same rows twice.
+        All three come from a single fetch of the card's charges. ``period`` (a
+        ``(start, end)`` window) drives the third figure; it is ``0`` when omitted.
         """
 
 
@@ -96,7 +107,12 @@ class CreditCardServiceABC(ABC):
 
     @abstractmethod
     async def get_all_status(
-        self, user_id: UserId, as_of: date | None = None
+        self,
+        user_id: UserId,
+        as_of: date | None = None,
+        *,
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> list[CreditCardStatus]:
         """Return every active card evaluated against charges, payments, cycle."""
 

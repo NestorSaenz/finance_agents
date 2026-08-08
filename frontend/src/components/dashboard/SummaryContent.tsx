@@ -24,6 +24,17 @@ interface SummaryContentProps {
   goals: Goal[];
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
+  /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
+  period: string;
+}
+
+/** True when the selected period is a month earlier than the current one. */
+function isPastMonth(period: string): boolean {
+  if (period === "mes_pasado") return true;
+  if (!/^\d{4}-\d{2}$/.test(period)) return false; // este_mes, todo → current
+  const now = new Date();
+  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return period < current;
 }
 
 /** The scrollable body of the dashboard: totals, gauge, and progress sections. */
@@ -34,7 +45,9 @@ export function SummaryContent({
   goals,
   cards,
   payments,
+  period,
 }: SummaryContentProps) {
+  const historicalCards = isPastMonth(period);
   const activeGoals = goals.filter(
     (g) => g.status === "active" || g.status === "completed",
   );
@@ -129,8 +142,15 @@ export function SummaryContent({
       )}
 
       {cards && cards.cards.length > 0 && (
-        <Section title="Tarjetas de crédito">
-          <CardStatus data={cards} />
+        <Section
+          title="Tarjetas de crédito"
+          subtitle={
+            historicalCards
+              ? "Deuda, disponible y pago reconstruidos a fin de ese mes."
+              : "Estado a hoy."
+          }
+        >
+          <CardStatus data={cards} historical={historicalCards} />
         </Section>
       )}
 

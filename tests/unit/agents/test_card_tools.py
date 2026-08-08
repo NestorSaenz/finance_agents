@@ -60,7 +60,7 @@ class FakeCardService(CreditCardServiceABC):
         return self._cards
 
     async def get_all_status(
-        self, user_id: UserId, as_of: date | None = None
+        self, user_id: UserId, as_of: date | None = None, **kwargs: object
     ) -> list[CreditCardStatus]:
         return [_status(c) for c in self._cards]
 

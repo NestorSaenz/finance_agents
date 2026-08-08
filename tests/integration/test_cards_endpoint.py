@@ -61,7 +61,7 @@ class StubCardService(CreditCardServiceABC):
         return [_card()]
 
     async def get_all_status(
-        self, user_id: UserId, as_of: date | None = None
+        self, user_id: UserId, as_of: date | None = None, **kwargs: object
     ) -> list[CreditCardStatus]:
         return [_status()]
 

@@ -48,12 +48,26 @@ class CardPaymentRepository(CardPaymentRepositoryABC):
         logger.info("Card payment created", card_id=card_id, user_id=user_id)
         return created
 
-    async def total_paid(self, user_id: UserId, card_id: CardId) -> Decimal:
+    async def total_paid(
+        self, user_id: UserId, card_id: CardId, as_of: date | None = None
+    ) -> Decimal:
         config = QueryConfig(
-            select="amount", filters={"user_id": user_id, "card_id": card_id}
+            select="amount,payment_date",
+            filters={"user_id": user_id, "card_id": card_id},
         )
         result = await self._db.select(CARD_PAYMENTS_TABLE, config)
-        return sum((_parse_decimal(r.get("amount")) for r in result.data), Decimal("0"))
+        # `as_of` reconstructs the balance at a past month-end: only payments made
+        # on or before that date count (range filter applied in Python).
+        rows = (
+            result.data
+            if as_of is None
+            else [
+                r
+                for r in result.data
+                if (d := _parse_date(r.get("payment_date"))) is not None and d <= as_of
+            ]
+        )
+        return sum((_parse_decimal(r.get("amount")) for r in rows), Decimal("0"))
 
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date

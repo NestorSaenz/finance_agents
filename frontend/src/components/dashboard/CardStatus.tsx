@@ -10,7 +10,14 @@ function toneFor(pct: number): { bar: string; text: string } {
   return { bar: "bg-brand-600", text: "text-muted" };
 }
 
-export function CardStatus({ data }: { data: CreditCardStatusList }) {
+export function CardStatus({
+  data,
+  historical = false,
+}: {
+  data: CreditCardStatusList;
+  /** Viewing a past month: figures are reconstructed at that month-end. */
+  historical?: boolean;
+}) {
   if (data.cards.length === 0) return null;
 
   return (
@@ -44,9 +51,9 @@ export function CardStatus({ data }: { data: CreditCardStatusList }) {
               <dd className="text-right font-medium text-positive">
                 {formatMoney(c.available)}
               </dd>
-              <dt className="text-muted">Gastado este ciclo</dt>
+              <dt className="text-muted">Gastado en el mes</dt>
               <dd className="text-right text-ink">{formatMoney(c.spent_cycle)}</dd>
-              <dt className="text-muted">Próximo pago</dt>
+              <dt className="text-muted">{historical ? "Fecha de pago" : "Próximo pago"}</dt>
               <dd className="text-right text-ink">{formatDayMonth(c.next_payment_date)}</dd>
             </dl>
           </div>
