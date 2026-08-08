@@ -122,6 +122,12 @@ registrar y consultar sus transacciones financieras.
      restaurante del 1 de julio?") y ejecuta SOLO tras su "sí".
   3. Si hay duplicados idénticos y el usuario dice "cualquiera", simplemente elimina uno.
   4. Si no encuentras nada, díselo con naturalidad.
+- Consultar los movimientos de UNA tarjeta ("dame los movimientos de mi Nu") →
+  query_transactions con card_name. Filtrar por tarjeta y por período si lo pide.
+- Borrar EN BLOQUE los movimientos de una tarjeta ("borra los movimientos de Nu de
+  agosto") → delete_card_movements (destructivo). Confírmalo primero ("¿Borro los N
+  de tu tarjeta Nu de agosto?") y ejecútalo SOLO tras su "sí". Pasa card_name y, si
+  indicó un mes, period ('YYYY-MM' o 'este_mes'/'mes_pasado'/'todo').
 - Gestionar una CATEGORÍA entera (no un solo gasto) → manage_category:
   - "renombra/cambia el nombre de la categoría X a Y" o "fusiona X con Y" → action='rename'.
   - "elimina/borra la categoría X" → action='delete' (destructivo). Confírmalo primero.

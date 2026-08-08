@@ -47,8 +47,10 @@ def _goal(**over: object) -> Goal:
 
 
 class FakeBudgetService(BudgetServiceABC):
-    def __init__(self) -> None:
+    def __init__(self, existing: bool = True) -> None:
         self.created: list[tuple[BudgetCreate, str]] = []
+        # Whether resolve_budget finds a pre-existing budget (for upsert tests).
+        self._existing = existing
 
     async def create_budget(self, budget: BudgetCreate, user_id: str) -> Budget:
         self.created.append((budget, user_id))
@@ -90,6 +92,8 @@ class FakeBudgetService(BudgetServiceABC):
         return _budget()
 
     async def resolve_budget(self, reference: str, user_id: str) -> Budget | None:
+        if not self._existing:
+            return None
         target = reference.lower()
         budget = _budget()
         if target in (budget.name.lower(), budget.category or ""):
@@ -138,7 +142,7 @@ class FakeGoalService(GoalServiceABC):
 
 class TestBudgetToolkit:
     async def test_create_budget_passes_user_id_from_dispatch(self) -> None:
-        service = FakeBudgetService()
+        service = FakeBudgetService(existing=False)  # no prior tope -> actually creates
         toolkit = BudgetToolkit(service)
 
         result = await toolkit.dispatch(
@@ -152,6 +156,21 @@ class TestBudgetToolkit:
         assert budget.name == "Comida"
         assert budget.category == CategoryType.ALIMENTACION
         assert "✅" in result
+
+    async def test_create_budget_updates_existing_category_not_duplicates(self) -> None:
+        # "el presupuesto de alimentacion va a ser X" when one exists -> UPDATE, not
+        # a second 'alimentacion' tope.
+        service = FakeBudgetService(existing=True)
+
+        result = await BudgetToolkit(service).dispatch(
+            "create_budget",
+            {"name": "Alimentación", "amount": 349300, "category": "alimentacion"},
+            "u1",
+        )
+
+        assert service.created == []  # no duplicate created
+        assert service.updated["amount"] == Decimal("349300")  # existing updated
+        assert "actualic" in result.lower()
 
     async def test_query_budgets_formats_status(self) -> None:
         result = await BudgetToolkit(FakeBudgetService()).dispatch("query_budgets", {}, "u1")

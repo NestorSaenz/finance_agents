@@ -7,6 +7,7 @@ import pytest
 
 from app.agents.tools.transaction_tools import (
     ANALYZE_SPENDING_TOOL,
+    DELETE_CARD_MOVEMENTS_TOOL,
     DELETE_TRANSACTION_TOOL,
     QUERY_TRANSACTIONS_TOOL,
     REGISTER_TRANSACTION_TOOL,
@@ -77,6 +78,10 @@ class FakeTransactionService(TransactionServiceABC):
     async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
         return self.items
 
+    async def delete_by_card_and_period(self, user_id: str, card_id: str, **kwargs: object) -> int:
+        self.deleted_by_card = (card_id, kwargs)
+        return len(self.items)
+
     async def resolve_category(self, proposed: str, user_id: str) -> str:
         self.resolve_calls.append((proposed, user_id))
         return self.resolved_category if self.resolved_category is not None else proposed
@@ -121,6 +126,7 @@ class TestSchemas:
             ANALYZE_SPENDING_TOOL,
             UPDATE_TRANSACTION_TOOL,
             DELETE_TRANSACTION_TOOL,
+            DELETE_CARD_MOVEMENTS_TOOL,
         }
 
         # user_id must never be part of any tool's parameters.
@@ -480,3 +486,62 @@ class TestCreditBudgetDate:
 
     def test_cash_keeps_purchase_date(self) -> None:
         assert _credit_budget_date(None, date(2026, 7, 22)) == date(2026, 7, 22)
+
+
+class TestCardScopedOps:
+    async def test_query_filters_by_card(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        await toolkit.dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"card_name": "Visa BBVA"}, user_id="u1"
+        )
+
+        _uid, kwargs = service.list_calls[-1]
+        assert kwargs["card_id"] == "card-1"
+
+    async def test_query_unknown_card_returns_message(self) -> None:
+        toolkit = TransactionToolkit(FakeTransactionService(), cards=FakeCardService(cards=[]))
+
+        result = await toolkit.dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"card_name": "Nu"}, user_id="u1"
+        )
+
+        assert "no encontré" in result.lower()
+
+    async def test_delete_card_movements(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction(), _transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        result = await toolkit.dispatch(
+            DELETE_CARD_MOVEMENTS_TOOL,
+            {"card_name": "Visa BBVA", "period": "2026-08"},
+            user_id="u1",
+        )
+
+        assert service.deleted_by_card[0] == "card-1"
+        assert "2" in result
+
+    async def test_delete_card_movements_unknown_card(self) -> None:
+        toolkit = TransactionToolkit(FakeTransactionService(), cards=FakeCardService(cards=[]))
+
+        result = await toolkit.dispatch(
+            DELETE_CARD_MOVEMENTS_TOOL, {"card_name": "Nu"}, user_id="u1"
+        )
+
+        assert "no encontré" in result.lower()
+
+    async def test_delete_card_movements_requires_period(self) -> None:
+        # Destructive: without an explicit period it must ASK, never wipe all history.
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        result = await toolkit.dispatch(
+            DELETE_CARD_MOVEMENTS_TOOL, {"card_name": "Visa BBVA"}, user_id="u1"
+        )
+
+        assert "período" in result.lower() or "periodo" in result.lower()
+        assert not hasattr(service, "deleted_by_card")  # nothing was deleted

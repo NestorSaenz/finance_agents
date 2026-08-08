@@ -22,7 +22,7 @@ from app.agents.nodes.analyst_utils import (
 )
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
-from app.shared.periods import period_label
+from app.shared.periods import period_label, resolve_period
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
 from app.src.cards.cycle import compute_cycle, next_payment_date
 from app.src.cards.interfaces import CreditCardServiceABC
@@ -38,6 +38,7 @@ QUERY_TRANSACTIONS_TOOL = "query_transactions"
 ANALYZE_SPENDING_TOOL = "analyze_spending"
 UPDATE_TRANSACTION_TOOL = "update_transaction"
 DELETE_TRANSACTION_TOOL = "delete_transaction"
+DELETE_CARD_MOVEMENTS_TOOL = "delete_card_movements"
 
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500
@@ -122,13 +123,17 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": QUERY_TRANSACTIONS_TOOL,
             "description": (
                 "Consulta las transacciones del usuario, opcionalmente filtrando por "
-                "tipo y categoría."
+                "tipo, categoría y/o tarjeta (p. ej. 'los movimientos de mi tarjeta Nu')."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "transaction_type": {"type": "string", "enum": ["income", "expense"]},
                     "category": {"type": "string"},
+                    "card_name": {
+                        "type": "string",
+                        "description": "Filtrar por la tarjeta cuyo nombre diga el usuario",
+                    },
                     "page": {"type": "integer", "minimum": 1},
                     "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
@@ -228,6 +233,35 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": DELETE_CARD_MOVEMENTS_TOOL,
+            "description": (
+                "Borra EN BLOQUE los movimientos de UNA tarjeta, opcionalmente de un "
+                "período (p. ej. 'borra los movimientos de Nu de agosto'). Destructivo: "
+                "confírmalo con el usuario ('¿Borro los N de tu tarjeta X?') y úsala SOLO "
+                "tras su 'sí'. Identificas la tarjeta por su nombre."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "card_name": {
+                        "type": "string",
+                        "description": "Nombre de la tarjeta (ej. 'Nu')",
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "Período: 'este_mes', 'mes_pasado', 'todo' o 'YYYY-MM'. "
+                            "Omitir = todos los movimientos de la tarjeta."
+                        ),
+                    },
+                },
+                "required": ["card_name"],
+            },
+        },
+    },
 ]
 
 
@@ -274,6 +308,8 @@ class TransactionToolkit:
             return await self._analyze(arguments, user_id)
         if name == UPDATE_TRANSACTION_TOOL:
             return await self._update(arguments, user_id)
+        if name == DELETE_CARD_MOVEMENTS_TOOL:
+            return await self._delete_card_movements(arguments, user_id)
         if name == DELETE_TRANSACTION_TOOL:
             return await self._delete(arguments, user_id)
         raise ValueError(f"Unknown transaction tool: {name}")
@@ -374,12 +410,16 @@ class TransactionToolkit:
         return None, _which_card_message(cards)
 
     async def _query(self, args: dict[str, Any], user_id: UserId) -> str:
+        card_id, card_error = await self._resolve_query_card(args, user_id)
+        if card_error is not None:
+            return card_error
         items, total = await self._service.list_transactions(
             user_id,
             page=_to_int(args.get("page"), default=1, minimum=1),
             page_size=_to_int(args.get("page_size"), default=20, minimum=1, maximum=100),
             transaction_type=_to_type(args.get("transaction_type")),
             category=_to_category(args.get("category")),
+            card_id=card_id,
         )
         if not items:
             return "No se encontraron transacciones con esos filtros."
@@ -393,6 +433,47 @@ class TransactionToolkit:
             for t in items[:10]
         ]
         return f"{total} transacción(es) encontradas:\n" + "\n".join(lines)
+
+    async def _resolve_query_card(
+        self, args: dict[str, Any], user_id: UserId
+    ) -> tuple[str | None, str | None]:
+        """Resolve a ``card_name`` filter to a card id. Returns ``(card_id, error)``."""
+        card_name = str(args.get("card_name", "")).strip()
+        if not card_name or self._cards is None:
+            return None, None
+        card = await self._cards.resolve_by_name(card_name, user_id)
+        if card is None:
+            return None, f"No encontré una tarjeta que coincida con '{card_name}'."
+        return card.id, None
+
+    async def _delete_card_movements(self, args: dict[str, Any], user_id: UserId) -> str:
+        if self._cards is None:
+            return "No tienes tarjetas configuradas."
+        card_name = str(args.get("card_name", "")).strip()
+        if not card_name:
+            return "¿De qué tarjeta quieres borrar los movimientos?"
+        card = await self._cards.resolve_by_name(card_name, user_id)
+        if card is None:
+            return f"No encontré una tarjeta que coincida con '{card_name}'."
+        # Destructive: never default to wiping ALL history. Require an explicit period
+        # (a month, or an explicit 'todo') so an omitted arg can't erase everything.
+        period = str(args.get("period", "")).strip()
+        if not period:
+            return (
+                f"¿De qué período borro los movimientos de la tarjeta {card.name}? "
+                "Dime un mes (p. ej. '2026-08') o 'todo' para borrarlos todos."
+            )
+        start, end = resolve_period(period)
+        deleted = await self._service.delete_by_card_and_period(
+            user_id, card.id, period_start=start, period_end=end
+        )
+        scope = period_label(period)
+        if deleted == 0:
+            return f"No encontré movimientos de la tarjeta {card.name} ({scope})."
+        logger.info(
+            "Deleted card movements", card=card.name, count=deleted, user_id=user_id
+        )
+        return f"🗑️ Borré {deleted} movimiento(s) de la tarjeta {card.name} ({scope})."
 
     async def _analyze(self, args: dict[str, Any], user_id: UserId) -> str:
         period = str(args.get("period", "este_mes")).lower()

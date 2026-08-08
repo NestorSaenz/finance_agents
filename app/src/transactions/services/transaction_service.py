@@ -9,6 +9,7 @@ from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
 from app.shared.types import (
+    CardId,
     Category,
     PaymentMethod,
     TransactionId,
@@ -108,6 +109,7 @@ class TransactionService(TransactionServiceABC):
         page_size: int,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> tuple[list[Transaction], int]:
         offset = (page - 1) * page_size
         items = await self._repository.list_page(
@@ -116,11 +118,13 @@ class TransactionService(TransactionServiceABC):
             offset=offset,
             transaction_type=transaction_type,
             category=category,
+            card_id=card_id,
         )
         total = await self._repository.count(
             user_id,
             transaction_type=transaction_type,
             category=category,
+            card_id=card_id,
         )
         return items, total
 
@@ -170,6 +174,7 @@ class TransactionService(TransactionServiceABC):
         period_end: date,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> list[Transaction]:
         # Push type/category to the repo (equality filters it supports) so a
         # filtered query doesn't miss older matches beyond the fetch window, then
@@ -181,12 +186,36 @@ class TransactionService(TransactionServiceABC):
             offset=0,
             transaction_type=transaction_type,
             category=category,
+            card_id=card_id,
         )
         in_period = [
             t for t in items if period_start <= t.transaction_date <= period_end
         ]
         in_period.sort(key=lambda t: (t.transaction_date, t.created_at), reverse=True)
         return in_period
+
+    async def delete_by_card_and_period(
+        self,
+        user_id: UserId,
+        card_id: CardId,
+        *,
+        period_start: date,
+        period_end: date,
+    ) -> int:
+        """Delete a card's transactions within a period; return rows deleted.
+
+        The DB client has no range delete, so fetch the card's in-period rows and
+        delete them by id (personal-finance volumes make this cheap).
+        """
+        movements = await self.list_by_period(
+            user_id,
+            period_start=period_start,
+            period_end=period_end,
+            card_id=card_id,
+        )
+        for movement in movements:
+            await self._repository.delete(movement.id, user_id)
+        return len(movements)
 
     async def update_transaction(
         self,

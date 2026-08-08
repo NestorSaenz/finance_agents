@@ -150,6 +150,20 @@ class BudgetToolkit:
             logger.warning("Invalid budget args from tool", error=str(e))
             return "No pude crear el presupuesto: revisa el nombre y el monto (mayor a 0)."
 
+        # If a tope for this category already exists, UPDATE it instead of creating a
+        # duplicate ("el presupuesto de transporte va a ser 349.300" must not spawn a
+        # second 'transporte' budget). Matches deterministically by category.
+        if budget.category:
+            existing = await self._service.resolve_budget(budget.category, user_id)
+            if existing is not None and existing.category == budget.category:
+                updated = await self._service.update_budget(
+                    existing.id, user_id, amount=budget.amount
+                )
+                return (
+                    f"✏️ Ya tenías un tope de {budget.category}; lo actualicé a "
+                    f"${updated.amount} (no creé uno nuevo)."
+                )
+
         created = await self._service.create_budget(budget, user_id)
         scope = created.category if created.category else "general"
         return (

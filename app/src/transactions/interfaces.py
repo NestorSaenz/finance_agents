@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.shared.types import (
+    CardId,
     Category,
     PaymentMethod,
     TransactionId,
@@ -45,6 +46,7 @@ class TransactionRepositoryABC(ABC):
         offset: int,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> list[Transaction]:
         """Return a page of transactions for a user, newest first."""
 
@@ -55,6 +57,7 @@ class TransactionRepositoryABC(ABC):
         *,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> int:
         """Return the total number of transactions matching the filters."""
 
@@ -111,6 +114,7 @@ class TransactionServiceABC(ABC):
         page_size: int,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> tuple[list[Transaction], int]:
         """Return a page of transactions and the total count."""
 
@@ -148,11 +152,23 @@ class TransactionServiceABC(ABC):
         period_end: date,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> list[Transaction]:
         """Return the transactions in the date range, newest date first.
 
         Capped at the service fetch limit (ample for personal-finance volumes).
         """
+
+    @abstractmethod
+    async def delete_by_card_and_period(
+        self,
+        user_id: UserId,
+        card_id: CardId,
+        *,
+        period_start: date,
+        period_end: date,
+    ) -> int:
+        """Delete a card's transactions within a period; return rows deleted."""
 
     @abstractmethod
     async def update_transaction(

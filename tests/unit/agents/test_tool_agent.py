@@ -56,6 +56,9 @@ class FakeTxService(TransactionServiceABC):
     async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
         return []
 
+    async def delete_by_card_and_period(self, user_id: str, card_id: str, **kwargs: object) -> int:
+        return 0
+
     async def resolve_category(self, proposed: str, user_id: str) -> str:
         return proposed
 

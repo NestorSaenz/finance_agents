@@ -74,6 +74,9 @@ class StubService(TransactionServiceABC):
     ) -> list[Transaction]:
         return self.movements if self.movements is not None else [_sample_transaction()]
 
+    async def delete_by_card_and_period(self, user_id: str, card_id: str, **kwargs: object) -> int:
+        return 0
+
     async def resolve_category(self, proposed: str, user_id: str) -> str:
         return proposed
 

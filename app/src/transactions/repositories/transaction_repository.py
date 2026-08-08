@@ -19,6 +19,7 @@ from app.shared.parsing import (
 )
 from app.shared.serialization import decimal_to_db
 from app.shared.types import (
+    CardId,
     Category,
     CategoryType,
     CurrencyType,
@@ -92,9 +93,10 @@ class TransactionRepository(TransactionRepositoryABC):
         offset: int,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> list[Transaction]:
         config = QueryConfig(
-            filters=_build_filters(user_id, transaction_type, category),
+            filters=_build_filters(user_id, transaction_type, category, card_id),
             limit=limit,
             offset=offset,
             order_by="created_at",
@@ -109,9 +111,10 @@ class TransactionRepository(TransactionRepositoryABC):
         *,
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
+        card_id: CardId | None = None,
     ) -> int:
         return await self._db.count(
-            TRANSACTIONS_TABLE, _build_filters(user_id, transaction_type, category)
+            TRANSACTIONS_TABLE, _build_filters(user_id, transaction_type, category, card_id)
         )
 
     async def update(
@@ -147,6 +150,7 @@ def _build_filters(
     user_id: UserId,
     transaction_type: TransactionType | None,
     category: Category | None,
+    card_id: CardId | None = None,
 ) -> dict[str, Any]:
     """Build the equality filters for a user-scoped transaction query."""
     filters: dict[str, Any] = {"user_id": user_id}
@@ -154,6 +158,8 @@ def _build_filters(
         filters["type"] = transaction_type.value
     if category is not None:
         filters["category"] = category
+    if card_id is not None:
+        filters["card_id"] = card_id
     return filters
 
 

@@ -75,9 +75,13 @@ class StubIngestion:
 
     def __init__(self) -> None:
         self.calls: list[tuple[bytes, str]] = []
+        self.notes: list[str] = []
 
-    async def propose(self, image: bytes, mime_type: str, user_context: str = "") -> str:
+    async def propose(
+        self, image: bytes, mime_type: str, user_context: str = "", user_note: str = ""
+    ) -> str:
         self.calls.append((image, mime_type))
+        self.notes.append(user_note)
         return INGESTION_REPLY
 
 
@@ -141,6 +145,26 @@ class TestChatEndpoint:
         body = response.json()
         assert body["response"] == INGESTION_REPLY  # from ingestion, not the graph
         assert body["agent_used"] == "ingestion"
+
+    def test_image_forwards_user_note_to_ingestion(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        # The accompanying note ("son de mi Nu") must reach the extractor so it can
+        # apply the card/payment method and not re-ask at registration.
+        stub = StubIngestion()
+        app.dependency_overrides[get_ingestion_service] = lambda: stub
+        image_b64 = base64.b64encode(b"fake-image-bytes").decode()
+
+        client_with_fake_graph.post(
+            CHAT_URL,
+            json={
+                "message": "estos son de mi tarjeta Nu",
+                "image": image_b64,
+                "image_mime_type": "image/png",
+            },
+        )
+
+        assert stub.notes[-1] == "estos son de mi tarjeta Nu"
 
     def test_pdf_triggers_ingestion_flow(self, client_with_fake_graph: TestClient) -> None:
         pdf_b64 = base64.b64encode(b"%PDF-1.4 fake").decode()

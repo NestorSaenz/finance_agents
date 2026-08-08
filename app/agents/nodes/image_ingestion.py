@@ -77,7 +77,8 @@ _SYSTEM_PROMPT: Final[str] = (
     '      "transaction_type": "expense" | "income",\n'
     '      "date": "YYYY-MM-DD" | null,\n'
     '      "category": "texto libre" | null,  // usa las categorías propias del usuario\n'
-    '      "payment_method": "efectivo" | "credito" | null\n'
+    '      "payment_method": "efectivo" | "credito" | null,\n'
+    '      "card": "nombre de la tarjeta" | null  // si la nota del usuario indica una\n'
     "    }\n"
     "  ],\n"
     '  "questions": ["preguntas sobre celdas ambiguas"],\n'
@@ -97,6 +98,10 @@ _SYSTEM_PROMPT: Final[str] = (
     "- MÉTODO DE PAGO: una factura casi nunca dice cómo se pagó. Si el documento no "
     "indica claramente 'efectivo' o 'crédito', deja payment_method en null y AÑADE en "
     "'questions' una pregunta para saber cómo lo pagó el usuario.\n"
+    "- NOTA DEL USUARIO: si la nota indica cómo pagó o con qué tarjeta (p. ej. 'son de "
+    "mi tarjeta Nu', 'todo a crédito'), aplícalo a TODOS los movimientos: pon "
+    "payment_method='credito' y card con el nombre de la tarjeta. Así NO vuelvas a "
+    "preguntar el método ni la tarjeta.\n"
     "- Si no hay fecha, usa null (se asumirá la fecha de hoy).\n"
     "- Si el documento no contiene movimientos financieros, devuelve movements vacío."
 )
@@ -115,6 +120,7 @@ class ExtractedMovement(BaseModel):
     date: str | None = None
     category: str | None = None
     payment_method: str | None = None
+    card: str | None = None  # credit card name, if the user's note said one
 
 
 class ExtractionResult(BaseModel):
@@ -129,7 +135,9 @@ class ImageIngestionServiceABC(ABC):
     """Contract for reading an image and proposing the movements to register."""
 
     @abstractmethod
-    async def propose(self, image: bytes, mime_type: str, user_context: str = "") -> str:
+    async def propose(
+        self, image: bytes, mime_type: str, user_context: str = "", user_note: str = ""
+    ) -> str:
         """Extract movements from ``image`` and return a Spanish proposal to confirm."""
 
 
@@ -139,17 +147,25 @@ class ImageIngestionService(ImageIngestionServiceABC):
     def __init__(self, llm: LLMInterface) -> None:
         self._llm = llm
 
-    async def propose(self, image: bytes, mime_type: str, user_context: str = "") -> str:
+    async def propose(
+        self, image: bytes, mime_type: str, user_context: str = "", user_note: str = ""
+    ) -> str:
         """Extract movements from ``image`` and return a Spanish proposal to confirm."""
         system_content = _SYSTEM_PROMPT
         if user_context:
             system_content = f"{system_content}\n\nContexto del usuario:\n{user_context}"
 
+        # The user's note may state how these were paid / which card, which the
+        # extractor applies to all movements (so registration doesn't re-ask).
+        user_content = _USER_PROMPT
+        if user_note:
+            user_content = f"{_USER_PROMPT}\n\nNota del usuario sobre estos movimientos: {user_note}"
+
         messages = [
             Message(role=MessageRole.SYSTEM, content=system_content),
             Message(
                 role=MessageRole.USER,
-                content=_USER_PROMPT,
+                content=user_content,
                 images=[ImagePart(data=image, mime_type=mime_type)],
             ),
         ]
@@ -265,6 +281,8 @@ def _format_movement(movement: ExtractedMovement) -> str:
         parts.append(f", {movement.date}")
     if movement.payment_method:
         parts.append(f", {movement.payment_method}")
+    if movement.card:
+        parts.append(f", tarjeta {movement.card}")
     return "".join(parts) + ")"
 
 

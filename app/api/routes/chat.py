@@ -232,11 +232,14 @@ async def _handle_image(
             agent_used="ingestion",
         )
 
-    proposal = await ingestion.propose(image_bytes, mime_type, user_context)
+    # The accompanying note ("estos son de mi tarjeta Nu") tells the extractor the
+    # payment method/card, so it doesn't get asked again at registration.
+    note = request.message.strip()
+    proposal = await ingestion.propose(image_bytes, mime_type, user_context, note)
 
     # Persist the turn so the user's confirmation next message can register the batch
     # (the tool agent reads the proposal from history). Best-effort.
-    user_message = request.message.strip() or "(imagen adjunta)"
+    user_message = note or "(imagen adjunta)"
     _fire_and_forget(memory.save_turn(conversation_id, user_id, user_message, proposal))
 
     return ChatResponse(
