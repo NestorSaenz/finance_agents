@@ -42,6 +42,29 @@ def _transaction(
     )
 
 
+def _cuota_tx(
+    base: str,
+    index: int,
+    total: int,
+    amount: Decimal = Decimal("54073"),
+    tx_id: str = "tx",
+) -> Transaction:
+    """One installment row, named '<base> (cuota index/total)', dated a month apart."""
+    return Transaction(
+        id=tx_id,
+        user_id="u1",
+        amount=amount,
+        currency=CurrencyType.MXN,
+        transaction_type=TransactionType.EXPENSE,
+        description=f"{base} (cuota {index}/{total})",
+        category=CategoryType.OTROS,
+        transaction_date=date(2026, min(6 + index - 1, 12), 21),
+        budget_date=date(2026, min(6 + index - 1, 12), 21),
+        source="manual",
+        created_at=datetime(2026, 6, 21, tzinfo=UTC),
+    )
+
+
 class FakeTransactionService(TransactionServiceABC):
     def __init__(self) -> None:
         self.created: list[tuple[TransactionCreate, str]] = []
@@ -408,7 +431,7 @@ class TestUpdateDelete:
             DELETE_TRANSACTION_TOOL, {}, user_id="u1"
         )
         assert service.deleted == []
-        assert "no encontré" in result.lower()
+        assert "qué gasto" in result.lower()
 
     async def test_delete_no_match(self) -> None:
         service = FakeTransactionService()
@@ -418,6 +441,64 @@ class TestUpdateDelete:
         )
         assert service.deleted == []
         assert "no encontré" in result.lower()
+
+    async def test_delete_removes_all_installments(self) -> None:
+        # A deferred purchase is stored as N rows; deleting it must remove them all,
+        # not just one cuota (the bug users hit with installments).
+        service = FakeTransactionService()
+        service.items = [
+            _cuota_tx("Playstation Network", i, 3, tx_id=f"ps-{i}") for i in (1, 2, 3)
+        ]
+        result = await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL, {"description": "playstation"}, user_id="u1"
+        )
+        assert {tx_id for tx_id, _ in service.deleted} == {"ps-1", "ps-2", "ps-3"}
+        assert "3 cuota" in result.lower()
+
+    async def test_delete_installment_by_total_amount(self) -> None:
+        # The user gives the TOTAL of the purchase; each row holds the per-cuota
+        # value, so the total must resolve to the group (not fail to match).
+        service = FakeTransactionService()
+        service.items = [
+            _cuota_tx("Sport Line", i, 2, amount=Decimal("100000"), tx_id=f"sp-{i}")
+            for i in (1, 2)
+        ]
+        result = await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL,
+            {"description": "sport line", "amount": 200000},
+            user_id="u1",
+        )
+        assert {tx_id for tx_id, _ in service.deleted} == {"sp-1", "sp-2"}
+        assert "2 cuota" in result.lower()
+
+    async def test_delete_installment_ignores_date_and_removes_group(self) -> None:
+        # A date must not split a cuota purchase down to one row; the whole group
+        # still goes (dates differ per cuota, so a date would otherwise orphan them).
+        service = FakeTransactionService()
+        service.items = [
+            _cuota_tx("Playstation Network", i, 3, tx_id=f"ps-{i}") for i in (1, 2, 3)
+        ]
+        await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL,
+            {"description": "playstation", "transaction_date": "2026-07-21"},
+            user_id="u1",
+        )
+        assert {tx_id for tx_id, _ in service.deleted} == {"ps-1", "ps-2", "ps-3"}
+
+    async def test_delete_dedups_duplicate_installment_groups(self) -> None:
+        # A purchase registered twice leaves duplicate cuota rows; deleting the
+        # purchase clears every row so no orphan cuotas remain.
+        service = FakeTransactionService()
+        service.items = [
+            _cuota_tx("Playstation Network", 1, 2, tx_id="a1"),
+            _cuota_tx("Playstation Network", 2, 2, tx_id="a2"),
+            _cuota_tx("Playstation Network", 1, 2, tx_id="b1"),  # duplicate registration
+            _cuota_tx("Playstation Network", 2, 2, tx_id="b2"),
+        ]
+        await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL, {"description": "playstation"}, user_id="u1"
+        )
+        assert {tx_id for tx_id, _ in service.deleted} == {"a1", "a2", "b1", "b2"}
 
     async def test_update_resolves_and_sets_fields(self) -> None:
         service = FakeTransactionService()
@@ -500,6 +581,18 @@ class TestCardScopedOps:
 
         _uid, kwargs = service.list_calls[-1]
         assert kwargs["card_id"] == "card-1"
+
+    async def test_query_shows_card_name(self) -> None:
+        # A charge must report its card by name (not just "credito"), so the agent
+        # can tell the user which card a transaction — e.g. a cuota — belongs to.
+        service = FakeTransactionService()
+        service.items = [_transaction().model_copy(update={"card_id": "card-1"})]
+        service.total = 1
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        result = await toolkit.dispatch(QUERY_TRANSACTIONS_TOOL, {}, user_id="u1")
+
+        assert "Visa BBVA" in result
 
     async def test_query_unknown_card_returns_message(self) -> None:
         toolkit = TransactionToolkit(FakeTransactionService(), cards=FakeCardService(cards=[]))

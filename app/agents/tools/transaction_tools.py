@@ -7,9 +7,10 @@ at dispatch time and is NEVER part of the tool schema nor read from the model's
 arguments. The model only provides the transaction data.
 """
 
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -42,6 +43,63 @@ DELETE_CARD_MOVEMENTS_TOOL = "delete_card_movements"
 
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500
+
+# Installment rows are stored as separate transactions named "<purchase> (cuota i/n)".
+# This matches that suffix so a deferred purchase can be treated as one group.
+_CUOTA_RE: Final = re.compile(r"\s*\(cuota\s+\d+/(\d+)\)\s*$", re.IGNORECASE)
+
+
+def _cuota_base(description: str) -> str:
+    """The purchase name without its '(cuota i/n)' suffix."""
+    return _CUOTA_RE.sub("", description).strip()
+
+
+def _cuota_count(description: str) -> int | None:
+    """Total number of installments if this row is one of a split, else ``None``."""
+    match = _CUOTA_RE.search(description)
+    return int(match.group(1)) if match else None
+
+
+def _installment_groups(rows: list[Transaction]) -> list[list[Transaction]]:
+    """Cluster rows into installment groups (same purchase name + count).
+
+    Non-installment rows become singletons. All the '(cuota i/n)' rows of a
+    purchase — including accidental duplicate registrations — fall in one group,
+    so deleting the purchase removes every part rather than a single cuota.
+    (A genuine repeat of the same item on the same plan also merges; acceptable
+    for the dedup use case this serves.)
+    """
+    groups: dict[object, list[Transaction]] = {}
+    for row in rows:
+        count = _cuota_count(row.description)
+        key: object = (_cuota_base(row.description).lower(), count) if count else row.id
+        groups.setdefault(key, []).append(row)
+    return list(groups.values())
+
+
+def _pick_group(
+    groups: list[list[Transaction]], amount: Decimal | None
+) -> list[Transaction] | None:
+    """Choose the group the user means.
+
+    With an amount, match a single row, the installment total, or a per-cuota
+    value (in that order) — so both "delete X for <total>" and "delete X for
+    <cuota>" work. With no amount, fall back to the most recent group.
+    """
+    if not groups:
+        return None
+    if amount is None:
+        return max(groups, key=lambda g: max(t.transaction_date for t in g))
+    for group in groups:
+        if len(group) == 1 and group[0].amount == amount:
+            return group
+    for group in groups:
+        if len(group) > 1 and sum((t.amount for t in group), Decimal("0")) == amount:
+            return group
+    for group in groups:
+        if any(t.amount == amount for t in group):
+            return group
+    return None
 
 # Tool schemas in OpenAI function-calling format, consumed by
 # LLMInterface.generate_with_tools. Note: no `user_id` parameter is exposed.
@@ -424,15 +482,35 @@ class TransactionToolkit:
         if not items:
             return "No se encontraron transacciones con esos filtros."
 
+        # Map card_id -> name so the reply names the card (a charge shows "crédito,
+        # tarjeta Nu"), not just its payment method — otherwise the agent can't tell
+        # which card a charge belongs to. Skip the lookup for card-less pages.
+        card_names = (
+            await self._card_name_map(user_id)
+            if any(t.card_id for t in items[:10])
+            else {}
+        )
         # No ids: update/delete resolve the transaction by description/amount, so
         # the agent never has to copy a UUID (LLMs mangle them).
         lines = [
             f"- {t.description}: ${t.amount} ({t.category}, {t.transaction_date}"
             + (f", {t.payment_method.value}" if t.payment_method else "")
+            + (
+                f", tarjeta {card_names[t.card_id]}"
+                if t.card_id is not None and t.card_id in card_names
+                else ""
+            )
             + ")"
             for t in items[:10]
         ]
         return f"{total} transacción(es) encontradas:\n" + "\n".join(lines)
+
+    async def _card_name_map(self, user_id: UserId) -> dict[str, str]:
+        """Map each of the user's card ids to its name (empty if no card service)."""
+        if self._cards is None:
+            return {}
+        cards = await self._cards.list_cards(user_id)
+        return {card.id: card.name for card in cards}
 
     async def _resolve_query_card(
         self, args: dict[str, Any], user_id: UserId
@@ -520,14 +598,43 @@ class TransactionToolkit:
         )
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
-        target = await self._resolve_transaction(args, user_id)
-        if target is None:
-            return "No encontré esa transacción (quizás ya no existe)."
-        try:
-            deleted = await self._service.delete_transaction(target.id, user_id)
-        except TransactionNotFoundError:
-            return "No encontré esa transacción (quizás ya no existe)."
-        return f"🗑️ Eliminé: {deleted.description} — ${deleted.amount} ({deleted.transaction_date})."
+        description = str(args.get("description", "")).lower().strip()
+        if not description:
+            return "¿Qué gasto quieres eliminar? Dame la descripción (y el monto o la fecha si ayuda)."
+        amount = _opt_decimal(args.get("amount"))
+        tx_date = _opt_date(args.get("transaction_date"))
+
+        # Installment rows of one purchase share a created_at, so they cluster in
+        # this page; a purchase older than the cap can't be resolved (fine here).
+        pool, _ = await self._service.list_transactions(
+            user_id, page=1, page_size=ANALYZE_FETCH_LIMIT
+        )
+        by_desc = [t for t in pool if description in t.description.lower()]
+        # A date narrows to a single row ONLY when the match isn't an installment
+        # purchase — otherwise it would split the group and leave orphan cuotas.
+        if tx_date is not None and not any(_cuota_count(t.description) for t in by_desc):
+            by_desc = [t for t in by_desc if t.transaction_date == tx_date]
+        # A deferred purchase is many rows ("... (cuota i/n)"); delete the whole
+        # group so one cuota isn't left behind (the bug users hit with cuotas).
+        group = _pick_group(_installment_groups(by_desc), amount)
+        if group is None:
+            return "No encontré ese gasto (revisa la descripción o el monto)."
+
+        removed = 0
+        for tx in group:
+            try:
+                await self._service.delete_transaction(tx.id, user_id)
+                removed += 1
+            except TransactionNotFoundError:
+                continue
+        if removed == 0:
+            return "No encontré ese gasto (quizás ya no existe)."
+        if len(group) > 1:
+            base = _cuota_base(group[0].description)
+            total = sum((t.amount for t in group), Decimal("0"))
+            return f"🗑️ Eliminé la compra a cuotas «{base}»: {removed} cuota(s) por ${total} en total."
+        tx = group[0]
+        return f"🗑️ Eliminé: {tx.description} — ${tx.amount} ({tx.transaction_date})."
 
     async def _resolve_transaction(
         self, args: dict[str, Any], user_id: UserId
@@ -544,7 +651,9 @@ class TransactionToolkit:
         amount = _opt_decimal(args.get("amount"))
         tx_date = _opt_date(args.get("transaction_date"))
 
-        items, _ = await self._service.list_transactions(user_id, page=1, page_size=100)
+        items, _ = await self._service.list_transactions(
+            user_id, page=1, page_size=ANALYZE_FETCH_LIMIT
+        )
         matches = [
             t
             for t in items
