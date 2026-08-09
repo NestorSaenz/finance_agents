@@ -133,6 +133,7 @@ export interface Transaction {
   transaction_type: "income" | "expense";
   category: string;
   payment_method: "credito" | "efectivo" | null;
+  card_id: string | null; // credit card this charge belongs to, if any
   transaction_date: string;
   budget_date: string; // month this charge hits the budget (credit: payment date)
   created_at: string;

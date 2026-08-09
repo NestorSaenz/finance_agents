@@ -244,7 +244,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               </button>
             </div>
           ) : view === "movimientos" ? (
-            <MovementsList transactions={movements} />
+            <MovementsList transactions={movements} cards={cards} />
           ) : summary ? (
             <SummaryContent
               summary={summary}

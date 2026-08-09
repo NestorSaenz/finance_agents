@@ -65,6 +65,9 @@ class TransactionResponse(BaseModel):
     payment_method: PaymentMethod | None = Field(
         default=None, description="How it was paid (cash vs credit), if known"
     )
+    card_id: str | None = Field(
+        default=None, description="Credit card this charge belongs to, if any"
+    )
     transaction_date: date = Field(..., description="Transaction date")
     budget_date: date = Field(
         ..., description="Budget month this charge affects (credit: payment date)"
@@ -81,6 +84,7 @@ class TransactionResponse(BaseModel):
             transaction_type=transaction.transaction_type,
             category=transaction.category,
             payment_method=transaction.payment_method,
+            card_id=transaction.card_id,
             transaction_date=transaction.transaction_date,
             budget_date=transaction.budget_date,
             created_at=transaction.created_at.isoformat(),
