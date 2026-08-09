@@ -99,9 +99,9 @@ describe("DashboardPanel", () => {
 
     render(<DashboardPanel open onClose={() => {}} />);
 
-    // Profile has a reference income, so registered income is "adicionales".
-    expect(await screen.findByText("Ingresos adicionales")).toBeInTheDocument();
-    expect(screen.getByText("Ingreso base (referencia)")).toBeInTheDocument();
+    // Income logged this month is shown as the single "Ingresos" (the profile
+    // base is a fallback used only when nothing was logged).
+    expect(await screen.findByText("Ingresos")).toBeInTheDocument();
     expect(screen.getByText("Balance")).toBeInTheDocument();
     // Spending-by-category section (lightweight bars, no chart library).
     expect(screen.getByText("Gastos por categoría")).toBeInTheDocument();
