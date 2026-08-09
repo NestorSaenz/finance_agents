@@ -384,6 +384,79 @@ class TestQuery:
 
         assert "no se encontraron" in result.lower()
 
+    async def test_filters_by_period_and_payment_method(self) -> None:
+        # "transporte en efectivo en junio" must return ONLY June cash rows, all of
+        # them (the bug: the agent could not filter by month or payment method).
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "a", "transaction_date": date(2026, 6, 30),
+                    "amount": Decimal("2537250"), "payment_method": PaymentMethod.EFECTIVO,
+                    "description": "transporte", "category": "transporte",
+                }
+            ),
+            _transaction().model_copy(
+                update={
+                    "id": "b", "transaction_date": date(2026, 6, 15),
+                    "amount": Decimal("5200"), "payment_method": PaymentMethod.CREDITO,
+                    "description": "Flypass", "category": "transporte",
+                }
+            ),
+            _transaction().model_copy(
+                update={
+                    "id": "c", "transaction_date": date(2026, 7, 2),
+                    "amount": Decimal("100"), "payment_method": PaymentMethod.EFECTIVO,
+                    "description": "otro", "category": "transporte",
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL,
+            {"period": "2026-06", "payment_method": "efectivo"},
+            user_id="u1",
+        )
+
+        assert "2537250" in result  # June cash row included
+        assert "Flypass" not in result  # June credit excluded
+        assert "otro" not in result  # July excluded
+        assert "1 transacción" in result  # count reflects the filtered set
+
+    async def test_invalid_period_asks_for_clarification(self) -> None:
+        # An unrecognized month ("junio") must not silently return the current
+        # month; the tool asks for a valid format instead.
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"period": "junio"}, user_id="u1"
+        )
+        assert "de qué mes" in result.lower()
+
+    async def test_efectivo_filter_includes_untagged_cashless(self) -> None:
+        # A cash row registered without the word "efectivo" (payment_method None,
+        # no card) still counts as efectivo; an untagged card charge does not.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "cash", "description": "consulta",
+                    "payment_method": None, "card_id": None,
+                }
+            ),
+            _transaction().model_copy(
+                update={
+                    "id": "card", "description": "cargo nu",
+                    "payment_method": None, "card_id": "nu-1",
+                }
+            ),
+        ]
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"payment_method": "efectivo"}, user_id="u1"
+        )
+        assert "consulta" in result  # untagged + no card -> treated as cash
+        assert "cargo nu" not in result  # untagged but card-linked -> credit
+
 
 class TestAnalyze:
     async def test_aggregates_totals_and_by_category(self) -> None:
@@ -441,6 +514,48 @@ class TestUpdateDelete:
         )
         assert service.deleted == []
         assert "no encontré" in result.lower()
+
+    async def test_delete_matches_by_category(self) -> None:
+        # The user refers to the category ("venezuela") but the row is described
+        # "MERCA FACIL"; matching must consider the category, not only the description.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "v1", "description": "MERCA FACIL",
+                    "category": "venezuela", "amount": Decimal("238290"),
+                }
+            )
+        ]
+        await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL,
+            {"description": "venezuela", "amount": 238290},
+            user_id="u1",
+        )
+        assert ("v1", "u1") in service.deleted
+
+    async def test_delete_matches_when_term_longer_than_stored(self) -> None:
+        # The agent passes a longer label ("envío a venezuela") than the stored
+        # description ("Venezuela"); the match must work in that direction too.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "vz", "description": "Venezuela", "category": "venezuela",
+                    "amount": Decimal("1250000"), "transaction_date": date(2026, 7, 15),
+                }
+            )
+        ]
+        await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL,
+            {
+                "description": "envío a venezuela",
+                "amount": 1250000,
+                "transaction_date": "2026-07-15",
+            },
+            user_id="u1",
+        )
+        assert ("vz", "u1") in service.deleted
 
     async def test_delete_removes_all_installments(self) -> None:
         # A deferred purchase is stored as N rows; deleting it must remove them all,
@@ -513,6 +628,26 @@ class TestUpdateDelete:
         assert fields["amount"] == Decimal("99")
         assert fields["category"] == CategoryType.VIAJES
         assert "actualic" in result.lower()
+
+    async def test_update_matches_accent_insensitive(self) -> None:
+        # "bunuelos" (no ñ) must resolve "buñuelos" so a re-categorization lands.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "bn", "description": "buñuelos",
+                    "category": "otros", "amount": Decimal("2600"),
+                }
+            )
+        ]
+        await TransactionToolkit(service).dispatch(
+            UPDATE_TRANSACTION_TOOL,
+            {"description": "bunuelos", "new_category": "gastos casa"},
+            user_id="u1",
+        )
+        assert service.updated  # resolved despite the missing tilde
+        _tid, _uid, fields = service.updated[0]
+        assert fields["category"] == "gastos casa"
 
     async def test_update_snaps_category_onto_existing(self) -> None:
         # Re-categorizing to a typo variant folds into the existing category.

@@ -8,6 +8,7 @@ arguments. The model only provides the transaction data.
 """
 
 import re
+import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
@@ -43,6 +44,37 @@ DELETE_CARD_MOVEMENTS_TOOL = "delete_card_movements"
 
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500
+
+# Cap on how many query results to list back (the count and total still cover all).
+QUERY_DISPLAY_LIMIT = 25
+
+# Accepted `period` args: named periods or a strict YYYY-MM month. Anything else is
+# rejected instead of silently falling back to the current month (resolve_period).
+_NAMED_PERIODS: Final[frozenset[str]] = frozenset({"este_mes", "mes_pasado", "todo"})
+_MONTH_ARG_RE: Final = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _norm(text: str) -> str:
+    """Lowercase and strip accents so 'Buñuelos'/'bunuelos' compare equal."""
+    decomposed = unicodedata.normalize("NFKD", text.lower().strip())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def _matches_term(transaction: Transaction, term: str) -> bool:
+    """True if ``term`` matches the transaction's description OR category.
+
+    Accent-insensitive and matches in either direction, so the agent can pass a
+    longer label than what's stored ("Envío a Venezuela" vs "Venezuela"), the
+    category instead of the description ("venezuela" for a row described "MERCA
+    FACIL"), or a differently-accented spelling ("bunuelos" vs "buñuelos").
+    """
+    needle = _norm(term)
+    if not needle:
+        return False
+    fields = [_norm(transaction.description), _norm(transaction.category or "")]
+    # Reverse match (stored field inside a longer term) is gated on length so a
+    # 2-3 char category ("gym") can't swallow a verbose phrase the agent passes.
+    return any(f and (needle in f or (len(f) >= 4 and f in needle)) for f in fields)
 
 # Installment rows are stored as separate transactions named "<purchase> (cuota i/n)".
 # This matches that suffix so a deferred purchase can be treated as one group.
@@ -180,8 +212,10 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": QUERY_TRANSACTIONS_TOOL,
             "description": (
-                "Consulta las transacciones del usuario, opcionalmente filtrando por "
-                "tipo, categoría y/o tarjeta (p. ej. 'los movimientos de mi tarjeta Nu')."
+                "Consulta las transacciones del usuario, filtrando por tipo, categoría, "
+                "tarjeta, MES y/o método de pago. Devuelve TODAS las que cumplen y su "
+                "total (p. ej. 'transporte en efectivo en junio', 'movimientos de mi "
+                "tarjeta Nu'). Úsala siempre que pregunten por movimientos de un mes."
             ),
             "parameters": {
                 "type": "object",
@@ -192,8 +226,18 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Filtrar por la tarjeta cuyo nombre diga el usuario",
                     },
-                    "page": {"type": "integer", "minimum": 1},
-                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "Mes a consultar: 'este_mes', 'mes_pasado', 'todo' o "
+                            "'YYYY-MM' (p. ej. '2026-06' para junio de 2026)."
+                        ),
+                    },
+                    "payment_method": {
+                        "type": "string",
+                        "enum": ["efectivo", "credito"],
+                        "description": "Filtrar por método de pago (efectivo o crédito)",
+                    },
                 },
             },
         },
@@ -471,27 +515,57 @@ class TransactionToolkit:
         card_id, card_error = await self._resolve_query_card(args, user_id)
         if card_error is not None:
             return card_error
-        items, total = await self._service.list_transactions(
+        # Fetch a wide page with the DB-side filters, then narrow by month and
+        # payment method in Python (PostgREST can't range-filter dates here). The
+        # whole set is returned so month questions aren't truncated to one page.
+        items, _total = await self._service.list_transactions(
             user_id,
-            page=_to_int(args.get("page"), default=1, minimum=1),
-            page_size=_to_int(args.get("page_size"), default=20, minimum=1, maximum=100),
+            page=1,
+            page_size=ANALYZE_FETCH_LIMIT,
             transaction_type=_to_type(args.get("transaction_type")),
             category=_to_category(args.get("category")),
             card_id=card_id,
         )
+        period = str(args.get("period", "")).strip().lower()
+        if period:
+            # Reject unrecognized months so we don't silently return the current
+            # month (resolve_period's lenient fallback) and mislead the user.
+            if period not in _NAMED_PERIODS and not _MONTH_ARG_RE.match(period):
+                return (
+                    "¿De qué mes? Dímelo como '2026-06' (año-mes) o "
+                    "'este_mes' / 'mes_pasado' / 'todo'."
+                )
+            start, end = resolve_period(period)
+            items = [t for t in items if start <= t.transaction_date <= end]
+        payment = _to_payment_method(args.get("payment_method"))
+        if payment is PaymentMethod.EFECTIVO:
+            # Cash = tagged 'efectivo', or untagged with no card linked.
+            items = [
+                t
+                for t in items
+                if t.payment_method == PaymentMethod.EFECTIVO
+                or (t.payment_method is None and t.card_id is None)
+            ]
+        elif payment is PaymentMethod.CREDITO:
+            # Credit = tagged 'credito', or untagged but linked to a card.
+            items = [
+                t
+                for t in items
+                if t.payment_method == PaymentMethod.CREDITO
+                or (t.payment_method is None and t.card_id is not None)
+            ]
         if not items:
             return "No se encontraron transacciones con esos filtros."
 
         # Map card_id -> name so the reply names the card (a charge shows "crédito,
         # tarjeta Nu"), not just its payment method — otherwise the agent can't tell
-        # which card a charge belongs to. Skip the lookup for card-less pages.
+        # which card a charge belongs to. Skip the lookup for card-less results.
         card_names = (
-            await self._card_name_map(user_id)
-            if any(t.card_id for t in items[:10])
-            else {}
+            await self._card_name_map(user_id) if any(t.card_id for t in items) else {}
         )
         # No ids: update/delete resolve the transaction by description/amount, so
         # the agent never has to copy a UUID (LLMs mangle them).
+        shown = sorted(items, key=lambda t: t.transaction_date, reverse=True)
         lines = [
             f"- {t.description}: ${t.amount} ({t.category}, {t.transaction_date}"
             + (f", {t.payment_method.value}" if t.payment_method else "")
@@ -501,9 +575,16 @@ class TransactionToolkit:
                 else ""
             )
             + ")"
-            for t in items[:10]
+            for t in shown[:QUERY_DISPLAY_LIMIT]
         ]
-        return f"{total} transacción(es) encontradas:\n" + "\n".join(lines)
+        total_amount = sum((t.amount for t in items), Decimal("0"))
+        capped = (
+            f" (muestro las {QUERY_DISPLAY_LIMIT} más recientes)"
+            if len(items) > QUERY_DISPLAY_LIMIT
+            else ""
+        )
+        header = f"{len(items)} transacción(es) por ${total_amount:,.0f} en total{capped}:"
+        return header + "\n" + "\n".join(lines)
 
     async def _card_name_map(self, user_id: UserId) -> dict[str, str]:
         """Map each of the user's card ids to its name (empty if no card service)."""
@@ -609,7 +690,7 @@ class TransactionToolkit:
         pool, _ = await self._service.list_transactions(
             user_id, page=1, page_size=ANALYZE_FETCH_LIMIT
         )
-        by_desc = [t for t in pool if description in t.description.lower()]
+        by_desc = [t for t in pool if _matches_term(t, description)]
         # A date narrows to a single row ONLY when the match isn't an installment
         # purchase — otherwise it would split the group and leave orphan cuotas.
         if tx_date is not None and not any(_cuota_count(t.description) for t in by_desc):
@@ -657,7 +738,7 @@ class TransactionToolkit:
         matches = [
             t
             for t in items
-            if description in t.description.lower()
+            if _matches_term(t, description)
             and (amount is None or t.amount == amount)
             and (tx_date is None or t.transaction_date == tx_date)
         ]
