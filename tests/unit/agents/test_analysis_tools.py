@@ -22,11 +22,12 @@ def _snapshot() -> FinancialSnapshot:
         period="este_mes",
         income_base=Decimal("10000000"),
         income_registered=Decimal("30000"),
-        total_income=Decimal("10030000"),
+        # Base is a fallback: with income logged, total == registered (not summed).
+        total_income=Decimal("30000"),
         total_expenses=Decimal("200000"),
-        disposable=Decimal("9830000"),
+        disposable=Decimal("-170000"),
         savings_target_pct=Decimal("20"),
-        savings_target_amount=Decimal("2006000"),
+        savings_target_amount=Decimal("6000"),
         by_category=[
             CategoryLine(
                 category=CategoryType.ALIMENTACION, amount=Decimal("200000"), percentage=100.0
@@ -72,9 +73,10 @@ async def test_analyze_finances_formats_grounded_facts() -> None:
 
     assert service.calls[0] == ("u1", "este_mes")
     # Key grounded numbers present (formatted with thousands separators).
-    assert "10,030,000" in result  # total income
-    assert "9,830,000" in result  # disposable
-    assert "2,006,000" in result  # savings target
+    assert "30,000" in result  # effective income (registered replaces base)
+    assert "registrados este mes" in result  # no "base + registrados = " line
+    assert "170,000" in result  # disposable
+    assert "6,000" in result  # savings target
     assert "Visa BBVA" in result
     assert "vacaciones playa" in result
     assert "Alimentación" in result  # category label

@@ -68,36 +68,20 @@ export function SummaryContent({
   }
 
   const expenses = Number(summary.total_expenses);
-  // Registered income for the period (income transactions the user logged).
-  const additionalIncome = Number(summary.total_income);
-  // Reference monthly income from the profile (a base salary the user doesn't
-  // log as a transaction). Only meaningful for the current month.
+  // Income the user logged as transactions this period.
+  const registeredIncome = Number(summary.total_income);
+  // Profile base salary — a FALLBACK, used only when this month has no logged
+  // income (so a registered income replaces it, never stacks on top).
   const referenceIncome = Number(profile?.monthly_income ?? 0);
-  const hasReference = summary.period === "este_mes" && referenceIncome > 0;
-  // Total income = base (reference) + what was registered this period. Additive,
-  // so logging an extra income adds to the base instead of replacing it.
-  const incomeBase = hasReference ? referenceIncome + additionalIncome : additionalIncome;
-  const balance = incomeBase - expenses;
+  const usesBaseFallback =
+    registeredIncome === 0 && period === "este_mes" && referenceIncome > 0;
+  const income = registeredIncome > 0 ? registeredIncome : usesBaseFallback ? referenceIncome : 0;
+  const balance = income - expenses;
 
   return (
     <div className="flex flex-col gap-5">
-      {hasReference && (
-        <div className="rounded-xl border border-line bg-surface p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted">
-            Ingreso base (referencia)
-          </p>
-          <p className="mt-1 text-lg font-semibold text-ink">
-            {formatMoney(referenceIncome)}
-          </p>
-        </div>
-      )}
-
       <div className="grid grid-cols-2 gap-3">
-        <StatCard
-          label={hasReference ? "Ingresos adicionales" : "Ingresos"}
-          value={summary.total_income}
-          tone="positive"
-        />
+        <StatCard label="Ingresos" value={income} tone="positive" />
         <StatCard label="Gastos" value={summary.total_expenses} tone="negative" />
       </div>
 
@@ -112,15 +96,13 @@ export function SummaryContent({
         </p>
       </div>
 
-      {incomeBase > 0 && (
+      {income > 0 && (
         <IncomeGauge
           spent={expenses}
-          income={incomeBase}
+          income={income}
           note={
-            hasReference
-              ? `Incluye tu ingreso base ${formatMoney(referenceIncome)} + ${formatMoney(
-                  additionalIncome,
-                )} registrados este mes.`
+            usesBaseFallback
+              ? `Usando tu ingreso base ${formatMoney(referenceIncome)}. Registra o actualiza el de este mes para ajustarlo.`
               : undefined
           }
         />
@@ -238,7 +220,7 @@ function StatCard({
   tone,
 }: {
   label: string;
-  value: string;
+  value: string | number;
   tone: "positive" | "negative";
 }) {
   return (

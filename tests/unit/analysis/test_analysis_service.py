@@ -123,20 +123,46 @@ def _service() -> AnalysisService:
     )
 
 
-async def test_snapshot_sums_base_and_registered_income() -> None:
+async def test_snapshot_registered_income_replaces_base() -> None:
+    # The profile base is a fallback: with income logged this month, it counts as
+    # the total (not base + registered), so the base doesn't double-count.
     snap = await _service().snapshot("u1", "este_mes")
 
     assert snap.income_base == Decimal("10000000")
     assert snap.income_registered == Decimal("30000")
-    assert snap.total_income == Decimal("10030000")
-    assert snap.disposable == Decimal("9830000")  # 10.03M - 200k
+    assert snap.total_income == Decimal("30000")  # registered replaces the base
+    assert snap.disposable == Decimal("-170000")  # 30k - 200k
 
 
 async def test_snapshot_computes_savings_target_from_total_income() -> None:
     snap = await _service().snapshot("u1", "este_mes")
 
-    # 20% of 10,030,000
-    assert snap.savings_target_amount == Decimal("2006000")
+    # 20% of 30,000 (the effective income)
+    assert snap.savings_target_amount == Decimal("6000")
+
+
+class _NoIncomeTransactions(FakeTransactions):
+    async def get_spending_summary(self, user_id, *, period_start, period_end):  # type: ignore[no-untyped-def]
+        return SpendingSummary(
+            total_income=Decimal("0"),
+            total_expenses=Decimal("50000"),
+            by_category=[],
+        )
+
+
+async def test_snapshot_falls_back_to_base_when_no_registered_income() -> None:
+    service = AnalysisService(
+        _NoIncomeTransactions(),  # type: ignore[arg-type]
+        FakeBudgets(),  # type: ignore[arg-type]
+        FakeGoals(),  # type: ignore[arg-type]
+        FakeCards(),  # type: ignore[arg-type]
+        FakeProfiles(),  # type: ignore[arg-type]
+    )
+
+    snap = await service.snapshot("u1", "este_mes")
+
+    assert snap.income_registered == Decimal("0")
+    assert snap.total_income == Decimal("10000000")  # base used as fallback
 
 
 async def test_snapshot_aggregates_cards_and_goals() -> None:

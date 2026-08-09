@@ -59,14 +59,16 @@ class AnalysisService(AnalysisServiceABC):
         )
         goals = goals_page[0]
 
-        # The reference income is a monthly figure, so it only applies this month.
+        # The profile's monthly income is a FALLBACK, not additive: it only counts
+        # when this month has no logged income, so a registered income replaces it
+        # instead of stacking on top. It's a monthly figure, so only for este_mes.
+        income_registered = summary.total_income
         income_base = (
             profile.monthly_income or Decimal("0")
             if period == ESTE_MES
             else Decimal("0")
         )
-        income_registered = summary.total_income
-        total_income = income_base + income_registered
+        total_income = income_registered if income_registered > 0 else income_base
         disposable = total_income - summary.total_expenses
 
         pct = profile.savings_goal_percentage

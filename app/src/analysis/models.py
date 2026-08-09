@@ -55,7 +55,7 @@ class FinancialSnapshot(BaseModel):
     period: str
     income_base: Decimal  # reference monthly income (0 unless the current month)
     income_registered: Decimal  # income transactions logged in the period
-    total_income: Decimal  # income_base + income_registered
+    total_income: Decimal  # registered income, or income_base as fallback if none
     total_expenses: Decimal
     disposable: Decimal  # total_income - total_expenses
     savings_target_pct: Decimal | None

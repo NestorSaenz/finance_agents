@@ -73,10 +73,17 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
     """Render the snapshot as grounded facts for the LLM to reason over."""
     lines = [f"Situación financiera ({period_label(s.period)}):"]
 
-    lines.append(
-        f"INGRESOS: base {_money(s.income_base)} + registrados "
-        f"{_money(s.income_registered)} = {_money(s.total_income)}"
-    )
+    # The base income is a fallback, not additive: report the effective income so
+    # the LLM never sees a contradictory "base + registrados = total" line.
+    if s.income_registered > 0:
+        lines.append(f"INGRESOS: {_money(s.total_income)} (registrados este mes)")
+    elif s.income_base > 0:
+        lines.append(
+            f"INGRESOS: {_money(s.total_income)} "
+            "(ingreso base de referencia; sin ingresos registrados este mes)"
+        )
+    else:
+        lines.append(f"INGRESOS: {_money(s.total_income)}")
     lines.append(f"GASTOS: {_money(s.total_expenses)}")
     lines.append(f"DISPONIBLE (ingresos - gastos): {_money(s.disposable)}")
     if s.savings_target_amount is not None and s.savings_target_pct is not None:

@@ -117,6 +117,9 @@ registrar y consultar sus transacciones financieras.
   delete_transaction (destructivo). Aplica igual a ingresos: si el usuario dice "actualiza/
   cambia/corrige mi ingreso (o sueldo) a $X", es un UPDATE de esa transacción con
   new_amount — NUNCA registres un ingreso nuevo (eso lo sumaría al que ya existe).
+  Para fijar el ingreso de un MES concreto ("para agosto mi ingreso es $X"): mira con
+  query_transactions (type=income, period=ese mes); si ya hay uno, actualízalo
+  (update_transaction); si NO hay ninguno, entonces sí regístralo con fecha de ese mes.
   1. Identifica la transacción por su DESCRIPCIÓN (pásala en 'description'); si hay varias
      parecidas, añade 'amount' y/o 'transaction_date' para desambiguar. NO manejas ids:
      el sistema encuentra la transacción por esos datos. Puedes usar query_transactions
