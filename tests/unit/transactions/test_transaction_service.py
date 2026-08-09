@@ -383,6 +383,51 @@ class TestListByPeriod:
         assert [t.category for t in result] == [CategoryType.TECNOLOGIA]
 
 
+class TestDeleteMovements:
+    async def test_deletes_only_rows_in_the_date_range(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 7, 5)),
+                _tx(date(2026, 7, 20)),
+                _tx(date(2026, 6, 30)),  # before the range
+                _tx(date(2026, 8, 1)),  # after the range
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        deleted = await service.delete_movements(
+            "u1", period_start=date(2026, 7, 1), period_end=date(2026, 7, 31)
+        )
+
+        assert deleted == 2
+        assert set(repo.deleted) == {"tx-2026-07-05", "tx-2026-07-20"}
+
+    async def test_pushes_category_filter_and_normalizes(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 7, 5), category="transporte"),
+                _tx(date(2026, 7, 6), category=CategoryType.OTROS),
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        deleted = await service.delete_movements(
+            "u1",
+            category="Transporte",  # normalized to "transporte" before the push-down
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+        )
+
+        assert deleted == 1
+        assert repo.deleted == ["tx-2026-07-05"]
+
+    async def test_refuses_when_no_filter_given(self) -> None:
+        service = TransactionService(_MultiRepo([]), FakeCategorizer())
+
+        with pytest.raises(ValueError):
+            await service.delete_movements("u1")
+
+
 class TestMatchCategory:
     def test_reuses_exact_existing_spelling(self) -> None:
         assert _match_category("mercado", ["mercado", "gym"]) == "mercado"

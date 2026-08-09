@@ -160,15 +160,16 @@ class TransactionServiceABC(ABC):
         """
 
     @abstractmethod
-    async def delete_by_card_and_period(
+    async def delete_movements(
         self,
         user_id: UserId,
-        card_id: CardId,
         *,
-        period_start: date,
-        period_end: date,
+        card_id: CardId | None = None,
+        category: Category | None = None,
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> int:
-        """Delete a card's transactions within a period; return rows deleted."""
+        """Delete transactions matching card/category/date-range filters; rows deleted."""
 
     @abstractmethod
     async def update_transaction(

@@ -7,7 +7,7 @@ import pytest
 
 from app.agents.tools.transaction_tools import (
     ANALYZE_SPENDING_TOOL,
-    DELETE_CARD_MOVEMENTS_TOOL,
+    DELETE_BY_FILTER_TOOL,
     DELETE_TRANSACTION_TOOL,
     QUERY_TRANSACTIONS_TOOL,
     REGISTER_TRANSACTION_TOOL,
@@ -101,8 +101,8 @@ class FakeTransactionService(TransactionServiceABC):
     async def list_by_period(self, user_id: str, **kwargs: object) -> list[Transaction]:
         return self.items
 
-    async def delete_by_card_and_period(self, user_id: str, card_id: str, **kwargs: object) -> int:
-        self.deleted_by_card = (card_id, kwargs)
+    async def delete_movements(self, user_id: str, **kwargs: object) -> int:
+        self.deleted_movements = kwargs
         return len(self.items)
 
     async def resolve_category(self, proposed: str, user_id: str) -> str:
@@ -149,7 +149,7 @@ class TestSchemas:
             ANALYZE_SPENDING_TOOL,
             UPDATE_TRANSACTION_TOOL,
             DELETE_TRANSACTION_TOOL,
-            DELETE_CARD_MOVEMENTS_TOOL,
+            DELETE_BY_FILTER_TOOL,
         }
 
         # user_id must never be part of any tool's parameters.
@@ -615,6 +615,29 @@ class TestUpdateDelete:
         )
         assert {tx_id for tx_id, _ in service.deleted} == {"a1", "a2", "b1", "b2"}
 
+    async def test_delete_many_by_items_list(self) -> None:
+        # A list of descriptors deletes each specific gasto in one call; misses are
+        # reported, not silently dropped.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(update={"id": "t1", "description": "pizza"}),
+            _transaction().model_copy(update={"id": "t2", "description": "taxi"}),
+            _transaction().model_copy(update={"id": "t3", "description": "cafe"}),
+        ]
+        result = await TransactionToolkit(service).dispatch(
+            DELETE_TRANSACTION_TOOL,
+            {
+                "items": [
+                    {"description": "pizza"},
+                    {"description": "taxi"},
+                    {"description": "no-existe"},
+                ]
+            },
+            user_id="u1",
+        )
+        assert {tx_id for tx_id, _ in service.deleted} == {"t1", "t2"}
+        assert "no-existe" in result.lower()  # the miss is surfaced
+
     async def test_update_resolves_and_sets_fields(self) -> None:
         service = FakeTransactionService()
         service.items = [_transaction()]
@@ -738,38 +761,79 @@ class TestCardScopedOps:
 
         assert "no encontré" in result.lower()
 
-    async def test_delete_card_movements(self) -> None:
+    async def test_delete_movements_by_card_and_period(self) -> None:
         service = FakeTransactionService()
         service.items = [_transaction(), _transaction()]
         toolkit = TransactionToolkit(service, cards=FakeCardService())
 
         result = await toolkit.dispatch(
-            DELETE_CARD_MOVEMENTS_TOOL,
+            DELETE_BY_FILTER_TOOL,
             {"card_name": "Visa BBVA", "period": "2026-08"},
             user_id="u1",
         )
 
-        assert service.deleted_by_card[0] == "card-1"
+        assert service.deleted_movements["card_id"] == "card-1"
         assert "2" in result
 
-    async def test_delete_card_movements_unknown_card(self) -> None:
+    async def test_delete_movements_by_category_and_period(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction(), _transaction(), _transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        result = await toolkit.dispatch(
+            DELETE_BY_FILTER_TOOL,
+            {"category": "transporte", "period": "2026-07"},
+            user_id="u1",
+        )
+
+        assert service.deleted_movements["category"] == "transporte"
+        assert service.deleted_movements["card_id"] is None
+        assert "3" in result
+
+    async def test_delete_movements_by_date_range(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        await toolkit.dispatch(
+            DELETE_BY_FILTER_TOOL,
+            {"start_date": "2026-07-05", "end_date": "2026-07-20"},
+            user_id="u1",
+        )
+
+        assert service.deleted_movements["period_start"] == date(2026, 7, 5)
+        assert service.deleted_movements["period_end"] == date(2026, 7, 20)
+
+    async def test_delete_movements_unknown_card(self) -> None:
         toolkit = TransactionToolkit(FakeTransactionService(), cards=FakeCardService(cards=[]))
 
         result = await toolkit.dispatch(
-            DELETE_CARD_MOVEMENTS_TOOL, {"card_name": "Nu"}, user_id="u1"
+            DELETE_BY_FILTER_TOOL, {"card_name": "Nu", "period": "2026-08"}, user_id="u1"
         )
 
         assert "no encontré" in result.lower()
 
-    async def test_delete_card_movements_requires_period(self) -> None:
-        # Destructive: without an explicit period it must ASK, never wipe all history.
+    async def test_delete_movements_requires_time_scope(self) -> None:
+        # Destructive: without a period/range it must ASK, never wipe all history.
         service = FakeTransactionService()
         service.items = [_transaction()]
         toolkit = TransactionToolkit(service, cards=FakeCardService())
 
         result = await toolkit.dispatch(
-            DELETE_CARD_MOVEMENTS_TOOL, {"card_name": "Visa BBVA"}, user_id="u1"
+            DELETE_BY_FILTER_TOOL, {"card_name": "Visa BBVA"}, user_id="u1"
         )
 
         assert "período" in result.lower() or "periodo" in result.lower()
-        assert not hasattr(service, "deleted_by_card")  # nothing was deleted
+        assert not hasattr(service, "deleted_movements")  # nothing was deleted
+
+    async def test_delete_partial_date_range_asks(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction()]
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        result = await toolkit.dispatch(
+            DELETE_BY_FILTER_TOOL, {"start_date": "2026-07-05"}, user_id="u1"
+        )
+
+        assert "ambas" in result.lower() or "fin" in result.lower()
+        assert not hasattr(service, "deleted_movements")

@@ -113,21 +113,25 @@ registrar y consultar sus transacciones financieras.
 - Indicar/corregir CÓMO se pagó un gasto que YA existe ("ese gasto fue en efectivo",
   "el de 200 mil lo pagué con tarjeta") → NO registres uno nuevo: usa update_transaction
   con la descripción del gasto y payment_method ('efectivo' o 'credito').
-- Corregir o eliminar un gasto → update_transaction / delete_transaction (destructivo):
+- Corregir o eliminar gastos ESPECÍFICOS → update_transaction / delete_transaction (destructivo):
   1. Identifica la transacción por su DESCRIPCIÓN (pásala en 'description'); si hay varias
      parecidas, añade 'amount' y/o 'transaction_date' para desambiguar. NO manejas ids:
      el sistema encuentra la transacción por esos datos. Puedes usar query_transactions
      antes para ver qué tiene el usuario, pero NO necesitas ningún id.
-  2. Confirma con el usuario antes de ejecutar ("¿Elimino tu gasto de $57.000 en
+  2. Para borrar VARIOS gastos concretos de una vez, pasa la lista en 'items'
+     (cada uno con description y, si ayuda, amount y transaction_date) — NO una por una.
+  3. Confirma con el usuario antes de ejecutar ("¿Elimino tu gasto de $57.000 en
      restaurante del 1 de julio?") y ejecuta SOLO tras su "sí".
-  3. Si hay duplicados idénticos y el usuario dice "cualquiera", simplemente elimina uno.
-  4. Si no encuentras nada, díselo con naturalidad.
-- Consultar los movimientos de UNA tarjeta ("dame los movimientos de mi Nu") →
-  query_transactions con card_name. Filtrar por tarjeta y por período si lo pide.
-- Borrar EN BLOQUE los movimientos de una tarjeta ("borra los movimientos de Nu de
-  agosto") → delete_card_movements (destructivo). Confírmalo primero ("¿Borro los N
-  de tu tarjeta Nu de agosto?") y ejecútalo SOLO tras su "sí". Pasa card_name y, si
-  indicó un mes, period ('YYYY-MM' o 'este_mes'/'mes_pasado'/'todo').
+  4. Si hay duplicados idénticos y el usuario dice "cualquiera", simplemente elimina uno.
+  5. Si no encuentras nada, díselo con naturalidad.
+- Consultar movimientos por mes/tarjeta/categoría/método ("transporte en efectivo en
+  junio", "los movimientos de mi Nu") → query_transactions con period ('YYYY-MM' o
+  'este_mes'/'mes_pasado'/'todo'), card_name, category y/o payment_method.
+- Borrar EN BLOQUE por CRITERIO ("borra todo transporte de julio", "borra los de Nu de
+  agosto", "borra del 5 al 20 de julio") → delete_by_filter (destructivo). SIEMPRE lleva
+  un alcance temporal: period ('YYYY-MM'/'este_mes'/'mes_pasado'/'todo') o start_date+
+  end_date; y opcionalmente card_name y/o category. Confírmalo primero ("¿Borro los N …?")
+  y ejecútalo SOLO tras su "sí". Para gastos puntuales o una lista, usa delete_transaction.
 - Gestionar una CATEGORÍA entera (no un solo gasto) → manage_category:
   - "renombra/cambia el nombre de la categoría X a Y" o "fusiona X con Y" → action='rename'.
   - "elimina/borra la categoría X" → action='delete' (destructivo). Confírmalo primero.

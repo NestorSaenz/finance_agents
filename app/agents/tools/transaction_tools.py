@@ -7,6 +7,7 @@ at dispatch time and is NEVER part of the tool schema nor read from the model's
 arguments. The model only provides the transaction data.
 """
 
+import asyncio
 import re
 import unicodedata
 from datetime import UTC, date, datetime, timedelta
@@ -25,11 +26,17 @@ from app.agents.nodes.analyst_utils import (
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.periods import period_label, resolve_period
-from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
+from app.shared.types import (
+    PaymentMethod,
+    TransactionId,
+    TransactionType,
+    UserId,
+    normalize_category,
+)
 from app.src.cards.cycle import compute_cycle, next_payment_date
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
-from app.src.transactions.constants import MAX_INSTALLMENTS
+from app.src.transactions.constants import DELETE_CONCURRENCY, MAX_INSTALLMENTS
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import Transaction, TransactionCreate
 
@@ -40,7 +47,9 @@ QUERY_TRANSACTIONS_TOOL = "query_transactions"
 ANALYZE_SPENDING_TOOL = "analyze_spending"
 UPDATE_TRANSACTION_TOOL = "update_transaction"
 DELETE_TRANSACTION_TOOL = "delete_transaction"
-DELETE_CARD_MOVEMENTS_TOOL = "delete_card_movements"
+# Named 'delete_by_filter' (not 'delete_movements') to avoid colliding with
+# manage_category's boolean 'delete_movements' param, which confuses tool routing.
+DELETE_BY_FILTER_TOOL = "delete_by_filter"
 
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500
@@ -132,6 +141,21 @@ def _pick_group(
         if any(t.amount == amount for t in group):
             return group
     return None
+
+
+def _resolve_delete_group(
+    pool: list[Transaction],
+    description: str,
+    amount: Decimal | None,
+    tx_date: date | None,
+) -> list[Transaction] | None:
+    """Resolve the transaction (or full installment group) a descriptor refers to."""
+    matched = [t for t in pool if _matches_term(t, description)]
+    # A date narrows to a single row ONLY when the match isn't an installment
+    # purchase — otherwise it would split the group and leave orphan cuotas.
+    if tx_date is not None and not any(_cuota_count(t.description) for t in matched):
+        matched = [t for t in matched if t.transaction_date == tx_date]
+    return _pick_group(_installment_groups(matched), amount)
 
 # Tool schemas in OpenAI function-calling format, consumed by
 # LLMInterface.generate_with_tools. Note: no `user_id` parameter is exposed.
@@ -311,16 +335,18 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": DELETE_TRANSACTION_TOOL,
             "description": (
-                "Elimina una transacción existente. La identificas por su DESCRIPCIÓN "
-                "(y opcionalmente monto/fecha si hay varias parecidas); el sistema la "
-                "encuentra — tú NO manejas ids. Úsala SOLO tras confirmar con el usuario."
+                "Elimina gastos ESPECÍFICOS: uno, o VARIOS pasándolos en 'items'. "
+                "Cada uno se identifica por su DESCRIPCIÓN (+ monto/fecha si hay "
+                "parecidos); el sistema los encuentra, tú NO manejas ids. Para borrar "
+                "por criterio (una tarjeta, una categoría o un rango de fechas) usa "
+                "delete_by_filter. Úsala SOLO tras confirmar con el usuario."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "description": {
                         "type": "string",
-                        "description": "Descripción del gasto a eliminar (ej. 'YouTube')",
+                        "description": "Descripción del gasto a eliminar (para UNO solo)",
                     },
                     "amount": {
                         "type": "number",
@@ -330,37 +356,62 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Fecha YYYY-MM-DD, para desambiguar (opcional)",
                     },
+                    "items": {
+                        "type": "array",
+                        "description": (
+                            "Para borrar VARIOS de una vez: lista de gastos, cada uno "
+                            "{description, amount?, transaction_date?}."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "description": {"type": "string"},
+                                "amount": {"type": "number"},
+                                "transaction_date": {"type": "string"},
+                            },
+                            "required": ["description"],
+                        },
+                    },
                 },
-                "required": ["description"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": DELETE_CARD_MOVEMENTS_TOOL,
+            "name": DELETE_BY_FILTER_TOOL,
             "description": (
-                "Borra EN BLOQUE los movimientos de UNA tarjeta, opcionalmente de un "
-                "período (p. ej. 'borra los movimientos de Nu de agosto'). Destructivo: "
-                "confírmalo con el usuario ('¿Borro los N de tu tarjeta X?') y úsala SOLO "
-                "tras su 'sí'. Identificas la tarjeta por su nombre."
+                "Borra EN BLOQUE por CRITERIO: tarjeta, categoría/rubro y/o tiempo "
+                "(p. ej. 'borra todo transporte de julio', 'borra los de Nu de agosto', "
+                "'borra del 5 al 20 de julio'). SIEMPRE requiere un alcance temporal "
+                "(period o start_date+end_date); tarjeta y categoría son filtros extra. "
+                "Destructivo: confírmalo ('¿Borro los N …?') y úsala SOLO tras el 'sí'. "
+                "Para borrar gastos puntuales/una lista usa delete_transaction."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "card_name": {
                         "type": "string",
-                        "description": "Nombre de la tarjeta (ej. 'Nu')",
+                        "description": "Filtrar por tarjeta (opcional, ej. 'Nu')",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filtrar por categoría/rubro (opcional, ej. 'transporte')",
                     },
                     "period": {
                         "type": "string",
-                        "description": (
-                            "Período: 'este_mes', 'mes_pasado', 'todo' o 'YYYY-MM'. "
-                            "Omitir = todos los movimientos de la tarjeta."
-                        ),
+                        "description": "Alcance: 'este_mes', 'mes_pasado', 'todo' o 'YYYY-MM'",
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Inicio del rango YYYY-MM-DD (junto con end_date)",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "Fin del rango YYYY-MM-DD (junto con start_date)",
                     },
                 },
-                "required": ["card_name"],
             },
         },
     },
@@ -410,8 +461,8 @@ class TransactionToolkit:
             return await self._analyze(arguments, user_id)
         if name == UPDATE_TRANSACTION_TOOL:
             return await self._update(arguments, user_id)
-        if name == DELETE_CARD_MOVEMENTS_TOOL:
-            return await self._delete_card_movements(arguments, user_id)
+        if name == DELETE_BY_FILTER_TOOL:
+            return await self._delete_movements(arguments, user_id)
         if name == DELETE_TRANSACTION_TOOL:
             return await self._delete(arguments, user_id)
         raise ValueError(f"Unknown transaction tool: {name}")
@@ -605,34 +656,63 @@ class TransactionToolkit:
             return None, f"No encontré una tarjeta que coincida con '{card_name}'."
         return card.id, None
 
-    async def _delete_card_movements(self, args: dict[str, Any], user_id: UserId) -> str:
-        if self._cards is None:
-            return "No tienes tarjetas configuradas."
+    async def _delete_movements(self, args: dict[str, Any], user_id: UserId) -> str:
+        # Resolve the optional card filter.
+        card: CreditCard | None = None
         card_name = str(args.get("card_name", "")).strip()
-        if not card_name:
-            return "¿De qué tarjeta quieres borrar los movimientos?"
-        card = await self._cards.resolve_by_name(card_name, user_id)
-        if card is None:
-            return f"No encontré una tarjeta que coincida con '{card_name}'."
-        # Destructive: never default to wiping ALL history. Require an explicit period
-        # (a month, or an explicit 'todo') so an omitted arg can't erase everything.
-        period = str(args.get("period", "")).strip()
-        if not period:
+        if card_name:
+            if self._cards is None:
+                return "No tienes tarjetas configuradas."
+            card = await self._cards.resolve_by_name(card_name, user_id)
+            if card is None:
+                return f"No encontré una tarjeta que coincida con '{card_name}'."
+
+        category = _to_category(args.get("category"))
+
+        # Resolve the time scope: a named/YYYY-MM period, or an explicit date range.
+        period = str(args.get("period", "")).strip().lower()
+        start = _opt_date(args.get("start_date"))
+        end = _opt_date(args.get("end_date"))
+        scope_label = ""
+        if period:
+            if period not in _NAMED_PERIODS and not _MONTH_ARG_RE.match(period):
+                return "¿De qué período? Dime un mes ('2026-07'), 'todo', o un rango de fechas."
+            start, end = resolve_period(period)
+            scope_label = period_label(period)
+        elif (start is None) != (end is None):
+            return "Para un rango necesito AMBAS fechas: inicio y fin (YYYY-MM-DD)."
+        elif start is not None and end is not None:
+            scope_label = f"{start} a {end}"
+
+        # Destructive: always require a time scope so an omitted arg can't wipe all
+        # history. Use 'todo' explicitly to clear everything for a card/category.
+        if start is None or end is None:
             return (
-                f"¿De qué período borro los movimientos de la tarjeta {card.name}? "
-                "Dime un mes (p. ej. '2026-08') o 'todo' para borrarlos todos."
+                "¿De qué período? Dime un mes (p. ej. '2026-07'), un rango de fechas, "
+                "o 'todo' para borrar sin límite de fecha."
             )
-        start, end = resolve_period(period)
-        deleted = await self._service.delete_by_card_and_period(
-            user_id, card.id, period_start=start, period_end=end
+
+        deleted = await self._service.delete_movements(
+            user_id,
+            card_id=card.id if card else None,
+            category=category,
+            period_start=start,
+            period_end=end,
         )
-        scope = period_label(period)
+        filters = [
+            label
+            for label in (
+                f"tarjeta {card.name}" if card else "",
+                f"categoría {category}" if category else "",
+                scope_label,
+            )
+            if label
+        ]
+        scope = ", ".join(filters)
         if deleted == 0:
-            return f"No encontré movimientos de la tarjeta {card.name} ({scope})."
-        logger.info(
-            "Deleted card movements", card=card.name, count=deleted, user_id=user_id
-        )
-        return f"🗑️ Borré {deleted} movimiento(s) de la tarjeta {card.name} ({scope})."
+            return f"No encontré movimientos con esos filtros ({scope})."
+        logger.info("Deleted movements", scope=scope, count=deleted, user_id=user_id)
+        return f"🗑️ Borré {deleted} movimiento(s) ({scope})."
 
     async def _analyze(self, args: dict[str, Any], user_id: UserId) -> str:
         period = str(args.get("period", "este_mes")).lower()
@@ -679,35 +759,28 @@ class TransactionToolkit:
         )
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
+        # A list of descriptors deletes several specific gastos at once.
+        items = args.get("items")
+        if isinstance(items, list) and items:
+            return await self._delete_many(items, user_id)
+
         description = str(args.get("description", "")).lower().strip()
         if not description:
             return "¿Qué gasto quieres eliminar? Dame la descripción (y el monto o la fecha si ayuda)."
-        amount = _opt_decimal(args.get("amount"))
-        tx_date = _opt_date(args.get("transaction_date"))
-
         # Installment rows of one purchase share a created_at, so they cluster in
         # this page; a purchase older than the cap can't be resolved (fine here).
         pool, _ = await self._service.list_transactions(
             user_id, page=1, page_size=ANALYZE_FETCH_LIMIT
         )
-        by_desc = [t for t in pool if _matches_term(t, description)]
-        # A date narrows to a single row ONLY when the match isn't an installment
-        # purchase — otherwise it would split the group and leave orphan cuotas.
-        if tx_date is not None and not any(_cuota_count(t.description) for t in by_desc):
-            by_desc = [t for t in by_desc if t.transaction_date == tx_date]
-        # A deferred purchase is many rows ("... (cuota i/n)"); delete the whole
-        # group so one cuota isn't left behind (the bug users hit with cuotas).
-        group = _pick_group(_installment_groups(by_desc), amount)
+        group = _resolve_delete_group(
+            pool,
+            description,
+            _opt_decimal(args.get("amount")),
+            _opt_date(args.get("transaction_date")),
+        )
         if group is None:
             return "No encontré ese gasto (revisa la descripción o el monto)."
-
-        removed = 0
-        for tx in group:
-            try:
-                await self._service.delete_transaction(tx.id, user_id)
-                removed += 1
-            except TransactionNotFoundError:
-                continue
+        removed = await self._delete_group(group, user_id)
         if removed == 0:
             return "No encontré ese gasto (quizás ya no existe)."
         if len(group) > 1:
@@ -716,6 +789,60 @@ class TransactionToolkit:
             return f"🗑️ Eliminé la compra a cuotas «{base}»: {removed} cuota(s) por ${total} en total."
         tx = group[0]
         return f"🗑️ Eliminé: {tx.description} — ${tx.amount} ({tx.transaction_date})."
+
+    async def _delete_many(self, items: list[Any], user_id: UserId) -> str:
+        # Resolve every descriptor against ONE fetch, dedupe by id (installment
+        # groups expand), then delete all concurrently.
+        pool, _ = await self._service.list_transactions(
+            user_id, page=1, page_size=ANALYZE_FETCH_LIMIT
+        )
+        targets: dict[str, Transaction] = {}
+        not_found: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("description", "")).strip()
+            resolved = _resolve_delete_group(
+                pool,
+                label.lower(),
+                _opt_decimal(item.get("amount")),
+                _opt_date(item.get("transaction_date")),
+            )
+            if resolved is None:
+                if label:
+                    not_found.append(label)
+                continue
+            for tx in resolved:
+                targets[tx.id] = tx
+
+        if not targets:
+            return "No encontré ninguno de esos gastos (revisa las descripciones o montos)."
+        removed = await self._delete_group(list(targets.values()), user_id)
+        message = f"🗑️ Eliminé {removed} movimiento(s)."
+        if not_found:
+            message += f" No encontré: {', '.join(not_found)}."
+        return message
+
+    async def _delete_group(self, group: list[Transaction], user_id: UserId) -> int:
+        """Delete every row in a group concurrently; tolerate already-gone rows."""
+        semaphore = asyncio.Semaphore(DELETE_CONCURRENCY)
+
+        async def _delete_one(transaction_id: TransactionId) -> Transaction:
+            async with semaphore:
+                return await self._service.delete_transaction(transaction_id, user_id)
+
+        results = await asyncio.gather(
+            *(_delete_one(tx.id) for tx in group),
+            return_exceptions=True,
+        )
+        removed = 0
+        for result in results:
+            if isinstance(result, TransactionNotFoundError):
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            removed += 1
+        return removed
 
     async def _resolve_transaction(
         self, args: dict[str, Any], user_id: UserId

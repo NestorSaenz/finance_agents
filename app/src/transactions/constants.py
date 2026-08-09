@@ -20,6 +20,10 @@ MAX_PAGE_SIZE: Final[int] = 100
 # How many transactions the spending summary fetches to aggregate in-period.
 SUMMARY_FETCH_LIMIT: Final[int] = 1000
 
+# Max concurrent row deletes for a bulk delete, so an all-history wipe can't open
+# hundreds of DB connections at once.
+DELETE_CONCURRENCY: Final[int] = 20
+
 # Minimum cosine similarity required to trust a semantic category match.
 # Below this the transaction is categorized as OTROS (unknown).
 CATEGORY_CONFIDENCE_THRESHOLD: Final[float] = 0.50

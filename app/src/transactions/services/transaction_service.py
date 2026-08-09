@@ -1,5 +1,6 @@
 """Transaction use cases (business logic)."""
 
+import asyncio
 import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -18,7 +19,11 @@ from app.shared.types import (
     normalize_category,
 )
 
-from ..constants import CATEGORY_FUZZY_MATCH_CUTOFF, SUMMARY_FETCH_LIMIT
+from ..constants import (
+    CATEGORY_FUZZY_MATCH_CUTOFF,
+    DELETE_CONCURRENCY,
+    SUMMARY_FETCH_LIMIT,
+)
 from ..interfaces import (
     TransactionCategorizerABC,
     TransactionRepositoryABC,
@@ -194,28 +199,51 @@ class TransactionService(TransactionServiceABC):
         in_period.sort(key=lambda t: (t.transaction_date, t.created_at), reverse=True)
         return in_period
 
-    async def delete_by_card_and_period(
+    async def delete_movements(
         self,
         user_id: UserId,
-        card_id: CardId,
         *,
-        period_start: date,
-        period_end: date,
+        card_id: CardId | None = None,
+        category: Category | None = None,
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> int:
-        """Delete a card's transactions within a period; return rows deleted.
+        """Delete transactions matching the given filters (ANDed); rows deleted.
 
-        The DB client has no range delete, so fetch the card's in-period rows and
-        delete them by id (personal-finance volumes make this cheap).
+        Filters: card, category, and/or a ``[period_start, period_end]`` date
+        range. The DB client has no range delete, so matching rows are fetched
+        (card/category pushed down as equality filters) and deleted by id with
+        bounded concurrency — cheap at personal-finance volumes.
+
+        At least one filter is required: deleting with no filter at all would wipe
+        the user's whole history, so it raises instead.
         """
-        movements = await self.list_by_period(
+        has_range = period_start is not None and period_end is not None
+        if card_id is None and category is None and not has_range:
+            raise ValueError(
+                "delete_movements needs at least a card, category or date range"
+            )
+        items = await self._repository.list_page(
             user_id,
-            period_start=period_start,
-            period_end=period_end,
+            limit=SUMMARY_FETCH_LIMIT,
+            offset=0,
+            category=normalize_category(category) if category else None,
             card_id=card_id,
         )
-        for movement in movements:
-            await self._repository.delete(movement.id, user_id)
-        return len(movements)
+        if period_start is not None and period_end is not None:
+            items = [
+                t for t in items if period_start <= t.transaction_date <= period_end
+            ]
+
+        # Cap fan-out so an all-history delete can't open hundreds of connections.
+        semaphore = asyncio.Semaphore(DELETE_CONCURRENCY)
+
+        async def _delete_one(transaction_id: TransactionId) -> None:
+            async with semaphore:
+                await self._repository.delete(transaction_id, user_id)
+
+        await asyncio.gather(*(_delete_one(t.id) for t in items))
+        return len(items)
 
     async def update_transaction(
         self,
