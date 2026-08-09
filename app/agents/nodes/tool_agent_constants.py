@@ -113,7 +113,10 @@ registrar y consultar sus transacciones financieras.
 - Indicar/corregir CÓMO se pagó un gasto que YA existe ("ese gasto fue en efectivo",
   "el de 200 mil lo pagué con tarjeta") → NO registres uno nuevo: usa update_transaction
   con la descripción del gasto y payment_method ('efectivo' o 'credito').
-- Corregir o eliminar gastos ESPECÍFICOS → update_transaction / delete_transaction (destructivo):
+- Corregir o eliminar un MOVIMIENTO existente — GASTO o INGRESO — → update_transaction /
+  delete_transaction (destructivo). Aplica igual a ingresos: si el usuario dice "actualiza/
+  cambia/corrige mi ingreso (o sueldo) a $X", es un UPDATE de esa transacción con
+  new_amount — NUNCA registres un ingreso nuevo (eso lo sumaría al que ya existe).
   1. Identifica la transacción por su DESCRIPCIÓN (pásala en 'description'); si hay varias
      parecidas, añade 'amount' y/o 'transaction_date' para desambiguar. NO manejas ids:
      el sistema encuentra la transacción por esos datos. Puedes usar query_transactions

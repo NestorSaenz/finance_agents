@@ -652,6 +652,29 @@ class TestUpdateDelete:
         assert fields["category"] == CategoryType.VIAJES
         assert "actualic" in result.lower()
 
+    async def test_update_income_replaces_amount_not_registers(self) -> None:
+        # "actualiza mi ingreso a 22M" must UPDATE the income transaction (like an
+        # expense), never register a new one (which would sum on top).
+        service = FakeTransactionService()
+        service.items = [
+            _transaction(transaction_type=TransactionType.INCOME).model_copy(
+                update={
+                    "id": "inc",
+                    "description": "ingreso mensual",
+                    "amount": Decimal("14000000"),
+                }
+            )
+        ]
+        await TransactionToolkit(service).dispatch(
+            UPDATE_TRANSACTION_TOOL,
+            {"description": "ingreso", "new_amount": 22000000},
+            user_id="u1",
+        )
+        assert service.created == []  # nothing was registered
+        tx_id, _uid, fields = service.updated[0]
+        assert tx_id == "inc"
+        assert fields["amount"] == Decimal("22000000")
+
     async def test_update_matches_accent_insensitive(self) -> None:
         # "bunuelos" (no ñ) must resolve "buñuelos" so a re-categorization lands.
         service = FakeTransactionService()
