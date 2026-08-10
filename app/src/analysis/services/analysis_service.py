@@ -53,7 +53,9 @@ class AnalysisService(AnalysisServiceABC):
                 ),
                 self._profiles.get_profile(user_id),
                 self._budgets.get_all_status(user_id),
-                self._goals.list_goals(user_id, page=1, page_size=_GOALS_PAGE),
+                self._goals.list_goals(
+                    user_id, page=1, page_size=_GOALS_PAGE, as_of=end
+                ),
                 self._cards.get_all_status(user_id),
             )
         )

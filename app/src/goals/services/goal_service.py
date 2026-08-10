@@ -8,7 +8,11 @@ from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
 from app.shared.types import GoalId, GoalStatus, UserId
 
-from ..interfaces import GoalRepositoryABC, GoalServiceABC
+from ..interfaces import (
+    GoalContributionRepositoryABC,
+    GoalRepositoryABC,
+    GoalServiceABC,
+)
 from ..models import Goal, GoalCreate, GoalProgress
 
 logger = get_logger(__name__)
@@ -17,8 +21,13 @@ logger = get_logger(__name__)
 class GoalService(GoalServiceABC):
     """Orchestrates goal persistence, contributions, and progress evaluation."""
 
-    def __init__(self, repository: GoalRepositoryABC) -> None:
+    def __init__(
+        self,
+        repository: GoalRepositoryABC,
+        contributions: GoalContributionRepositoryABC,
+    ) -> None:
         self._repository = repository
+        self._contributions = contributions
 
     async def create_goal(self, goal: GoalCreate, user_id: UserId) -> Goal:
         return await self._repository.create(goal, user_id)
@@ -30,18 +39,42 @@ class GoalService(GoalServiceABC):
         return goal
 
     async def list_goals(
-        self, user_id: UserId, *, page: int, page_size: int
+        self,
+        user_id: UserId,
+        *,
+        page: int,
+        page_size: int,
+        as_of: date | None = None,
     ) -> tuple[list[Goal], int]:
         offset = (page - 1) * page_size
         items = await self._repository.list_page(user_id, limit=page_size, offset=offset)
         total = await self._repository.count(user_id)
-        return items, total
+        if as_of is None:
+            return items, total
+        # Rebuild each goal's progress AT the month-end from its dated
+        # contributions (one fetch, grouped in Python), so a month shows only
+        # what had been saved by then instead of the running cached total.
+        sums = await self._contributions.sums_up_to(user_id, as_of)
+        return [_with_cumulative(goal, sums.get(goal.id, Decimal("0"))) for goal in items], total
 
-    async def contribute(self, goal_id: GoalId, user_id: UserId, amount: Decimal) -> Goal:
+    async def contribute(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal:
         goal = await self.get_goal(goal_id, user_id)
         if goal.status == GoalStatus.COMPLETED:
             raise GoalAlreadyCompletedError(goal.id, goal.name)
 
+        await self._contributions.create(
+            goal_id, user_id, amount, contribution_date or _today()
+        )
+
+        # Keep ``current_amount`` as a cached running total so unfiltered reads
+        # stay cheap; the dated contribution above is the source of truth for
+        # per-month progress.
         new_amount = goal.current_amount + amount
         data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
         if new_amount >= goal.target_amount:
@@ -62,6 +95,25 @@ class GoalService(GoalServiceABC):
     ) -> GoalProgress:
         goal = await self.get_goal(goal_id, user_id)
         return _build_progress(goal, as_of or _today())
+
+
+def _with_cumulative(goal: Goal, cumulative: Decimal) -> Goal:
+    """Return a copy of ``goal`` whose amount/status reflect the month's cumulative.
+
+    A goal counts as completed for the month only if its cumulative reached the
+    target by then; otherwise it's active, even when the cached running total had
+    already completed it in a later month. Non-completion statuses (paused,
+    cancelled) are preserved — only COMPLETED is (re)derived from the cumulative.
+    """
+    if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
+        status = (
+            GoalStatus.COMPLETED
+            if cumulative >= goal.target_amount
+            else GoalStatus.ACTIVE
+        )
+    else:
+        status = goal.status  # paused / cancelled stay as-is
+    return goal.model_copy(update={"current_amount": cumulative, "status": status})
 
 
 def _build_progress(goal: Goal, reference: date) -> GoalProgress:

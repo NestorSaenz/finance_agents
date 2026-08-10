@@ -28,6 +28,11 @@ class GoalContributeRequest(BaseModel):
     """Request body for contributing to a goal."""
 
     amount: Decimal = Field(..., gt=0, description="Amount to add", examples=[5000])
+    contribution_date: date | None = Field(
+        default=None,
+        description="Date of the contribution (YYYY-MM-DD); defaults to today.",
+        examples=["2026-06-15"],
+    )
 
 
 class GoalResponse(BaseModel):

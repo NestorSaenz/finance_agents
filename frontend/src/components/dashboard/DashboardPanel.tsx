@@ -74,7 +74,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
     try {
       // Budgets are current-period, so only fetch them for the "este_mes" view.
       // Cards are reconstructed for the selected month (deuda/disponible/pago at
-      // that month-end); goals reflect current state. Both load in every view.
+      // that month-end); goals likewise show their cumulative progress up to that
+      // month-end. Both load in every view.
       const [
         summaryData,
         movementsData,
@@ -88,7 +89,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.transactions(period, token),
         period === "este_mes" ? api.budgetStatus(token) : Promise.resolve(null),
         api.profile(token),
-        api.goals(token),
+        api.goals(period, token),
         api.cardsStatus(period, token),
         api.cardPayments(period, token),
       ]);

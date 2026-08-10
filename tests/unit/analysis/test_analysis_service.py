@@ -58,7 +58,7 @@ class FakeBudgets:
 
 
 class FakeGoals:
-    async def list_goals(self, user_id, *, page, page_size):  # type: ignore[no-untyped-def]
+    async def list_goals(self, user_id, *, page, page_size, as_of=None):  # type: ignore[no-untyped-def]
         goal = Goal(
             id="g1",
             user_id=user_id,

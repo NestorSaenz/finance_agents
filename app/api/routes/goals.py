@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
+from app.shared.periods import resolve_period
 from app.src.auth.dependencies import CurrentUserId
 from app.src.goals.dependencies import GoalServiceDep
 from app.src.goals.dto import (
@@ -37,9 +38,19 @@ async def list_goals(
     user_id: CurrentUserId,
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
+    period: str | None = Query(
+        default=None,
+        description="Reporting period (e.g. 'este_mes' or 'YYYY-MM'); goals then "
+        "reflect their cumulative progress up to that month-end.",
+    ),
 ) -> GoalListResponse:
     """List the current user's goals (highest priority first)."""
-    items, total = await service.list_goals(user_id, page=page, page_size=page_size)
+    # A period reconstructs each goal's progress at that month-end; without one,
+    # the goal shows its live running total.
+    as_of = resolve_period(period)[1] if period else None
+    items, total = await service.list_goals(
+        user_id, page=page, page_size=page_size, as_of=as_of
+    )
     return GoalListResponse(
         goals=[GoalResponse.from_domain(g) for g in items],
         total=total,
@@ -78,7 +89,9 @@ async def contribute_to_goal(
     user_id: CurrentUserId,
 ) -> GoalResponse:
     """Add an amount to a goal, completing it automatically when reached."""
-    goal = await service.contribute(goal_id, user_id, request.amount)
+    goal = await service.contribute(
+        goal_id, user_id, request.amount, request.contribution_date
+    )
     return GoalResponse.from_domain(goal)
 
 

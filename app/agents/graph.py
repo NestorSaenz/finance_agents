@@ -150,6 +150,9 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.src.cards.repositories.credit_card_repository import CreditCardRepository
     from app.src.cards.services.credit_card_service import CreditCardService
     from app.src.cards.services.spending_provider import TransactionCardSpendingProvider
+    from app.src.goals.repositories.goal_contribution_repository import (
+        GoalContributionRepository,
+    )
     from app.src.goals.repositories.goal_repository import GoalRepository
     from app.src.goals.services.goal_service import GoalService
     from app.src.transactions.repositories.transaction_repository import TransactionRepository
@@ -167,7 +170,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
         SemanticTransactionCategorizer(embedding_client, vector_store),
     )
     budget_service = BudgetService(BudgetRepository(db), TransactionSpendingProvider(db))
-    goal_service = GoalService(GoalRepository(db))
+    goal_service = GoalService(GoalRepository(db), GoalContributionRepository(db))
     card_service = CreditCardService(
         CreditCardRepository(db),
         CardPaymentRepository(db),

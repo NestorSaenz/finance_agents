@@ -8,8 +8,11 @@ import pytest
 
 from app.core.exceptions import GoalAlreadyCompletedError, GoalNotFoundError
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
-from app.src.goals.interfaces import GoalRepositoryABC
-from app.src.goals.models import Goal, GoalCreate
+from app.src.goals.interfaces import (
+    GoalContributionRepositoryABC,
+    GoalRepositoryABC,
+)
+from app.src.goals.models import Goal, GoalContribution, GoalCreate
 from app.src.goals.services.goal_service import GoalService
 
 
@@ -68,12 +71,41 @@ class FakeGoalRepository(GoalRepositoryABC):
         self.deleted = goal_id
 
 
+class FakeGoalContributionRepository(GoalContributionRepositoryABC):
+    def __init__(self, sums: dict[str, Decimal] | None = None) -> None:
+        self.created: list[tuple[str, str, Decimal, date]] = []
+        self._sums = sums or {}
+
+    async def create(
+        self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
+    ) -> GoalContribution:
+        self.created.append((goal_id, user_id, amount, contribution_date))
+        return GoalContribution(
+            id="c1",
+            goal_id=goal_id,
+            user_id=user_id,
+            amount=amount,
+            contribution_date=contribution_date,
+            created_at=datetime.now(UTC),
+        )
+
+    async def sums_up_to(self, user_id: UserId, as_of: date) -> dict[str, Decimal]:
+        return dict(self._sums)
+
+
 REF = date(2025, 1, 1)
+
+
+def _service(
+    repo: FakeGoalRepository,
+    contribs: FakeGoalContributionRepository | None = None,
+) -> GoalService:
+    return GoalService(repo, contribs or FakeGoalContributionRepository())
 
 
 class TestGetGoal:
     async def test_raises_when_missing(self) -> None:
-        service = GoalService(FakeGoalRepository(goal=None))
+        service = _service(FakeGoalRepository(goal=None))
         with pytest.raises(GoalNotFoundError):
             await service.get_goal("missing", "u1")
 
@@ -81,7 +113,8 @@ class TestGetGoal:
 class TestContribute:
     async def test_adds_amount(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
-        service = GoalService(repo)
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
 
         result = await service.contribute("goal-1", "u1", Decimal("5000"))
 
@@ -89,9 +122,28 @@ class TestContribute:
         assert "status" not in repo.updated_data  # not yet reached
         assert result.current_amount == Decimal("30000")
 
+    async def test_inserts_a_dated_contribution(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
+
+        await service.contribute("goal-1", "u1", Decimal("5000"), date(2026, 6, 15))
+
+        assert contribs.created == [("goal-1", "u1", Decimal("5000"), date(2026, 6, 15))]
+
+    async def test_defaults_contribution_date_to_today(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
+
+        await service.contribute("goal-1", "u1", Decimal("5000"))
+
+        _goal_id, _user, _amount, when = contribs.created[0]
+        assert when == datetime.now(UTC).date()
+
     async def test_completes_when_target_reached(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("95000")))
-        service = GoalService(repo)
+        service = _service(repo)
 
         result = await service.contribute("goal-1", "u1", Decimal("10000"))
 
@@ -100,14 +152,67 @@ class TestContribute:
 
     async def test_contributing_to_completed_goal_raises(self) -> None:
         repo = FakeGoalRepository(goal=_goal(status=GoalStatus.COMPLETED))
-        service = GoalService(repo)
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
         with pytest.raises(GoalAlreadyCompletedError):
             await service.contribute("goal-1", "u1", Decimal("100"))
+        assert contribs.created == []  # no contribution recorded on rejection
+
+
+class TestListGoalsCumulative:
+    async def test_as_of_returns_cumulative_up_to_month(self) -> None:
+        # Contributions 200@jun, 300@jul, 100@aug -> cumulative end-June=200,
+        # end-July=500, end-Aug=600. The cached running total is ignored.
+        goal = _goal(current=Decimal("600"), target=Decimal("1000"))
+        repo = FakeGoalRepository(goal=goal)
+
+        cases = {
+            date(2026, 6, 30): Decimal("200"),
+            date(2026, 7, 31): Decimal("500"),
+            date(2026, 8, 31): Decimal("600"),
+        }
+        for as_of, expected in cases.items():
+            contribs = FakeGoalContributionRepository(sums={"goal-1": expected})
+            service = _service(repo, contribs)
+
+            items, total = await service.list_goals(
+                "u1", page=1, page_size=20, as_of=as_of
+            )
+
+            assert total == 1
+            assert items[0].current_amount == expected
+            assert items[0].status == GoalStatus.ACTIVE  # 600 < 1000
+
+    async def test_as_of_marks_completed_only_when_target_reached(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(target=Decimal("1000")))
+        contribs = FakeGoalContributionRepository(sums={"goal-1": Decimal("1000")})
+        service = _service(repo, contribs)
+
+        items, _ = await service.list_goals("u1", page=1, page_size=20, as_of=date(2026, 8, 31))
+
+        assert items[0].current_amount == Decimal("1000")
+        assert items[0].status == GoalStatus.COMPLETED
+
+    async def test_goal_with_no_contributions_shows_zero(self) -> None:
+        repo = FakeGoalRepository(goal=_goal())
+        service = _service(repo, FakeGoalContributionRepository(sums={}))
+
+        items, _ = await service.list_goals("u1", page=1, page_size=20, as_of=date(2026, 6, 30))
+
+        assert items[0].current_amount == Decimal("0")
+
+    async def test_without_as_of_returns_running_total(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        service = _service(repo, FakeGoalContributionRepository(sums={"goal-1": Decimal("1")}))
+
+        items, _ = await service.list_goals("u1", page=1, page_size=20)
+
+        assert items[0].current_amount == Decimal("25000")
 
 
 class TestProgress:
     async def test_basic_progress_and_required_monthly(self) -> None:
-        service = GoalService(FakeGoalRepository(goal=_goal()))
+        service = _service(FakeGoalRepository(goal=_goal()))
 
         progress = await service.get_progress("goal-1", "u1", as_of=REF)
 
@@ -119,7 +224,7 @@ class TestProgress:
         assert progress.on_track is True
 
     async def test_completed_goal(self) -> None:
-        service = GoalService(FakeGoalRepository(goal=_goal(current=Decimal("100000"))))
+        service = _service(FakeGoalRepository(goal=_goal(current=Decimal("100000"))))
 
         progress = await service.get_progress("goal-1", "u1", as_of=REF)
 
@@ -129,7 +234,7 @@ class TestProgress:
         assert progress.on_track is True
 
     async def test_passed_deadline_not_on_track(self) -> None:
-        service = GoalService(
+        service = _service(
             FakeGoalRepository(goal=_goal(target_date=date(2024, 12, 31)))
         )
 
@@ -140,7 +245,7 @@ class TestProgress:
         assert progress.on_track is False
 
     async def test_no_deadline_has_no_required_monthly(self) -> None:
-        service = GoalService(FakeGoalRepository(goal=_goal(target_date=None)))
+        service = _service(FakeGoalRepository(goal=_goal(target_date=None)))
 
         progress = await service.get_progress("goal-1", "u1", as_of=REF)
 

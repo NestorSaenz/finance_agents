@@ -8,7 +8,7 @@ arguments. Contributions reference a goal by NAME (resolved to an id server-side
 so the model never handles internal ids.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -78,13 +78,21 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": CONTRIBUTE_GOAL_TOOL,
             "description": (
                 "Abona un monto a una meta existente (identificada por su nombre). "
-                "Úsala cuando el usuario dice que aportó o ahorró para una meta."
+                "Úsala cuando el usuario dice que aportó o ahorró para una meta "
+                "(p. ej. 'en junio aporté 2000 a mi viaje')."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "goal_name": {"type": "string", "description": "Nombre de la meta"},
                     "amount": {"type": "number", "description": "Monto a abonar, mayor a 0"},
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha del abono YYYY-MM-DD si el usuario la indica "
+                            "(p. ej. 'en junio aporté X'); por defecto, hoy."
+                        ),
+                    },
                     "goal_target_amount": {
                         "type": "number",
                         "description": (
@@ -193,10 +201,16 @@ class GoalToolkit:
         if goal is None:
             return _ambiguous_message(name, matches, "abonar")
 
-        updated = await self._service.contribute(goal.id, user_id, amount)
+        # Honor the date the user stated ("en junio aporté X"); default to today.
+        today = datetime.now(UTC).date()
+        contribution_date = _opt_date(args.get("date")) or today
+        updated = await self._service.contribute(
+            goal.id, user_id, amount, contribution_date
+        )
         done = " 🎉 ¡Meta completada!" if updated.current_amount >= updated.target_amount else ""
+        when = "" if contribution_date == today else f" ({contribution_date})"
         return (
-            f"✅ Aboné ${amount} a '{updated.name}'. "
+            f"✅ Aboné ${amount} a '{updated.name}'{when}. "
             f"Llevas ${updated.current_amount} de ${updated.target_amount}.{done}"
         )
 
@@ -291,6 +305,16 @@ def _opt_decimal(value: Any) -> Decimal | None:
     try:
         return Decimal(str(value))
     except (InvalidOperation, TypeError):
+        return None
+
+
+def _opt_date(value: Any) -> date | None:
+    """Parse a 'YYYY-MM-DD' string to a date, or None if absent/invalid."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
         return None
 
 

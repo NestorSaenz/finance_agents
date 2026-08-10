@@ -7,7 +7,7 @@ from typing import Any
 
 from app.shared.types import GoalId, UserId
 
-from .models import Goal, GoalCreate, GoalProgress
+from .models import Goal, GoalContribution, GoalCreate, GoalProgress
 
 
 class GoalRepositoryABC(ABC):
@@ -40,6 +40,29 @@ class GoalRepositoryABC(ABC):
         """Delete a user's goal (scoped by ``user_id``)."""
 
 
+class GoalContributionRepositoryABC(ABC):
+    """Contract for dated goal-contribution persistence (data access only)."""
+
+    @abstractmethod
+    async def create(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date,
+    ) -> GoalContribution:
+        """Persist a dated contribution toward a goal and return it."""
+
+    @abstractmethod
+    async def sums_up_to(self, user_id: UserId, as_of: date) -> dict[str, Decimal]:
+        """Return ``goal_id -> sum`` of contributions dated on or before ``as_of``.
+
+        One fetch of the user's contributions, grouped in Python: PostgREST has
+        no range filter, so the date window is applied in Python (as in
+        ``CardPaymentRepository.total_paid``).
+        """
+
+
 class GoalServiceABC(ABC):
     """Contract for goal use cases (business logic)."""
 
@@ -53,13 +76,31 @@ class GoalServiceABC(ABC):
 
     @abstractmethod
     async def list_goals(
-        self, user_id: UserId, *, page: int, page_size: int
+        self,
+        user_id: UserId,
+        *,
+        page: int,
+        page_size: int,
+        as_of: date | None = None,
     ) -> tuple[list[Goal], int]:
-        """Return a page of goals and the total count."""
+        """Return a page of goals and the total count.
+
+        With ``as_of`` set, each goal's ``current_amount`` (and status) reflects
+        its cumulative contributions up to that month-end, not the running total.
+        """
 
     @abstractmethod
-    async def contribute(self, goal_id: GoalId, user_id: UserId, amount: Decimal) -> Goal:
-        """Add ``amount`` to a goal's current amount, completing it if reached."""
+    async def contribute(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal:
+        """Record a dated contribution, completing the goal if the target is reached.
+
+        ``contribution_date`` defaults to today when omitted.
+        """
 
     @abstractmethod
     async def get_progress(

@@ -1,6 +1,6 @@
 """Unit tests for the budget and goal toolkits + the composite toolkit."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -110,7 +110,7 @@ class FakeBudgetService(BudgetServiceABC):
 class FakeGoalService(GoalServiceABC):
     def __init__(self, goals: list[Goal] | None = None) -> None:
         self.created: list[tuple[GoalCreate, str]] = []
-        self.contributions: list[tuple[str, str, Decimal]] = []
+        self.contributions: list[tuple[str, str, Decimal, date | None]] = []
         self.deleted: list[tuple[str, str]] = []
         self._goals = goals if goals is not None else [_goal()]
 
@@ -118,11 +118,19 @@ class FakeGoalService(GoalServiceABC):
         self.created.append((goal, user_id))
         return _goal(name=goal.name, target_amount=goal.target_amount)
 
-    async def list_goals(self, user_id: str, *, page: int, page_size: int) -> tuple[list[Goal], int]:
+    async def list_goals(
+        self, user_id: str, *, page: int, page_size: int, as_of: date | None = None
+    ) -> tuple[list[Goal], int]:
         return list(self._goals), len(self._goals)
 
-    async def contribute(self, goal_id: str, user_id: str, amount: Decimal) -> Goal:
-        self.contributions.append((goal_id, user_id, amount))
+    async def contribute(
+        self,
+        goal_id: str,
+        user_id: str,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal:
+        self.contributions.append((goal_id, user_id, amount, contribution_date))
         return _goal(id=goal_id, current_amount=Decimal("25000") + amount)
 
     async def delete_goal(self, goal_id: str, user_id: str) -> Goal:
@@ -238,9 +246,22 @@ class TestGoalToolkit:
         result = await GoalToolkit(service).dispatch(
             "contribute_to_goal", {"goal_name": "japón", "amount": 5000}, "u1"
         )
-        goal_id, user_id, amount = service.contributions[0]
+        goal_id, user_id, amount, when = service.contributions[0]
         assert goal_id == "g9" and user_id == "u1" and amount == Decimal("5000")
+        assert when == datetime.now(UTC).date()  # defaults to today
         assert "30000" in result  # 25000 + 5000
+
+    async def test_contribute_honors_stated_date(self) -> None:
+        # "en junio aporté 2000 a mi viaje" -> the contribution is dated in June.
+        service = FakeGoalService(goals=[_goal(id="g9", name="Viaje a Japón")])
+        await GoalToolkit(service).dispatch(
+            "contribute_to_goal",
+            {"goal_name": "japón", "amount": 2000, "date": "2026-06-15"},
+            "u1",
+        )
+        _goal_id, _user, amount, when = service.contributions[0]
+        assert amount == Decimal("2000")
+        assert when == date(2026, 6, 15)
 
     async def test_contribute_resolves_ignoring_filler_words(self) -> None:
         # "vacaciones de la playa" should resolve to "vacaciones playa".
@@ -250,7 +271,7 @@ class TestGoalToolkit:
             {"goal_name": "vacaciones de la playa", "amount": 10000},
             "u1",
         )
-        goal_id, _user, amount = service.contributions[0]
+        goal_id, _user, amount, _when = service.contributions[0]
         assert goal_id == "g5"
         assert amount == Decimal("10000")
 

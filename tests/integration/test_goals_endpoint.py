@@ -48,11 +48,22 @@ class StubGoalService(GoalServiceABC):
         return _goal()
 
     async def list_goals(
-        self, user_id: UserId, *, page: int, page_size: int
+        self,
+        user_id: UserId,
+        *,
+        page: int,
+        page_size: int,
+        as_of: date | None = None,
     ) -> tuple[list[Goal], int]:
         return [_goal()], 1
 
-    async def contribute(self, goal_id: GoalId, user_id: UserId, amount: Decimal) -> Goal:
+    async def contribute(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal:
         return _goal(status=GoalStatus.COMPLETED)
 
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:

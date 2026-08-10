@@ -109,7 +109,11 @@ export const api = {
   budgetStatus: (token: string | null): Promise<BudgetStatusList> =>
     request("/budgets/status", { token }),
 
-  goals: (token: string | null): Promise<GoalList> => request("/goals", { token }),
+  goals: (period: string | undefined, token: string | null): Promise<GoalList> =>
+    request(
+      period ? `/goals?period=${encodeURIComponent(period)}` : "/goals",
+      { token },
+    ),
 
   cardsStatus: (
     period: string,

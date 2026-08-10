@@ -43,6 +43,24 @@ class Goal(BaseModel):
     created_at: datetime
 
 
+class GoalContribution(BaseModel):
+    """A persisted dated contribution (aporte) toward a goal.
+
+    Progress is the cumulative sum of these up to a month-end (mirroring
+    card payments), so a goal reflects per-month progress instead of a single
+    running total shown identically in every month.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    goal_id: str
+    user_id: str
+    amount: Decimal
+    contribution_date: date
+    created_at: datetime
+
+
 class GoalProgress(BaseModel):
     """A goal evaluated against its target and timeline."""
 
