@@ -474,6 +474,10 @@ class TransactionToolkit:
         # it unlinked. Deterministic, so it never depends on the prompt remembering.
         if clarification is not None:
             return clarification
+        # A charge linked to a card is on credit by definition — set it so the
+        # movement shows its card and hits the right (payment-month) budget.
+        if card is not None:
+            payment_method = PaymentMethod.CREDITO
         # Reuse an existing category on a close match (typo tolerance), so a
         # variant like "improvistos" folds into the user's "imprevistos" instead
         # of fragmenting. Skipped when no category is given (service auto-tags).
@@ -547,12 +551,16 @@ class TransactionToolkit:
         no name, or a name we can't find), returns a clarification question and no
         card, so the caller asks which card instead of leaving the charge unlinked.
         """
-        if payment_method != PaymentMethod.CREDITO or self._cards is None:
+        card_name = str(args.get("card_name", "")).strip()
+        # Naming a card means it's a card charge, even if the model didn't also set
+        # payment_method='credito' — otherwise the charge would be left unlinked.
+        if not card_name and payment_method != PaymentMethod.CREDITO:
+            return None, None
+        if self._cards is None:
             return None, None
         cards = await self._cards.list_cards(user_id)
         if not cards:
             return None, None  # No cards on file: nothing to link or ask about.
-        card_name = str(args.get("card_name", "")).strip()
         if card_name:
             card = await self._cards.resolve_by_name(card_name, user_id)
             if card is not None:

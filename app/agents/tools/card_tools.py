@@ -5,7 +5,7 @@ supplied by the toolkit from the authenticated context at dispatch time and is
 NEVER part of the tool schema. Cards are referenced by NAME (no ids exposed).
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -71,6 +71,13 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "properties": {
                     "card_name": {"type": "string", "description": "Nombre de la tarjeta"},
                     "amount": {"type": "number", "description": "Monto pagado, mayor a 0"},
+                    "payment_date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha del pago YYYY-MM-DD si el usuario la indica "
+                            "(p. ej. 'pagué el 1 de julio'); por defecto, hoy."
+                        ),
+                    },
                 },
                 "required": ["card_name", "amount"],
             },
@@ -197,11 +204,14 @@ class CardToolkit:
         if card is None:
             return f"No encontré una tarjeta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
 
+        # Honor the date the user stated ("pagué el 1 de julio"); default to today.
         today = datetime.now(UTC).date()
+        payment_date = _opt_date(args.get("payment_date")) or today
         await self._service.register_payment(
-            card.id, user_id, CardPaymentCreate(amount=amount, payment_date=today)
+            card.id, user_id, CardPaymentCreate(amount=amount, payment_date=payment_date)
         )
-        return f"✅ Registré tu pago de ${amount} a '{card.name}'."
+        when = "" if payment_date == today else f" ({payment_date})"
+        return f"✅ Registré tu pago de ${amount} a '{card.name}'{when}."
 
     async def _update(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("card_name", "")).strip()
@@ -257,6 +267,16 @@ def _opt_str(value: Any) -> str | None:
     if not value:
         return None
     return str(value).strip() or None
+
+
+def _opt_date(value: Any) -> date | None:
+    """Parse a 'YYYY-MM-DD' string to a date, or None if absent/invalid."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
 
 
 def _opt_decimal(value: Any) -> Decimal | None:

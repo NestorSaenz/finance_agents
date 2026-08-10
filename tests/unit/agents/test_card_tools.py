@@ -73,6 +73,7 @@ class FakeCardService(CreditCardServiceABC):
         self, card_id: CardId, user_id: UserId, payment: CardPaymentCreate
     ) -> CardPayment:
         self.payments.append((card_id, payment.amount))
+        self.last_payment_date = payment.payment_date
         return CardPayment(
             id="pay-1",
             user_id=user_id,
@@ -153,6 +154,17 @@ async def test_pay_card_resolves_by_name() -> None:
     )
     assert service.payments[0] == ("card-1", Decimal("300000"))
     assert "300000" in result
+
+
+async def test_pay_card_honors_stated_date() -> None:
+    # "pagué el 1 de julio" must store that date, not today.
+    service = FakeCardService()
+    await CardToolkit(service).dispatch(
+        "pay_card",
+        {"card_name": "visa", "amount": 300000, "payment_date": "2026-07-01"},
+        "u1",
+    )
+    assert service.last_payment_date == date(2026, 7, 1)
 
 
 async def test_pay_unknown_card_returns_message() -> None:

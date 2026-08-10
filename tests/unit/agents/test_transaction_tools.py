@@ -180,6 +180,27 @@ class TestRegister:
         assert user_id == "u1"
         assert "pizza" in result
 
+    async def test_register_with_card_name_links_card_as_credit(self) -> None:
+        # Naming a card must link it (and mark the charge as credit) even when the
+        # model didn't set payment_method — otherwise it registers unlinked.
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": 94800,
+                "description": "Wompi",
+                "transaction_type": "expense",
+                "card_name": "visa",
+            },
+            user_id="u1",
+        )
+
+        created, _ = service.created[0]
+        assert created.card_id == "card-1"
+        assert created.payment_method == PaymentMethod.CREDITO
+
     async def test_custom_category_is_preserved_not_flattened(self) -> None:
         # A category outside the canonical enum must survive as a normalized string.
         service = FakeTransactionService()
