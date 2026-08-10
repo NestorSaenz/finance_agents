@@ -66,6 +66,19 @@ class StubGoalService(GoalServiceABC):
     ) -> Goal:
         return _goal(status=GoalStatus.COMPLETED)
 
+    async def update_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        *,
+        name: str | None = None,
+        target_amount: Decimal | None = None,
+        target_date: date | None = None,
+    ) -> Goal:
+        if not self.found:
+            raise GoalNotFoundError(goal_id)
+        return _goal()
+
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
         if not self.found:
             raise GoalNotFoundError(goal_id)

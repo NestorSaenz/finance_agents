@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from app.core.exceptions import GoalAlreadyCompletedError, GoalNotFoundError
+from app.core.exceptions import GoalNotFoundError
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
 from app.src.goals.interfaces import (
     GoalContributionRepositoryABC,
@@ -150,13 +150,43 @@ class TestContribute:
         assert repo.updated_data["status"] == "completed"
         assert result.status == GoalStatus.COMPLETED
 
-    async def test_contributing_to_completed_goal_raises(self) -> None:
-        repo = FakeGoalRepository(goal=_goal(status=GoalStatus.COMPLETED))
+    async def test_can_contribute_to_completed_goal(self) -> None:
+        # A completed goal still accepts contributions (save beyond target, or
+        # backfill dated history) — it's not locked.
+        repo = FakeGoalRepository(
+            goal=_goal(status=GoalStatus.COMPLETED, current=Decimal("500000"))
+        )
         contribs = FakeGoalContributionRepository()
         service = _service(repo, contribs)
-        with pytest.raises(GoalAlreadyCompletedError):
-            await service.contribute("goal-1", "u1", Decimal("100"))
-        assert contribs.created == []  # no contribution recorded on rejection
+
+        await service.contribute("goal-1", "u1", Decimal("100"))
+
+        assert len(contribs.created) == 1  # contribution recorded, not rejected
+
+
+class TestUpdateGoal:
+    async def test_raising_target_reopens_completed_goal(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(
+                status=GoalStatus.COMPLETED,
+                current=Decimal("500000"),
+                target=Decimal("500000"),
+            )
+        )
+        service = _service(repo)
+
+        await service.update_goal("goal-1", "u1", target_amount=Decimal("15000000"))
+
+        assert repo.updated_data["status"] == "active"  # 500k < 15M → reopened
+
+    async def test_name_only_leaves_status_untouched(self) -> None:
+        repo = FakeGoalRepository(goal=_goal())
+        service = _service(repo)
+
+        await service.update_goal("goal-1", "u1", name="Fondo grande")
+
+        assert repo.updated_data["name"] == "Fondo grande"
+        assert "status" not in repo.updated_data  # status only changes with target
 
 
 class TestListGoalsCumulative:

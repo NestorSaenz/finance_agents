@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 CREATE_GOAL_TOOL = "create_goal"
 QUERY_GOALS_TOOL = "query_goals"
 CONTRIBUTE_GOAL_TOOL = "contribute_to_goal"
+UPDATE_GOAL_TOOL = "update_goal"
 DELETE_GOAL_TOOL = "delete_goal"
 
 GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -108,6 +109,41 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": UPDATE_GOAL_TOOL,
+            "description": (
+                "Cambia los DATOS de una meta existente: su nombre, su MONTO OBJETIVO "
+                "o su fecha objetivo ('sube el objetivo del fondo de emergencia a 15M', "
+                "'renombra la meta X'). La identificas por su nombre. NO la uses para "
+                "abonar/aportar dinero (eso es contribute_to_goal)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre actual de la meta"},
+                    "new_name": {"type": "string", "description": "Nuevo nombre (opcional)"},
+                    "new_target_amount": {
+                        "type": "number",
+                        "description": "Nuevo monto objetivo, mayor a 0 (opcional)",
+                    },
+                    "new_target_date": {
+                        "type": "string",
+                        "description": "Nueva fecha objetivo YYYY-MM-DD (opcional)",
+                    },
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo ACTUAL; úsalo SOLO para desambiguar si hay "
+                            "varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": DELETE_GOAL_TOOL,
             "description": (
                 "Elimina una meta existente (identificada por su nombre). Úsala SOLO "
@@ -150,6 +186,8 @@ class GoalToolkit:
             return await self._query(user_id)
         if name == CONTRIBUTE_GOAL_TOOL:
             return await self._contribute(arguments, user_id)
+        if name == UPDATE_GOAL_TOOL:
+            return await self._update(arguments, user_id)
         if name == DELETE_GOAL_TOOL:
             return await self._delete(arguments, user_id)
         raise ValueError(f"Unknown goal tool: {name}")
@@ -212,6 +250,35 @@ class GoalToolkit:
         return (
             f"✅ Aboné ${amount} a '{updated.name}'{when}. "
             f"Llevas ${updated.current_amount} de ${updated.target_amount}.{done}"
+        )
+
+    async def _update(self, args: dict[str, Any], user_id: UserId) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "actualizar")
+
+        new_name = str(args.get("new_name", "")).strip() or None
+        new_target = _opt_decimal(args.get("new_target_amount"))
+        new_date = _opt_date(args.get("new_target_date"))
+        if new_name is None and new_target is None and new_date is None:
+            return "¿Qué quieres cambiar de la meta? (nombre, monto objetivo o fecha)"
+        if new_target is not None and new_target <= 0:
+            return "El monto objetivo debe ser mayor a 0."
+
+        updated = await self._service.update_goal(
+            goal.id,
+            user_id,
+            name=new_name,
+            target_amount=new_target,
+            target_date=new_date,
+        )
+        return (
+            f"✏️ Actualicé la meta '{updated.name}' — objetivo ${updated.target_amount} "
+            f"(llevas ${updated.current_amount})."
         )
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:

@@ -78,6 +78,14 @@ export function SummaryContent({
   const income = registeredIncome > 0 ? registeredIncome : usesBaseFallback ? referenceIncome : 0;
   const balance = income - expenses;
 
+  // Cash-flow lens: money that actually left the pocket this month = cash spent +
+  // what was paid to cards (credit purchases count when you pay the card, not at
+  // purchase). Answers "de mis ingresos, ¿cuánto me queda de verdad?".
+  const cashExpenses = Number(summary.cash_expenses);
+  const cardPayments = Number(payments?.total ?? 0);
+  const cashAvailable = income - cashExpenses - cardPayments;
+  const hasCashFlow = income > 0 || cashExpenses > 0 || cardPayments > 0;
+
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-3">
@@ -95,6 +103,41 @@ export function SummaryContent({
           {formatMoney(balance)}
         </p>
       </div>
+
+      {hasCashFlow && (
+        <div className="rounded-xl border border-line bg-surface p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted">
+            Flujo de caja
+          </p>
+          <dl className="mt-2 flex flex-col gap-1 text-sm">
+            <div className="flex items-center justify-between">
+              <dt className="text-muted">Ingresos</dt>
+              <dd className="tabular-nums text-positive">{formatMoney(income)}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-muted">Efectivo</dt>
+              <dd className="tabular-nums text-negative">−{formatMoney(cashExpenses)}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-muted">Pagos a tarjetas</dt>
+              <dd className="tabular-nums text-negative">−{formatMoney(cardPayments)}</dd>
+            </div>
+            <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
+              <dt className="font-medium text-ink">Disponible real</dt>
+              <dd
+                className={`font-semibold tabular-nums ${
+                  cashAvailable >= 0 ? "text-positive" : "text-negative"
+                }`}
+              >
+                {formatMoney(cashAvailable)}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-muted">
+            Lo que te queda tras el efectivo y los pagos a tarjetas del mes.
+          </p>
+        </div>
+      )}
 
       {income > 0 && (
         <IncomeGauge

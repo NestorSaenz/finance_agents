@@ -99,10 +99,10 @@ describe("DashboardPanel", () => {
 
     render(<DashboardPanel open onClose={() => {}} />);
 
-    // Income logged this month is shown as the single "Ingresos" (the profile
-    // base is a fallback used only when nothing was logged).
-    expect(await screen.findByText("Ingresos")).toBeInTheDocument();
+    // "Ingresos" appears both as the stat card and inside the Flujo de caja block.
+    expect((await screen.findAllByText("Ingresos")).length).toBeGreaterThan(0);
     expect(screen.getByText("Balance")).toBeInTheDocument();
+    expect(screen.getByText("Flujo de caja")).toBeInTheDocument();
     // Spending-by-category section (lightweight bars, no chart library).
     expect(screen.getByText("Gastos por categoría")).toBeInTheDocument();
     // Credit vs cash split section rendered.

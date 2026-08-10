@@ -109,5 +109,17 @@ class GoalServiceABC(ABC):
         """Return a goal evaluated against its target and timeline."""
 
     @abstractmethod
+    async def update_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        *,
+        name: str | None = None,
+        target_amount: Decimal | None = None,
+        target_date: date | None = None,
+    ) -> Goal:
+        """Change a goal's name/target/date; return it (or raise ``GoalNotFoundError``)."""
+
+    @abstractmethod
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
         """Delete a goal and return it (or raise ``GoalNotFoundError``)."""

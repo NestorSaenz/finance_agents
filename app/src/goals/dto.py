@@ -24,6 +24,14 @@ class GoalCreateRequest(BaseModel):
     priority: int = Field(default=DEFAULT_PRIORITY, ge=1)
 
 
+class GoalUpdateRequest(BaseModel):
+    """Request body for updating a goal's editable fields (all optional)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    target_amount: Decimal | None = Field(default=None, gt=0, examples=[15000000])
+    target_date: date | None = Field(default=None, examples=["2026-12-31"])
+
+
 class GoalContributeRequest(BaseModel):
     """Request body for contributing to a goal."""
 

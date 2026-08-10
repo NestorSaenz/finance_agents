@@ -133,6 +133,30 @@ class FakeGoalService(GoalServiceABC):
         self.contributions.append((goal_id, user_id, amount, contribution_date))
         return _goal(id=goal_id, current_amount=Decimal("25000") + amount)
 
+    async def update_goal(
+        self,
+        goal_id: str,
+        user_id: str,
+        *,
+        name: str | None = None,
+        target_amount: Decimal | None = None,
+        target_date: date | None = None,
+    ) -> Goal:
+        self.updated = {
+            "goal_id": goal_id,
+            "name": name,
+            "target_amount": target_amount,
+            "target_date": target_date,
+        }
+        base = self._goals[0]
+        return base.model_copy(
+            update={
+                k: v
+                for k, v in {"name": name, "target_amount": target_amount, "target_date": target_date}.items()
+                if v is not None
+            }
+        )
+
     async def delete_goal(self, goal_id: str, user_id: str) -> Goal:
         self.deleted.append((goal_id, user_id))
         return _goal(id=goal_id)
@@ -302,6 +326,25 @@ class TestGoalToolkit:
         )
         assert not service.deleted
         assert "no encontré" in result.lower()
+
+    async def test_update_goal_changes_target(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        result = await GoalToolkit(service).dispatch(
+            "update_goal",
+            {"goal_name": "Fondo de emergencia", "new_target_amount": 15000000},
+            "u1",
+        )
+        assert service.updated["goal_id"] == "g9"
+        assert service.updated["target_amount"] == Decimal("15000000")
+        assert "actualic" in result.lower()
+
+    async def test_update_goal_no_changes_asks(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "update_goal", {"goal_name": "Casa"}, "u1"
+        )
+        assert not hasattr(service, "updated")
+        assert "qué quieres cambiar" in result.lower()
 
     async def test_delete_duplicate_names_asks_which(self) -> None:
         service = FakeGoalService(

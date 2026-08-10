@@ -12,6 +12,7 @@ from app.src.goals.dto import (
     GoalListResponse,
     GoalProgressResponse,
     GoalResponse,
+    GoalUpdateRequest,
 )
 from app.src.goals.models import GoalCreate
 
@@ -91,6 +92,24 @@ async def contribute_to_goal(
     """Add an amount to a goal, completing it automatically when reached."""
     goal = await service.contribute(
         goal_id, user_id, request.amount, request.contribution_date
+    )
+    return GoalResponse.from_domain(goal)
+
+
+@router.patch("/{goal_id}", response_model=GoalResponse)
+async def update_goal(
+    goal_id: str,
+    request: GoalUpdateRequest,
+    service: GoalServiceDep,
+    user_id: CurrentUserId,
+) -> GoalResponse:
+    """Update a goal's name/target/date (404 if it does not exist)."""
+    goal = await service.update_goal(
+        goal_id,
+        user_id,
+        name=request.name,
+        target_amount=request.target_amount,
+        target_date=request.target_date,
     )
     return GoalResponse.from_domain(goal)
 

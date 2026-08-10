@@ -3,7 +3,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from app.core.exceptions import GoalAlreadyCompletedError, GoalNotFoundError
+from app.core.exceptions import GoalNotFoundError
 from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
 from app.shared.types import GoalId, GoalStatus, UserId
@@ -64,9 +64,10 @@ class GoalService(GoalServiceABC):
         amount: Decimal,
         contribution_date: date | None = None,
     ) -> Goal:
+        # A completed goal can still receive contributions: you may save beyond
+        # the target, and dated back-contributions are needed to build per-month
+        # history. So we record the contribution regardless of status.
         goal = await self.get_goal(goal_id, user_id)
-        if goal.status == GoalStatus.COMPLETED:
-            raise GoalAlreadyCompletedError(goal.id, goal.name)
 
         await self._contributions.create(
             goal_id, user_id, amount, contribution_date or _today()
@@ -81,6 +82,35 @@ class GoalService(GoalServiceABC):
             data["status"] = GoalStatus.COMPLETED.value
             logger.info("Goal reached", goal_id=goal_id)
 
+        return await self._repository.update(goal_id, user_id, data)
+
+    async def update_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        *,
+        name: str | None = None,
+        target_amount: Decimal | None = None,
+        target_date: date | None = None,
+    ) -> Goal:
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        data: dict[str, object] = {}
+        if name is not None:
+            data["name"] = name
+        if target_amount is not None:
+            data["target_amount"] = decimal_to_db(target_amount)
+            # Re-evaluate completion against the NEW target: raising it can reopen
+            # a completed goal; lowering it can complete an active one. Paused/
+            # cancelled goals keep their status (only ACTIVE/COMPLETED is derived).
+            if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
+                reached = goal.current_amount >= target_amount
+                data["status"] = (
+                    GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE
+                ).value
+        if target_date is not None:
+            data["target_date"] = target_date.isoformat()
+        if not data:
+            return goal
         return await self._repository.update(goal_id, user_id, data)
 
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
