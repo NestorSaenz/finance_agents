@@ -3,11 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { categoryLabel, formatDayMonth, formatMoney } from "@/lib/format";
-import type { CreditCardStatusList, Transaction } from "@/lib/types";
+import type {
+  CardPaymentsList,
+  CreditCardStatusList,
+  Transaction,
+} from "@/lib/types";
 
 interface MovementsListProps {
   transactions: Transaction[];
   cards: CreditCardStatusList | null;
+  payments: CardPaymentsList | null;
 }
 
 /** "todas", "efectivo", or a specific card id. */
@@ -16,10 +21,29 @@ type MovementFilter = string;
 const ALL: MovementFilter = "todas";
 const CASH: MovementFilter = "efectivo";
 
-/** A movement is cash only when explicitly tagged 'efectivo' — same rule the
- *  Resumen tab uses for its cash total, so both tabs agree. */
-function isCash(tx: Transaction): boolean {
-  return tx.payment_method === "efectivo";
+/** A row in the list: either a logged transaction or a card payment (money paid
+ *  toward a card, which leaves the pocket like cash). */
+type Movement =
+  | { kind: "tx"; date: string; tx: Transaction }
+  | { kind: "payment"; date: string; id: string; cardName: string; amount: string };
+
+/** Cash outflow: an explicitly-'efectivo' transaction, OR any card payment
+ *  (paying a card is money out of pocket, so it counts under "Efectivo"). */
+function isCashMovement(m: Movement): boolean {
+  return m.kind === "payment" || m.tx.payment_method === "efectivo";
+}
+
+function matchesFilter(m: Movement, filter: MovementFilter): boolean {
+  if (filter === ALL) return true;
+  if (filter === CASH) return isCashMovement(m);
+  // A specific card chip lists only that card's charges (payments are cash).
+  return m.kind === "tx" && m.tx.card_id === filter;
+}
+
+/** Amount that left the pocket for this movement (0 for income). */
+function outflow(m: Movement): number {
+  if (m.kind === "payment") return Number(m.amount);
+  return m.tx.transaction_type === "expense" ? Number(m.tx.amount) : 0;
 }
 
 /** Month label (e.g. "sep") of a credit charge's budget/impact month, when it
@@ -33,7 +57,7 @@ function impactMonth(tx: Transaction): string | null {
   return d.toLocaleDateString("es-ES", { month: "short" });
 }
 
-/** The card/cash pill shown on each row (null when unknown). */
+/** The card/cash pill shown on a transaction row (null when unknown). */
 function methodBadge(
   tx: Transaction,
   cardNames: Map<string, string>,
@@ -41,22 +65,16 @@ function methodBadge(
   const cardName = tx.card_id ? cardNames.get(tx.card_id) : undefined;
   if (cardName) return { icon: "💳", label: cardName };
   if (tx.payment_method === "credito") return { icon: "💳", label: "Crédito" };
-  if (isCash(tx)) return { icon: "💵", label: "Efectivo" };
+  if (tx.payment_method === "efectivo") return { icon: "💵", label: "Efectivo" };
   return null;
 }
 
-function matchesFilter(tx: Transaction, filter: MovementFilter): boolean {
-  if (filter === ALL) return true;
-  if (filter === CASH) return isCash(tx);
-  return tx.card_id === filter;
-}
-
 /**
- * Chronological detail of every movement in the selected period, with a filter
- * by payment source (all / cash / each card) and a per-row card label. Lets the
- * user answer "what did I pay with Nu?" or "what did I pay in cash?" in one place.
+ * Chronological detail of every movement in the selected period — logged
+ * transactions plus card payments — with a filter by source (all / cash / each
+ * card). Card payments appear under "Efectivo" since paying a card is money out.
  */
-export function MovementsList({ transactions, cards }: MovementsListProps) {
+export function MovementsList({ transactions, cards, payments }: MovementsListProps) {
   const [filter, setFilter] = useState<MovementFilter>(ALL);
 
   const cardNames = useMemo(
@@ -64,22 +82,40 @@ export function MovementsList({ transactions, cards }: MovementsListProps) {
     [cards],
   );
 
+  const movements = useMemo<Movement[]>(() => {
+    const txs: Movement[] = transactions.map((tx) => ({
+      kind: "tx",
+      date: tx.transaction_date,
+      tx,
+    }));
+    const pays: Movement[] = (payments?.payments ?? []).map((p, i) => ({
+      kind: "payment",
+      date: p.payment_date,
+      id: `pay-${i}-${p.payment_date}`,
+      cardName: p.card_name,
+      amount: p.amount,
+    }));
+    return [...txs, ...pays].sort((a, b) =>
+      a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
+    );
+  }, [transactions, payments]);
+
   // Chips: only offer sources that actually appear in this period's movements.
   const chips = useMemo(() => {
-    const hasCash = transactions.some(isCash);
+    const hasCash = movements.some(isCashMovement);
     const cardOrder: { id: string; name: string }[] = [];
     const seen = new Set<string>();
-    for (const tx of transactions) {
-      if (tx.card_id && cardNames.has(tx.card_id) && !seen.has(tx.card_id)) {
-        seen.add(tx.card_id);
-        cardOrder.push({ id: tx.card_id, name: cardNames.get(tx.card_id) ?? "" });
+    for (const m of movements) {
+      if (m.kind === "tx" && m.tx.card_id && cardNames.has(m.tx.card_id) && !seen.has(m.tx.card_id)) {
+        seen.add(m.tx.card_id);
+        cardOrder.push({ id: m.tx.card_id, name: cardNames.get(m.tx.card_id) ?? "" });
       }
     }
     const items: { key: MovementFilter; label: string }[] = [{ key: ALL, label: "Todas" }];
     if (hasCash) items.push({ key: CASH, label: "💵 Efectivo" });
     for (const c of cardOrder) items.push({ key: c.id, label: `💳 ${c.name}` });
     return items;
-  }, [transactions, cardNames]);
+  }, [movements, cardNames]);
 
   // Reset to "Todas" when the active chip disappears (e.g. switching to a month
   // where the selected card has no movements) — avoids a stuck empty state.
@@ -88,20 +124,16 @@ export function MovementsList({ transactions, cards }: MovementsListProps) {
   }, [chips, filter]);
 
   const visible = useMemo(
-    () => transactions.filter((tx) => matchesFilter(tx, filter)),
-    [transactions, filter],
+    () => movements.filter((m) => matchesFilter(m, filter)),
+    [movements, filter],
   );
 
-  // Spent (expenses) within the current filter, for the summary line.
-  const filteredExpense = useMemo(
-    () =>
-      visible
-        .filter((tx) => tx.transaction_type === "expense")
-        .reduce((sum, tx) => sum + Number(tx.amount), 0),
+  const filteredOutflow = useMemo(
+    () => visible.reduce((sum, m) => sum + outflow(m), 0),
     [visible],
   );
 
-  if (transactions.length === 0) {
+  if (movements.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-line bg-surface p-6 text-center text-sm text-muted">
         Aún no hay movimientos en este período. Registra un gasto o ingreso desde el
@@ -137,8 +169,8 @@ export function MovementsList({ transactions, cards }: MovementsListProps) {
 
       {filter !== ALL && (
         <p className="text-xs text-muted">
-          {visible.length} movimiento(s) · gastado{" "}
-          <span className="font-semibold text-ink">{formatMoney(filteredExpense)}</span>
+          {visible.length} movimiento(s) · {filter === CASH ? "salidas" : "gastado"}{" "}
+          <span className="font-semibold text-ink">{formatMoney(filteredOutflow)}</span>
         </p>
       )}
 
@@ -148,46 +180,75 @@ export function MovementsList({ transactions, cards }: MovementsListProps) {
         </div>
       ) : (
         <ul className="flex flex-col gap-2">
-          {visible.map((tx) => {
-            const isIncome = tx.transaction_type === "income";
-            const impact = impactMonth(tx);
-            const badge = methodBadge(tx, cardNames);
-            return (
+          {visible.map((m) =>
+            m.kind === "payment" ? (
               <li
-                key={tx.id}
+                key={m.id}
                 className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-ink">{tx.description}</p>
+                  <p className="truncate text-sm font-medium text-ink">
+                    Pago a {m.cardName}
+                  </p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-                    <span>
-                      {categoryLabel(tx.category)} · {formatDayMonth(tx.transaction_date)}
+                    <span>Pago de tarjeta · {formatDayMonth(m.date)}</span>
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+                      💳 Pago
                     </span>
-                    {badge && (
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
-                        {badge.icon} {badge.label}
-                      </span>
-                    )}
-                    {impact && (
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
-                        🗓 impacta {impact}
-                      </span>
-                    )}
                   </p>
                 </div>
-                <p
-                  className={`shrink-0 text-sm font-semibold tabular-nums ${
-                    isIncome ? "text-positive" : "text-negative"
-                  }`}
-                >
-                  {isIncome ? "+" : "−"}
-                  {formatMoney(tx.amount)}
+                <p className="shrink-0 text-sm font-semibold tabular-nums text-negative">
+                  −{formatMoney(m.amount)}
                 </p>
               </li>
-            );
-          })}
+            ) : (
+              <MovementRow key={m.tx.id} tx={m.tx} cardNames={cardNames} />
+            ),
+          )}
         </ul>
       )}
     </div>
+  );
+}
+
+function MovementRow({
+  tx,
+  cardNames,
+}: {
+  tx: Transaction;
+  cardNames: Map<string, string>;
+}) {
+  const isIncome = tx.transaction_type === "income";
+  const impact = impactMonth(tx);
+  const badge = methodBadge(tx, cardNames);
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-ink">{tx.description}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+          <span>
+            {categoryLabel(tx.category)} · {formatDayMonth(tx.transaction_date)}
+          </span>
+          {badge && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+              {badge.icon} {badge.label}
+            </span>
+          )}
+          {impact && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+              🗓 impacta {impact}
+            </span>
+          )}
+        </p>
+      </div>
+      <p
+        className={`shrink-0 text-sm font-semibold tabular-nums ${
+          isIncome ? "text-positive" : "text-negative"
+        }`}
+      >
+        {isIncome ? "+" : "−"}
+        {formatMoney(tx.amount)}
+      </p>
+    </li>
   );
 }
