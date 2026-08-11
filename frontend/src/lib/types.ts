@@ -89,6 +89,8 @@ export interface Goal {
 export interface GoalList {
   goals: Goal[];
   total: number;
+  /** Total contributed to goals within the requested period (Decimal serialized as string). */
+  total_contributed: string;
 }
 
 export interface CreditCardStatusItem {

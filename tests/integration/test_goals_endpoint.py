@@ -66,6 +66,11 @@ class StubGoalService(GoalServiceABC):
     ) -> Goal:
         return _goal(status=GoalStatus.COMPLETED)
 
+    async def contributed_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> Decimal:
+        return Decimal("1500")
+
     async def update_goal(
         self,
         goal_id: GoalId,
@@ -123,7 +128,14 @@ class TestCrud:
     def test_list_goals(self, client: TestClient) -> None:
         response = client.get(BASE_URL)
         assert response.status_code == 200
-        assert response.json()["total"] == 1
+        body = response.json()
+        assert body["total"] == 1
+        assert body["total_contributed"] == "0"  # no period → not computed
+
+    def test_list_goals_reports_contributed_for_period(self, client: TestClient) -> None:
+        response = client.get(f"{BASE_URL}?period=2026-06")
+        assert response.status_code == 200
+        assert response.json()["total_contributed"] == "1500"
 
     def test_missing_goal_returns_404(self) -> None:
         gen = _client(StubGoalService(found=False))

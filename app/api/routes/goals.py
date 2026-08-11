@@ -1,5 +1,7 @@
 """Goal endpoints: CRUD, contributions, and progress tracking."""
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
@@ -47,16 +49,25 @@ async def list_goals(
 ) -> GoalListResponse:
     """List the current user's goals (highest priority first)."""
     # A period reconstructs each goal's progress at that month-end; without one,
-    # the goal shows its live running total.
-    as_of = resolve_period(period)[1] if period else None
+    # the goal shows its live running total. With a period, also report how much
+    # was set aside toward goals within it, so the dashboard's cash-flow view can
+    # subtract it from disposable income.
+    period_range = resolve_period(period) if period else None
+    as_of = period_range[1] if period_range else None
     items, total = await service.list_goals(
         user_id, page=page, page_size=page_size, as_of=as_of
+    )
+    total_contributed = (
+        await service.contributed_in_period(user_id, *period_range)
+        if period_range
+        else Decimal("0")
     )
     return GoalListResponse(
         goals=[GoalResponse.from_domain(g) for g in items],
         total=total,
         page=page,
         page_size=page_size,
+        total_contributed=total_contributed,
     )
 
 

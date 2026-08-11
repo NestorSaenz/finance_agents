@@ -62,6 +62,16 @@ class GoalContributionRepositoryABC(ABC):
         ``CardPaymentRepository.total_paid``).
         """
 
+    @abstractmethod
+    async def sum_in_period(
+        self, user_id: UserId, start: date, end: date
+    ) -> Decimal:
+        """Return the total of the user's contributions within ``[start, end]``.
+
+        Bounds are inclusive. One fetch of the user's contributions, filtered in
+        Python (like ``sums_up_to``) since PostgREST has no range filter.
+        """
+
 
 class GoalServiceABC(ABC):
     """Contract for goal use cases (business logic)."""
@@ -101,6 +111,12 @@ class GoalServiceABC(ABC):
 
         ``contribution_date`` defaults to today when omitted.
         """
+
+    @abstractmethod
+    async def contributed_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> Decimal:
+        """Return the total contributed to all goals within ``[period_start, period_end]``."""
 
     @abstractmethod
     async def get_progress(

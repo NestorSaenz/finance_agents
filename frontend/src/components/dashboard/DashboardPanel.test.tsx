@@ -88,7 +88,7 @@ beforeEach(() => {
   });
   budgetMock.mockReset().mockResolvedValue(EMPTY_BUDGET);
   profileMock.mockReset().mockResolvedValue(PROFILE);
-  goalsMock.mockReset().mockResolvedValue({ goals: [], total: 0 });
+  goalsMock.mockReset().mockResolvedValue({ goals: [], total: 0, total_contributed: "0" });
   cardsMock.mockReset().mockResolvedValue(EMPTY_CARDS);
   paymentsMock.mockReset().mockResolvedValue({ payments: [], total: "0" });
 });
@@ -150,6 +150,7 @@ describe("DashboardPanel", () => {
         },
       ],
       total: 1,
+      total_contributed: "0",
     });
 
     render(<DashboardPanel open onClose={() => {}} />);

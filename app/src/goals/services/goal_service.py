@@ -84,6 +84,11 @@ class GoalService(GoalServiceABC):
 
         return await self._repository.update(goal_id, user_id, data)
 
+    async def contributed_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> Decimal:
+        return await self._contributions.sum_in_period(user_id, period_start, period_end)
+
     async def update_goal(
         self,
         goal_id: GoalId,

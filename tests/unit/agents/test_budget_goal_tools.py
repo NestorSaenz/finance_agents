@@ -133,6 +133,11 @@ class FakeGoalService(GoalServiceABC):
         self.contributions.append((goal_id, user_id, amount, contribution_date))
         return _goal(id=goal_id, current_amount=Decimal("25000") + amount)
 
+    async def contributed_in_period(
+        self, user_id: str, period_start: date, period_end: date
+    ) -> Decimal:
+        return Decimal("0")
+
     async def update_goal(
         self,
         goal_id: str,

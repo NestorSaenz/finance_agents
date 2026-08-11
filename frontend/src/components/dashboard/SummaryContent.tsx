@@ -22,6 +22,8 @@ interface SummaryContentProps {
   budget: BudgetStatusList | null;
   profile: UserProfile | null;
   goals: Goal[];
+  /** Total set aside toward savings goals in the selected period. */
+  goalContributions: number;
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
   /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
@@ -43,6 +45,7 @@ export function SummaryContent({
   budget,
   profile,
   goals,
+  goalContributions,
   cards,
   payments,
   period,
@@ -83,8 +86,11 @@ export function SummaryContent({
   // purchase). Answers "de mis ingresos, ¿cuánto me queda de verdad?".
   const cashExpenses = Number(summary.cash_expenses);
   const cardPayments = Number(payments?.total ?? 0);
-  const cashAvailable = income - cashExpenses - cardPayments;
-  const hasCashFlow = income > 0 || cashExpenses > 0 || cardPayments > 0;
+  // Money set aside to savings goals this month also leaves the disposable pool.
+  const goalContribs = goalContributions;
+  const cashAvailable = income - cashExpenses - cardPayments - goalContribs;
+  const hasCashFlow =
+    income > 0 || cashExpenses > 0 || cardPayments > 0 || goalContribs > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -122,6 +128,10 @@ export function SummaryContent({
               <dt className="text-muted">Pagos a tarjetas</dt>
               <dd className="tabular-nums text-negative">−{formatMoney(cardPayments)}</dd>
             </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-muted">Aportes a metas</dt>
+              <dd className="tabular-nums text-negative">−{formatMoney(goalContribs)}</dd>
+            </div>
             <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
               <dt className="font-medium text-ink">Disponible real</dt>
               <dd
@@ -134,7 +144,8 @@ export function SummaryContent({
             </div>
           </dl>
           <p className="mt-2 text-xs text-muted">
-            Lo que te queda tras el efectivo y los pagos a tarjetas del mes.
+            Lo que te queda tras el efectivo, los pagos a tarjetas y los aportes a
+            metas del mes.
           </p>
         </div>
       )}

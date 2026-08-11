@@ -72,9 +72,15 @@ class FakeGoalRepository(GoalRepositoryABC):
 
 
 class FakeGoalContributionRepository(GoalContributionRepositoryABC):
-    def __init__(self, sums: dict[str, Decimal] | None = None) -> None:
+    def __init__(
+        self,
+        sums: dict[str, Decimal] | None = None,
+        contributions: list[tuple[Decimal, date]] | None = None,
+    ) -> None:
         self.created: list[tuple[str, str, Decimal, date]] = []
         self._sums = sums or {}
+        # Dated (amount, date) pairs used by ``sum_in_period`` to sum in-range.
+        self._contributions = contributions or []
 
     async def create(
         self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
@@ -91,6 +97,12 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
 
     async def sums_up_to(self, user_id: UserId, as_of: date) -> dict[str, Decimal]:
         return dict(self._sums)
+
+    async def sum_in_period(self, user_id: UserId, start: date, end: date) -> Decimal:
+        return sum(
+            (amount for amount, day in self._contributions if start <= day <= end),
+            start=Decimal("0"),
+        )
 
 
 REF = date(2025, 1, 1)
@@ -238,6 +250,35 @@ class TestListGoalsCumulative:
         items, _ = await service.list_goals("u1", page=1, page_size=20)
 
         assert items[0].current_amount == Decimal("25000")
+
+
+class TestContributedInPeriod:
+    async def test_sums_only_in_range_contributions(self) -> None:
+        # 200@may (before), 300@jun, 400@jul (in range), 500@aug (after).
+        contribs = FakeGoalContributionRepository(
+            contributions=[
+                (Decimal("200"), date(2026, 5, 31)),
+                (Decimal("300"), date(2026, 6, 15)),
+                (Decimal("400"), date(2026, 7, 31)),
+                (Decimal("500"), date(2026, 8, 1)),
+            ]
+        )
+        service = _service(FakeGoalRepository(goal=_goal()), contribs)
+
+        total = await service.contributed_in_period(
+            "u1", date(2026, 6, 1), date(2026, 7, 31)
+        )
+
+        assert total == Decimal("700")  # 300 + 400; may/aug excluded
+
+    async def test_returns_zero_when_no_contributions(self) -> None:
+        service = _service(FakeGoalRepository(goal=_goal()))
+
+        total = await service.contributed_in_period(
+            "u1", date(2026, 6, 1), date(2026, 6, 30)
+        )
+
+        assert total == Decimal("0")
 
 
 class TestProgress:

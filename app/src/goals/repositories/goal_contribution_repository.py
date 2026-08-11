@@ -69,6 +69,25 @@ class GoalContributionRepository(GoalContributionRepositoryABC):
                 totals[str(row["goal_id"])] += _parse_decimal(row.get("amount"))
         return dict(totals)
 
+    async def sum_in_period(
+        self, user_id: UserId, start: date, end: date
+    ) -> Decimal:
+        config = QueryConfig(
+            select="amount,contribution_date",
+            filters={"user_id": user_id},
+        )
+        result = await self._db.select(GOAL_CONTRIBUTIONS_TABLE, config)
+        # Inclusive [start, end] window applied in Python (PostgREST equality
+        # filters can't express ranges), mirroring ``sums_up_to``.
+        return sum(
+            (
+                _parse_decimal(row.get("amount"))
+                for row in result.data
+                if start <= _parse_date(row.get("contribution_date")) <= end
+            ),
+            start=Decimal("0"),
+        )
+
 
 def _row_to_contribution(row: dict[str, Any]) -> GoalContribution:
     return GoalContribution(

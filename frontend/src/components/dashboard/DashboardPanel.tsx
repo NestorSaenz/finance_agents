@@ -63,6 +63,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [budget, setBudget] = useState<BudgetStatusList | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalContributed, setGoalContributed] = useState(0);
   const [cards, setCards] = useState<CreditCardStatusList | null>(null);
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
   const [loading, setLoading] = useState(false);
@@ -98,6 +99,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setBudget(budgetData);
       setProfile(profileData);
       setGoals(goalsData.goals);
+      setGoalContributed(Number(goalsData.total_contributed ?? 0));
       setCards(cardsData);
       setPayments(paymentsData);
     } catch (err) {
@@ -111,6 +113,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setBudget(null);
       setProfile(null);
       setGoals([]);
+      setGoalContributed(0);
       setCards(null);
       setPayments(null);
     } finally {
@@ -252,6 +255,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               budget={budget}
               profile={profile}
               goals={goals}
+              goalContributions={goalContributed}
               cards={cards}
               payments={payments}
               period={period}
