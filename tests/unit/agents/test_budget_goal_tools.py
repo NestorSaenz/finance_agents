@@ -18,7 +18,7 @@ from app.shared.types import (
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.budgets.models import Budget, BudgetCreate, BudgetStatus
 from app.src.goals.interfaces import GoalServiceABC
-from app.src.goals.models import Goal, GoalCreate, GoalProgress
+from app.src.goals.models import Goal, GoalContribution, GoalCreate, GoalProgress
 
 NOW = datetime(2026, 7, 1, 10, 0, 0)
 
@@ -108,11 +108,23 @@ class FakeBudgetService(BudgetServiceABC):
 
 
 class FakeGoalService(GoalServiceABC):
-    def __init__(self, goals: list[Goal] | None = None) -> None:
+    def __init__(
+        self,
+        goals: list[Goal] | None = None,
+        contributions_for_goal: list[GoalContribution] | None = None,
+        removed_result: Goal | None = None,
+        remove_returns_none: bool = False,
+    ) -> None:
         self.created: list[tuple[GoalCreate, str]] = []
         self.contributions: list[tuple[str, str, Decimal, date | None]] = []
         self.deleted: list[tuple[str, str]] = []
+        self.removed: list[tuple[str, str, Decimal, date | None]] = []
+        # Controls what ``remove_contribution`` returns (None = "no match").
+        self._removed_result = removed_result
+        self._remove_returns_none = remove_returns_none
         self._goals = goals if goals is not None else [_goal()]
+        # Rows returned by ``list_contributions`` for the single-goal query.
+        self._contributions_for_goal = contributions_for_goal or []
 
     async def create_goal(self, goal: GoalCreate, user_id: str) -> Goal:
         self.created.append((goal, user_id))
@@ -137,6 +149,20 @@ class FakeGoalService(GoalServiceABC):
         self, user_id: str, period_start: date, period_end: date
     ) -> Decimal:
         return Decimal("0")
+
+    async def remove_contribution(
+        self,
+        goal_id: str,
+        user_id: str,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal | None:
+        self.removed.append((goal_id, user_id, amount, contribution_date))
+        if self._remove_returns_none:
+            return None
+        return self._removed_result or _goal(
+            id=goal_id, current_amount=Decimal("25000") - amount
+        )
 
     async def update_goal(
         self,
@@ -175,6 +201,11 @@ class FakeGoalService(GoalServiceABC):
             is_completed=False, months_remaining=None,
             required_monthly_contribution=None, on_track=True,
         )
+
+    async def list_contributions(
+        self, goal_id: str, user_id: str
+    ) -> list[GoalContribution]:
+        return list(self._contributions_for_goal)
 
 
 class TestBudgetToolkit:
@@ -316,6 +347,41 @@ class TestGoalToolkit:
         result = await GoalToolkit(FakeGoalService()).dispatch("query_goals", {}, "u1")
         assert "Viaje a Japón" in result and "25%" in result
 
+    async def test_query_goals_with_name_lists_contributions(self) -> None:
+        service = FakeGoalService(
+            goals=[_goal(id="g9", name="Viaje a Japón")],
+            contributions_for_goal=[
+                GoalContribution(
+                    id="c2", goal_id="g9", user_id="u1", amount=Decimal("300"),
+                    contribution_date=date(2026, 7, 2), created_at=NOW,
+                ),
+                GoalContribution(
+                    id="c1", goal_id="g9", user_id="u1", amount=Decimal("200"),
+                    contribution_date=date(2026, 6, 15), created_at=NOW,
+                ),
+            ],
+        )
+        result = await GoalToolkit(service).dispatch(
+            "query_goals", {"goal_name": "japón"}, "u1"
+        )
+        assert "Viaje a Japón" in result
+        assert "300" in result and "2026-07-02" in result
+        assert "200" in result and "2026-06-15" in result
+
+    async def test_query_goals_with_name_no_contributions(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Viaje a Japón")])
+        result = await GoalToolkit(service).dispatch(
+            "query_goals", {"goal_name": "japón"}, "u1"
+        )
+        assert "aún no tiene aportes" in result.lower()
+
+    async def test_query_goals_with_unknown_name_returns_message(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "query_goals", {"goal_name": "Moto"}, "u1"
+        )
+        assert "no encontré" in result.lower()
+
     async def test_delete_goal_resolves_and_deletes(self) -> None:
         service = FakeGoalService(goals=[_goal(id="g7", name="vacaciones playa")])
         result = await GoalToolkit(service).dispatch(
@@ -330,6 +396,51 @@ class TestGoalToolkit:
             "delete_goal", {"goal_name": "Moto"}, "u1"
         )
         assert not service.deleted
+        assert "no encontré" in result.lower()
+
+    async def test_remove_contribution_removes_by_amount(self) -> None:
+        service = FakeGoalService(
+            goals=[_goal(id="g9", name="Viaje a Japón")],
+            removed_result=_goal(id="g9", current_amount=Decimal("20000")),
+        )
+        result = await GoalToolkit(service).dispatch(
+            "remove_goal_contribution", {"goal_name": "japón", "amount": 5000}, "u1"
+        )
+        goal_id, user_id, amount, when = service.removed[0]
+        assert goal_id == "g9" and user_id == "u1" and amount == Decimal("5000")
+        assert when is None  # no date passed
+        assert "🗑️" in result and "20000" in result
+
+    async def test_remove_contribution_honors_date(self) -> None:
+        service = FakeGoalService(
+            goals=[_goal(id="g9", name="Viaje a Japón")],
+            removed_result=_goal(id="g9", current_amount=Decimal("20000")),
+        )
+        await GoalToolkit(service).dispatch(
+            "remove_goal_contribution",
+            {"goal_name": "japón", "amount": 5000, "date": "2026-06-15"},
+            "u1",
+        )
+        _goal_id, _user, amount, when = service.removed[0]
+        assert amount == Decimal("5000")
+        assert when == date(2026, 6, 15)
+
+    async def test_remove_contribution_unknown_amount_returns_message(self) -> None:
+        service = FakeGoalService(
+            goals=[_goal(id="g9", name="Viaje a Japón")], remove_returns_none=True
+        )
+        result = await GoalToolkit(service).dispatch(
+            "remove_goal_contribution", {"goal_name": "japón", "amount": 999}, "u1"
+        )
+        assert len(service.removed) == 1  # service was asked
+        assert "no encontré un aporte" in result.lower()
+
+    async def test_remove_contribution_unknown_goal_returns_message(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "remove_goal_contribution", {"goal_name": "Moto", "amount": 100}, "u1"
+        )
+        assert not service.removed  # never reached the service
         assert "no encontré" in result.lower()
 
     async def test_update_goal_changes_target(self) -> None:

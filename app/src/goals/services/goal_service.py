@@ -13,7 +13,7 @@ from ..interfaces import (
     GoalRepositoryABC,
     GoalServiceABC,
 )
-from ..models import Goal, GoalCreate, GoalProgress
+from ..models import Goal, GoalContribution, GoalCreate, GoalProgress
 
 logger = get_logger(__name__)
 
@@ -125,11 +125,55 @@ class GoalService(GoalServiceABC):
         logger.info("Goal deleted", goal_id=goal_id, user_id=user_id)
         return goal
 
+    async def remove_contribution(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal | None:
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        contribs = await self._contributions.list_for_goal(user_id, goal_id)
+
+        # Match on amount (and date when given). ``list_for_goal`` is already
+        # newest-first, so the first match is the most recent — the one to undo.
+        match = next(
+            (
+                c
+                for c in contribs
+                if c.amount == amount
+                and (contribution_date is None or c.contribution_date == contribution_date)
+            ),
+            None,
+        )
+        if match is None:
+            return None
+
+        await self._contributions.delete(match.id, user_id)
+
+        # Roll back the cached running total and re-derive completion, mirroring
+        # ``update_goal``: only ACTIVE/COMPLETED is derived; paused/cancelled stay.
+        new_amount = max(goal.current_amount - amount, Decimal("0"))
+        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
+        if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
+            reached = new_amount >= goal.target_amount
+            data["status"] = (
+                GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE
+            ).value
+        logger.info("Goal contribution removed", goal_id=goal_id, user_id=user_id)
+        return await self._repository.update(goal_id, user_id, data)
+
     async def get_progress(
         self, goal_id: GoalId, user_id: UserId, as_of: date | None = None
     ) -> GoalProgress:
         goal = await self.get_goal(goal_id, user_id)
         return _build_progress(goal, as_of or _today())
+
+    async def list_contributions(
+        self, goal_id: GoalId, user_id: UserId
+    ) -> list[GoalContribution]:
+        await self.get_goal(goal_id, user_id)  # existence/ownership check
+        return await self._contributions.list_for_goal(user_id, goal_id)
 
 
 def _with_cumulative(goal: Goal, cumulative: Decimal) -> Goal:

@@ -88,6 +88,27 @@ class GoalContributionRepository(GoalContributionRepositoryABC):
             start=Decimal("0"),
         )
 
+    async def list_for_goal(
+        self, user_id: UserId, goal_id: GoalId
+    ) -> list[GoalContribution]:
+        config = QueryConfig(
+            filters={"user_id": user_id, "goal_id": goal_id},
+            order_by="contribution_date",
+            order_ascending=False,
+        )
+        result = await self._db.select(GOAL_CONTRIBUTIONS_TABLE, config)
+        return [_row_to_contribution(row) for row in result.data]
+
+    async def delete(self, contribution_id: str, user_id: UserId) -> None:
+        await self._db.delete(
+            GOAL_CONTRIBUTIONS_TABLE, {"id": contribution_id, "user_id": user_id}
+        )
+        logger.info(
+            "Goal contribution deleted",
+            contribution_id=contribution_id,
+            user_id=user_id,
+        )
+
 
 def _row_to_contribution(row: dict[str, Any]) -> GoalContribution:
     return GoalContribution(

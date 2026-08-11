@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 CREATE_GOAL_TOOL = "create_goal"
 QUERY_GOALS_TOOL = "query_goals"
 CONTRIBUTE_GOAL_TOOL = "contribute_to_goal"
+REMOVE_CONTRIBUTION_TOOL = "remove_goal_contribution"
 UPDATE_GOAL_TOOL = "update_goal"
 DELETE_GOAL_TOOL = "delete_goal"
 
@@ -68,9 +69,28 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": QUERY_GOALS_TOOL,
             "description": (
                 "Consulta las metas del usuario y su progreso (ahorrado, objetivo, "
-                "porcentaje y si va en camino). Úsala para '¿cómo van mis metas?'."
+                "porcentaje y si va en camino). Úsala para '¿cómo van mis metas?'. "
+                "Si el usuario pregunta por los aportes/abonos de UNA meta concreta "
+                "('¿cuánto he aportado a mi viaje?'), pasa 'goal_name'."
             ),
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {
+                        "type": "string",
+                        "description": (
+                            "Nombre de la meta para ver los aportes de UNA meta específica"
+                        ),
+                    },
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+            },
         },
     },
     {
@@ -92,6 +112,42 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "description": (
                             "Fecha del abono YYYY-MM-DD si el usuario la indica "
                             "(p. ej. 'en junio aporté X'); por defecto, hoy."
+                        ),
+                    },
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": REMOVE_CONTRIBUTION_TOOL,
+            "description": (
+                "Borra un aporte puntual de una meta (por su monto y, si hace falta, "
+                "su fecha). NO borra la meta (eso es delete_goal). Úsala solo tras "
+                "confirmar con el usuario."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre de la meta"},
+                    "amount": {
+                        "type": "number",
+                        "description": "Monto del aporte a borrar, mayor a 0",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha del aporte YYYY-MM-DD; úsala SOLO para desambiguar "
+                            "si hay varios aportes del mismo monto"
                         ),
                     },
                     "goal_target_amount": {
@@ -183,9 +239,11 @@ class GoalToolkit:
         if name == CREATE_GOAL_TOOL:
             return await self._create(arguments, user_id)
         if name == QUERY_GOALS_TOOL:
-            return await self._query(user_id)
+            return await self._query(arguments, user_id)
         if name == CONTRIBUTE_GOAL_TOOL:
             return await self._contribute(arguments, user_id)
+        if name == REMOVE_CONTRIBUTION_TOOL:
+            return await self._remove_contribution(arguments, user_id)
         if name == UPDATE_GOAL_TOOL:
             return await self._update(arguments, user_id)
         if name == DELETE_GOAL_TOOL:
@@ -208,7 +266,11 @@ class GoalToolkit:
         target = f" para {created.target_date}" if created.target_date else ""
         return f"✅ Meta creada: {created.name} — objetivo ${created.target_amount}{target}."
 
-    async def _query(self, user_id: UserId) -> str:
+    async def _query(self, args: dict[str, Any], user_id: UserId) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        if name:
+            return await self._query_one(name, args, user_id)
+
         goals, total = await self._service.list_goals(user_id, page=1, page_size=20)
         if not goals:
             return "No tienes metas configuradas."
@@ -222,6 +284,24 @@ class GoalToolkit:
                 logger.warning("Goal progress failed", goal_id=goal.id, error=str(e))
                 lines.append(f"- {goal.name}: ${goal.current_amount} de ${goal.target_amount}")
         return f"{total} meta(s):\n" + "\n".join(lines)
+
+    async def _query_one(self, name: str, args: dict[str, Any], user_id: UserId) -> str:
+        """List a single goal's dated contributions, newest first."""
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "consultar")
+
+        contribs = await self._service.list_contributions(goal.id, user_id)
+        header = (
+            f"Meta '{goal.name}': llevas ${goal.current_amount} de ${goal.target_amount}."
+        )
+        if not contribs:
+            return f"{header} Aún no tiene aportes registrados."
+        lines = [f"  - ${c.amount} ({c.contribution_date})" for c in contribs]
+        return f"{header}\n" + "\n".join(lines)
 
     async def _contribute(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("goal_name", "")).strip()
@@ -250,6 +330,38 @@ class GoalToolkit:
         return (
             f"✅ Aboné ${amount} a '{updated.name}'{when}. "
             f"Llevas ${updated.current_amount} de ${updated.target_amount}.{done}"
+        )
+
+    async def _remove_contribution(self, args: dict[str, Any], user_id: UserId) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        try:
+            amount = _to_decimal(args.get("amount"))
+        except ValueError:
+            return "No pude borrar el aporte: el monto no es válido."
+        if amount <= 0:
+            return "El monto del aporte a borrar debe ser mayor a 0."
+
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "editar")
+
+        contribution_date = _opt_date(args.get("date"))
+        updated = await self._service.remove_contribution(
+            goal.id, user_id, amount, contribution_date
+        )
+        if updated is None:
+            when = f" del {contribution_date}" if contribution_date else ""
+            return (
+                f"No encontré un aporte de ${amount}{when} en esa meta. "
+                "Revisa el monto (y la fecha) del aporte que quieres borrar."
+            )
+        logger.info("Tool removed goal contribution", goal_id=goal.id, user_id=user_id)
+        return (
+            f"🗑️ Borré el aporte de ${amount} de '{updated.name}'. "
+            f"Ahora llevas ${updated.current_amount} de ${updated.target_amount}."
         )
 
     async def _update(self, args: dict[str, Any], user_id: UserId) -> str:

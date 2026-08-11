@@ -72,6 +72,16 @@ class GoalContributionRepositoryABC(ABC):
         Python (like ``sums_up_to``) since PostgREST has no range filter.
         """
 
+    @abstractmethod
+    async def list_for_goal(
+        self, user_id: UserId, goal_id: GoalId
+    ) -> list[GoalContribution]:
+        """Return a goal's contributions, newest ``contribution_date`` first."""
+
+    @abstractmethod
+    async def delete(self, contribution_id: str, user_id: UserId) -> None:
+        """Delete a single contribution (scoped by ``user_id``)."""
+
 
 class GoalServiceABC(ABC):
     """Contract for goal use cases (business logic)."""
@@ -125,6 +135,15 @@ class GoalServiceABC(ABC):
         """Return a goal evaluated against its target and timeline."""
 
     @abstractmethod
+    async def list_contributions(
+        self, goal_id: GoalId, user_id: UserId
+    ) -> list[GoalContribution]:
+        """Return a goal's dated contributions (newest first).
+
+        Verifies existence/ownership first, raising ``GoalNotFoundError``.
+        """
+
+    @abstractmethod
     async def update_goal(
         self,
         goal_id: GoalId,
@@ -139,3 +158,18 @@ class GoalServiceABC(ABC):
     @abstractmethod
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
         """Delete a goal and return it (or raise ``GoalNotFoundError``)."""
+
+    @abstractmethod
+    async def remove_contribution(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal | None:
+        """Delete a single dated contribution and return the updated goal.
+
+        Matches by ``amount`` and, when given, ``contribution_date``; on several
+        matches the most recent is removed. Returns ``None`` when no contribution
+        matches (the goal itself must exist, else ``GoalNotFoundError``).
+        """

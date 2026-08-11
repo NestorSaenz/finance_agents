@@ -76,11 +76,15 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
         self,
         sums: dict[str, Decimal] | None = None,
         contributions: list[tuple[Decimal, date]] | None = None,
+        for_goal: list[GoalContribution] | None = None,
     ) -> None:
         self.created: list[tuple[str, str, Decimal, date]] = []
+        self.deleted: list[str] = []
         self._sums = sums or {}
         # Dated (amount, date) pairs used by ``sum_in_period`` to sum in-range.
         self._contributions = contributions or []
+        # Seeded rows returned verbatim by ``list_for_goal``.
+        self._for_goal = for_goal or []
 
     async def create(
         self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
@@ -103,6 +107,16 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
             (amount for amount, day in self._contributions if start <= day <= end),
             start=Decimal("0"),
         )
+
+    async def list_for_goal(
+        self, user_id: UserId, goal_id: GoalId
+    ) -> list[GoalContribution]:
+        return list(self._for_goal)
+
+    async def delete(self, contribution_id: str, user_id: UserId) -> None:
+        self.deleted.append(contribution_id)
+        # Drop from the seeded list so the service test observes a real removal.
+        self._for_goal = [c for c in self._for_goal if c.id != contribution_id]
 
 
 REF = date(2025, 1, 1)
@@ -279,6 +293,155 @@ class TestContributedInPeriod:
         )
 
         assert total == Decimal("0")
+
+
+class TestListContributions:
+    async def test_returns_repository_list(self) -> None:
+        seeded = [
+            GoalContribution(
+                id="c2", goal_id="goal-1", user_id="u1",
+                amount=Decimal("300"), contribution_date=date(2026, 7, 2),
+                created_at=datetime.now(UTC),
+            ),
+            GoalContribution(
+                id="c1", goal_id="goal-1", user_id="u1",
+                amount=Decimal("200"), contribution_date=date(2026, 6, 15),
+                created_at=datetime.now(UTC),
+            ),
+        ]
+        repo = FakeGoalRepository(goal=_goal())
+        contribs = FakeGoalContributionRepository(for_goal=seeded)
+        service = _service(repo, contribs)
+
+        result = await service.list_contributions("goal-1", "u1")
+
+        assert result == seeded
+
+    async def test_raises_when_goal_missing(self) -> None:
+        service = _service(FakeGoalRepository(goal=None))
+        with pytest.raises(GoalNotFoundError):
+            await service.list_contributions("missing", "u1")
+
+
+def _contribution(
+    cid: str, amount: Decimal, when: date, goal_id: str = "goal-1"
+) -> GoalContribution:
+    return GoalContribution(
+        id=cid,
+        goal_id=goal_id,
+        user_id="u1",
+        amount=amount,
+        contribution_date=when,
+        created_at=datetime.now(UTC),
+    )
+
+
+class TestRemoveContribution:
+    async def test_deletes_match_and_decrements_current_amount(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        seeded = [_contribution("c1", Decimal("5000"), date(2026, 6, 15))]
+        contribs = FakeGoalContributionRepository(for_goal=seeded)
+        service = _service(repo, contribs)
+
+        result = await service.remove_contribution("goal-1", "u1", Decimal("5000"))
+
+        assert contribs.deleted == ["c1"]  # the matching contribution was removed
+        assert contribs._for_goal == []  # and it's gone from the seeded list
+        assert repo.updated_data["current_amount"] == "20000"  # 25000 - 5000
+        assert result is not None and result.current_amount == Decimal("20000")
+
+    async def test_returns_none_when_no_match(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        contribs = FakeGoalContributionRepository(
+            for_goal=[_contribution("c1", Decimal("5000"), date(2026, 6, 15))]
+        )
+        service = _service(repo, contribs)
+
+        result = await service.remove_contribution("goal-1", "u1", Decimal("9999"))
+
+        assert result is None
+        assert contribs.deleted == []  # nothing deleted
+        assert repo.updated_data == {}  # goal untouched
+
+    async def test_disambiguates_by_date_when_amounts_tie(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        # Two 5000 contributions on different dates (newest first, as the repo returns).
+        seeded = [
+            _contribution("c_jul", Decimal("5000"), date(2026, 7, 10)),
+            _contribution("c_jun", Decimal("5000"), date(2026, 6, 10)),
+        ]
+        contribs = FakeGoalContributionRepository(for_goal=seeded)
+        service = _service(repo, contribs)
+
+        await service.remove_contribution(
+            "goal-1", "u1", Decimal("5000"), date(2026, 6, 10)
+        )
+
+        assert contribs.deleted == ["c_jun"]  # the dated one, not the most recent
+
+    async def test_picks_most_recent_when_amounts_tie_and_no_date(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        seeded = [
+            _contribution("c_jul", Decimal("5000"), date(2026, 7, 10)),
+            _contribution("c_jun", Decimal("5000"), date(2026, 6, 10)),
+        ]
+        contribs = FakeGoalContributionRepository(for_goal=seeded)
+        service = _service(repo, contribs)
+
+        await service.remove_contribution("goal-1", "u1", Decimal("5000"))
+
+        assert contribs.deleted == ["c_jul"]  # newest-first list -> most recent
+
+    async def test_reopens_completed_goal_when_falls_below_target(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(
+                status=GoalStatus.COMPLETED,
+                current=Decimal("100000"),
+                target=Decimal("100000"),
+            )
+        )
+        contribs = FakeGoalContributionRepository(
+            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))]
+        )
+        service = _service(repo, contribs)
+
+        await service.remove_contribution("goal-1", "u1", Decimal("10000"))
+
+        assert repo.updated_data["current_amount"] == "90000"
+        assert repo.updated_data["status"] == "active"  # 90k < 100k -> reopened
+
+    async def test_preserves_paused_status(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(
+                status=GoalStatus.PAUSED, current=Decimal("50000"), target=Decimal("100000")
+            )
+        )
+        contribs = FakeGoalContributionRepository(
+            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))]
+        )
+        service = _service(repo, contribs)
+
+        await service.remove_contribution("goal-1", "u1", Decimal("10000"))
+
+        assert "status" not in repo.updated_data  # paused kept, not re-derived
+
+    async def test_floors_current_amount_at_zero(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(current=Decimal("5000"), target=Decimal("100000"))
+        )
+        contribs = FakeGoalContributionRepository(
+            for_goal=[_contribution("c1", Decimal("8000"), date(2026, 6, 15))]
+        )
+        service = _service(repo, contribs)
+
+        await service.remove_contribution("goal-1", "u1", Decimal("8000"))
+
+        assert repo.updated_data["current_amount"] == "0"  # 5k - 8k floored at 0
+
+    async def test_raises_when_goal_missing(self) -> None:
+        service = _service(FakeGoalRepository(goal=None))
+        with pytest.raises(GoalNotFoundError):
+            await service.remove_contribution("missing", "u1", Decimal("5000"))
 
 
 class TestProgress:

@@ -102,6 +102,11 @@ registrar y consultar sus transacciones financieras.
     ("abona/agrega/asigna/mete/aporta N a X", "este mes 20 mil a X"). Pasa goal_name y
     amount (y date si dice el mes: "en junio aporté N a X"). NUNCA uses create_goal para
     un abono: eso duplicaría la meta.
+  - remove_goal_contribution → para BORRAR un aporte puntual mal registrado de una meta
+    ("borra/quita el aporte de N a X", "elimina el abono de N del mes pasado"). Pasa
+    goal_name, amount (y date si hay varios del mismo monto). NO borra la meta (eso es
+    delete_goal). Para RE-fechar un aporte: bórralo con esta y vuelve a añadirlo con
+    contribute_to_goal en la fecha correcta. Confírmalo con el usuario antes.
   - update_goal → para CAMBIAR los datos de una meta que ya existe: su MONTO OBJETIVO,
     nombre o fecha ("sube/cambia el objetivo de X a 15M", "renombra X"). NO es un abono
     (eso es contribute_to_goal) ni crear una nueva.

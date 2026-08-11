@@ -12,7 +12,7 @@ from app.main import app
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
 from app.src.goals.dependencies import get_goal_service
 from app.src.goals.interfaces import GoalServiceABC
-from app.src.goals.models import Goal, GoalCreate, GoalProgress
+from app.src.goals.models import Goal, GoalContribution, GoalCreate, GoalProgress
 
 BASE_URL = "/api/v1/goals"
 
@@ -87,6 +87,22 @@ class StubGoalService(GoalServiceABC):
     async def delete_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
         if not self.found:
             raise GoalNotFoundError(goal_id)
+        return _goal()
+
+    async def list_contributions(
+        self, goal_id: GoalId, user_id: UserId
+    ) -> list[GoalContribution]:
+        return []
+
+    async def remove_contribution(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        contribution_date: date | None = None,
+    ) -> Goal | None:
+        if not self.found:
+            return None
         return _goal()
 
     async def get_progress(
