@@ -69,6 +69,21 @@ class CardPaymentRepository(CardPaymentRepositoryABC):
         )
         return sum((_parse_decimal(r.get("amount")) for r in rows), Decimal("0"))
 
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        config = QueryConfig(
+            select="amount,payment_date",
+            filters={"user_id": user_id},
+        )
+        result = await self._db.select(CARD_PAYMENTS_TABLE, config)
+        # All cards, all payments on or before `as_of` (range filter in Python,
+        # since PostgREST equality filters can't express a date range).
+        rows = [
+            r
+            for r in result.data
+            if (d := _parse_date(r.get("payment_date"))) is not None and d <= as_of
+        ]
+        return sum((_parse_decimal(r.get("amount")) for r in rows), Decimal("0"))
+
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> list[CardPayment]:

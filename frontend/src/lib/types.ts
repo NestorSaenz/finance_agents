@@ -93,6 +93,11 @@ export interface GoalList {
   total_contributed: string;
 }
 
+export interface AccumulatedSurplus {
+  /** Free cash accumulated up to the period's month-end (Decimal serialized as string). */
+  accumulated_surplus: string;
+}
+
 export interface CreditCardStatusItem {
   card: {
     id: string;

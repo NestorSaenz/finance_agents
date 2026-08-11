@@ -69,6 +69,9 @@ class FakeCardService(CreditCardServiceABC):
     ) -> CreditCardStatus:
         return _status(self._cards[0])
 
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        return Decimal("0")
+
     async def register_payment(
         self, card_id: CardId, user_id: UserId, payment: CardPaymentCreate
     ) -> CardPayment:

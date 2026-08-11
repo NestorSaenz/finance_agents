@@ -66,6 +66,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [goalContributed, setGoalContributed] = useState(0);
   const [cards, setCards] = useState<CreditCardStatusList | null>(null);
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
+  const [surplus, setSurplus] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,6 +86,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         goalsData,
         cardsData,
         paymentsData,
+        surplusData,
       ] = await Promise.all([
         api.spendingSummary(period, token),
         api.transactions(period, token),
@@ -93,6 +95,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.goals(period, token),
         api.cardsStatus(period, token),
         api.cardPayments(period, token),
+        api.excedente(period, token),
       ]);
       setSummary(summaryData);
       setMovements(movementsData.transactions);
@@ -102,6 +105,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setGoalContributed(Number(goalsData.total_contributed ?? 0));
       setCards(cardsData);
       setPayments(paymentsData);
+      setSurplus(Number(surplusData.accumulated_surplus ?? 0));
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -116,6 +120,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setGoalContributed(0);
       setCards(null);
       setPayments(null);
+      setSurplus(0);
     } finally {
       setLoading(false);
     }
@@ -256,6 +261,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               profile={profile}
               goals={goals}
               goalContributions={goalContributed}
+              accumulatedSurplus={surplus}
               cards={cards}
               payments={payments}
               period={period}

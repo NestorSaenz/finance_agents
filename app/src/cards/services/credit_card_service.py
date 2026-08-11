@@ -74,6 +74,9 @@ class CreditCardService(CreditCardServiceABC):
             raise CardNotFoundError(card_id)
         return await self._build_status(card, as_of or _today())
 
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        return await self._payments.total_paid_up_to(user_id, as_of)
+
     async def register_payment(
         self, card_id: CardId, user_id: UserId, payment: CardPaymentCreate
     ) -> CardPayment:

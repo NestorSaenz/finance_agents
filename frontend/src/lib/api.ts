@@ -2,6 +2,7 @@
 // through here so error handling, base path, and auth headers stay consistent.
 
 import type {
+  AccumulatedSurplus,
   BudgetCreatePayload,
   BudgetStatusList,
   CardPaymentsList,
@@ -126,6 +127,12 @@ export const api = {
     token: string | null,
   ): Promise<CardPaymentsList> =>
     request(`/cards/payments?period=${encodeURIComponent(period)}`, { token }),
+
+  excedente: (
+    period: string,
+    token: string | null,
+  ): Promise<AccumulatedSurplus> =>
+    request(`/analysis/excedente?period=${encodeURIComponent(period)}`, { token }),
 
   createCard: (payload: CreditCardCreatePayload, token: string | null): Promise<unknown> =>
     request("/cards", { method: "POST", body: payload, token }),

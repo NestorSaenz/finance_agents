@@ -12,6 +12,7 @@ const {
   goalsMock,
   cardsMock,
   paymentsMock,
+  excedenteMock,
   ApiError,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -30,6 +31,7 @@ const {
     goalsMock: vi.fn(),
     cardsMock: vi.fn(),
     paymentsMock: vi.fn(),
+    excedenteMock: vi.fn(),
     ApiError: ApiErrorMock,
   };
 });
@@ -43,6 +45,7 @@ vi.mock("@/lib/api", () => ({
     goals: (...args: unknown[]) => goalsMock(...args),
     cardsStatus: (...args: unknown[]) => cardsMock(...args),
     cardPayments: (...args: unknown[]) => paymentsMock(...args),
+    excedente: (...args: unknown[]) => excedenteMock(...args),
   },
   ApiError,
 }));
@@ -91,6 +94,7 @@ beforeEach(() => {
   goalsMock.mockReset().mockResolvedValue({ goals: [], total: 0, total_contributed: "0" });
   cardsMock.mockReset().mockResolvedValue(EMPTY_CARDS);
   paymentsMock.mockReset().mockResolvedValue({ payments: [], total: "0" });
+  excedenteMock.mockReset().mockResolvedValue({ accumulated_surplus: "0" });
 });
 
 describe("DashboardPanel", () => {
@@ -110,6 +114,21 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("Crédito")).toBeInTheDocument();
     expect(summaryMock).toHaveBeenCalledWith("este_mes", "tok");
     expect(budgetMock).toHaveBeenCalledWith("tok");
+  });
+
+  it("shows the accumulated surplus, painting a negative value red", async () => {
+    summaryMock.mockResolvedValue(summary());
+    excedenteMock.mockResolvedValue({ accumulated_surplus: "-5000" });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+
+    const label = await screen.findByText("Excedente acumulado");
+    // The value sits in the same card; a negative surplus carries the "negative"
+    // tone class, not the positive one (assert on the class, not the locale glyph).
+    const value = label.parentElement?.querySelector("p.text-2xl");
+    expect(value?.className).toContain("text-negative");
+    expect(value?.className).not.toContain("text-positive");
+    expect(excedenteMock).toHaveBeenCalledWith("este_mes", "tok");
   });
 
   it("shows budget progress when there are budgets", async () => {

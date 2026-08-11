@@ -293,11 +293,24 @@ class TransactionService(TransactionServiceABC):
     async def get_spending_summary(
         self, user_id: UserId, *, period_start: date, period_end: date
     ) -> SpendingSummary:
-        # Fetch a wide page and aggregate in-period (money stays Decimal).
-        items = await self._repository.list_page(
-            user_id, limit=SUMMARY_FETCH_LIMIT, offset=0
-        )
-        in_period = [t for t in items if period_start <= t.transaction_date <= period_end]
+        # Aggregate every transaction in the window (money stays Decimal). We page
+        # through all rows instead of a single wide fetch: rows are ordered by
+        # created_at (not transaction_date), and an all-history window — as the
+        # "accumulated surplus" uses — can exceed SUMMARY_FETCH_LIMIT lifetime
+        # transactions, which would silently drop the oldest data. A short page
+        # (or empty) means we've exhausted the user's rows.
+        in_period: list[Transaction] = []
+        offset = 0
+        while True:
+            page = await self._repository.list_page(
+                user_id, limit=SUMMARY_FETCH_LIMIT, offset=offset
+            )
+            in_period.extend(
+                t for t in page if period_start <= t.transaction_date <= period_end
+            )
+            if len(page) < SUMMARY_FETCH_LIMIT:
+                break
+            offset += SUMMARY_FETCH_LIMIT
 
         income = sum(
             (t.amount for t in in_period if t.transaction_type == TransactionType.INCOME),

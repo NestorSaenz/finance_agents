@@ -24,6 +24,7 @@ class FakeTransactions:
             by_category=[
                 CategorySpending(category=CategoryType.ALIMENTACION, amount=Decimal("200000"))
             ],
+            cash_expenses=Decimal("5000"),
         )
 
 
@@ -58,6 +59,9 @@ class FakeBudgets:
 
 
 class FakeGoals:
+    async def contributed_in_period(self, user_id, period_start, period_end):  # type: ignore[no-untyped-def]
+        return Decimal("2000")
+
     async def list_goals(self, user_id, *, page, page_size, as_of=None):  # type: ignore[no-untyped-def]
         goal = Goal(
             id="g1",
@@ -78,6 +82,9 @@ class FakeGoals:
 
 
 class FakeCards:
+    async def total_paid_up_to(self, user_id, as_of):  # type: ignore[no-untyped-def]
+        return Decimal("8000")
+
     async def get_all_status(self, user_id, as_of=None):  # type: ignore[no-untyped-def]
         card = CreditCard(
             id="c1",
@@ -180,3 +187,11 @@ async def test_snapshot_excludes_reference_income_for_other_periods() -> None:
     # The monthly reference income doesn't apply to "todo".
     assert snap.income_base == Decimal("0")
     assert snap.total_income == Decimal("30000")
+
+
+async def test_accumulated_surplus_subtracts_cash_cards_and_goals() -> None:
+    # Free cash = income − cash spent − card payments − goal contributions.
+    # 30,000 − 5,000 − 8,000 − 2,000 = 15,000.
+    surplus = await _service().accumulated_surplus("u1", date(2026, 8, 31))
+
+    assert surplus == Decimal("15000")

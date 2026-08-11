@@ -24,6 +24,8 @@ interface SummaryContentProps {
   goals: Goal[];
   /** Total set aside toward savings goals in the selected period. */
   goalContributions: number;
+  /** Free cash accumulated up to the selected month-end (carries over, no reset). */
+  accumulatedSurplus: number;
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
   /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
@@ -46,6 +48,7 @@ export function SummaryContent({
   profile,
   goals,
   goalContributions,
+  accumulatedSurplus,
   cards,
   payments,
   period,
@@ -149,6 +152,22 @@ export function SummaryContent({
           </p>
         </div>
       )}
+
+      <div className="rounded-xl border border-line bg-surface p-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted">
+          Excedente acumulado
+        </p>
+        <p
+          className={`mt-1 text-2xl font-semibold ${
+            accumulatedSurplus >= 0 ? "text-positive" : "text-negative"
+          }`}
+        >
+          {formatMoney(accumulatedSurplus)}
+        </p>
+        <p className="mt-2 text-xs text-muted">
+          Tu plata libre acumulada, mes a mes. Baja cuando gastas o aportas a metas.
+        </p>
+      </div>
 
       {income > 0 && (
         <IncomeGauge

@@ -1,6 +1,7 @@
 """Holistic financial analysis: read-only cross-module aggregation."""
 
 import asyncio
+from datetime import date
 from decimal import Decimal
 
 from app.shared.periods import ESTE_MES, resolve_period
@@ -22,6 +23,9 @@ from ..models import (
 
 # Goals/cards are cumulative; a generous page keeps personal-finance volumes in one read.
 _GOALS_PAGE: int = 50
+
+# "Accumulated surplus" sums over all history, so its window opens at the epoch.
+_EPOCH: date = date(1970, 1, 1)
 
 
 class AnalysisService(AnalysisServiceABC):
@@ -134,3 +138,17 @@ class AnalysisService(AnalysisServiceABC):
             card_debt_total=sum((c.balance for c in cards), Decimal("0")),
             card_available_total=sum((c.available for c in cards), Decimal("0")),
         )
+
+    async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:
+        # Free cash that carries over month to month: everything that ever came in
+        # minus everything that left the pocket (cash spent, card payments) and what
+        # was earmarked into goals — all cumulative up to `as_of`. The three reads
+        # are independent, so gather them concurrently like `snapshot`.
+        summary, card_paid, goal_saved = await asyncio.gather(
+            self._transactions.get_spending_summary(
+                user_id, period_start=_EPOCH, period_end=as_of
+            ),
+            self._cards.total_paid_up_to(user_id, as_of),
+            self._goals.contributed_in_period(user_id, _EPOCH, as_of),
+        )
+        return summary.total_income - summary.cash_expenses - card_paid - goal_saved

@@ -69,6 +69,14 @@ class CardPaymentRepositoryABC(ABC):
         """
 
     @abstractmethod
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        """Return the sum of ALL the user's card payments made on or before ``as_of``.
+
+        Unlike ``total_paid`` this spans every card (no ``card_id`` filter); it
+        feeds the cumulative "accumulated surplus" reconstruction.
+        """
+
+    @abstractmethod
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> list[CardPayment]:
@@ -121,6 +129,10 @@ class CreditCardServiceABC(ABC):
         self, card_id: CardId, user_id: UserId, as_of: date | None = None
     ) -> CreditCardStatus:
         """Return one card's status (or raise ``CardNotFoundError``)."""
+
+    @abstractmethod
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        """Return the sum of ALL the user's card payments on or before ``as_of``."""
 
     @abstractmethod
     async def register_payment(

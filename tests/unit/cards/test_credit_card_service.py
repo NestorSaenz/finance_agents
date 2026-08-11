@@ -119,6 +119,11 @@ class FakePaymentRepo(CardPaymentRepositoryABC):
             Decimal("0"),
         )
 
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        if self.dated is None:
+            return self.total
+        return sum((amt for d, amt in self.dated if d <= as_of), Decimal("0"))
+
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> list[CardPayment]:
@@ -244,6 +249,22 @@ async def test_current_month_stays_live_not_month_end() -> None:
     assert s.cycle_start == date(2026, 6, 16)
     assert s.cycle_end == date(2026, 7, 15)
     assert s.next_payment_date == date(2026, 8, 5)
+
+
+@pytest.mark.asyncio
+async def test_total_paid_up_to_sums_only_payments_on_or_before_as_of() -> None:
+    # Cumulative across all cards: a July payment counts at July-end, an August one
+    # does not. The service delegates straight to the payment repo.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(
+            dated=[(date(2026, 7, 10), Decimal("100000")), (date(2026, 8, 2), Decimal("50000"))]
+        ),
+        FakeSpending(Decimal("0"), Decimal("0")),
+    )
+
+    assert await service.total_paid_up_to("u1", date(2026, 7, 31)) == Decimal("100000")
+    assert await service.total_paid_up_to("u1", date(2026, 8, 31)) == Decimal("150000")
 
 
 @pytest.mark.asyncio
