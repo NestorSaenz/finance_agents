@@ -244,7 +244,8 @@ class TestRegister:
 
     async def test_omitted_category_defers_to_auto_categorization(self) -> None:
         service = FakeTransactionService()
-        toolkit = TransactionToolkit(service)
+        # No card on file → an expense with no stated method can only be cash.
+        toolkit = TransactionToolkit(service, cards=FakeCardService(cards=[]))
 
         await toolkit.dispatch(
             REGISTER_TRANSACTION_TOOL,
@@ -253,8 +254,52 @@ class TestRegister:
         )
 
         assert service.created[0][0].category is None
-        # Payment method is unknown when not stated.
-        assert service.created[0][0].payment_method is None
+        # No cards → default to efectivo (no follow-up question).
+        assert service.created[0][0].payment_method == PaymentMethod.EFECTIVO
+
+    async def test_expense_without_method_defaults_to_cash_when_no_cards(self) -> None:
+        # A user with no registered cards never gets asked "¿efectivo o crédito?" —
+        # the charge can only be cash, so it's registered as efectivo straight away.
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, cards=FakeCardService(cards=[]))
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 100, "description": "jardinería", "transaction_type": "expense"},
+            user_id="u1",
+        )
+
+        assert len(service.created) == 1  # registered straight away, no question
+        assert service.created[0][0].payment_method == PaymentMethod.EFECTIVO
+        assert "registré" in result.lower()
+
+    async def test_expense_without_method_asks_when_user_has_cards(self) -> None:
+        # With cards on file we ask instead of registering, so a pm-less row isn't
+        # created now and re-created when the user answers "con tarjeta" (the dup bug).
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, cards=FakeCardService())  # one card
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 100, "description": "jardinería", "transaction_type": "expense"},
+            user_id="u1",
+        )
+
+        assert service.created == []  # nothing registered until the method is known
+        assert "efectivo" in result.lower() and "crédito" in result.lower()
+
+    async def test_income_without_method_registers_directly(self) -> None:
+        # Income needs no payment method — it must never trigger the cash/credit ask.
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, cards=FakeCardService())  # has cards
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {"amount": 5000, "description": "sueldo", "transaction_type": "income"},
+            user_id="u1",
+        )
+
+        assert service.created[0][0].transaction_type == TransactionType.INCOME
 
     async def test_captures_credit_payment_method(self) -> None:
         service = FakeTransactionService()

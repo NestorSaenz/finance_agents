@@ -54,6 +54,13 @@ DELETE_BY_FILTER_TOOL = "delete_by_filter"
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500
 
+# Asked (deterministically) when an expense has no payment method AND the user has
+# cards, so we never pre-register a pm-less row that a "con tarjeta" follow-up would
+# duplicate. Users with no cards skip this: the charge can only be cash.
+ASK_PAYMENT_METHOD_MESSAGE: Final[str] = (
+    "¿Este gasto lo pagaste en efectivo o con tarjeta de crédito?"
+)
+
 # Cap on how many query results to list back (the count and total still cover all).
 QUERY_DISPLAY_LIMIT = 25
 
@@ -478,6 +485,26 @@ class TransactionToolkit:
         # movement shows its card and hits the right (payment-month) budget.
         if card is not None:
             payment_method = PaymentMethod.CREDITO
+
+        # Expense with no stated method and no card: don't guess. If the user has NO
+        # cards it can only be cash → efectivo (don't ask). If they DO have cards, ask
+        # instead of registering — otherwise a pm-less row is created now and a
+        # follow-up "con tarjeta" registers a SECOND one (the duplicate we saw).
+        # Installments are credit by definition, so they skip this.
+        requested_cuotas = _to_int(args.get("cuotas"), default=1, minimum=1)
+        is_expense = args.get("transaction_type", "expense") == "expense"
+        no_card_named = not str(args.get("card_name", "")).strip()
+        if (
+            is_expense
+            and payment_method is None
+            and card is None
+            and no_card_named
+            and requested_cuotas <= 1
+        ):
+            if self._cards is not None and await self._cards.list_cards(user_id):
+                return ASK_PAYMENT_METHOD_MESSAGE
+            payment_method = PaymentMethod.EFECTIVO
+
         # Reuse an existing category on a close match (typo tolerance), so a
         # variant like "improvistos" folds into the user's "imprevistos" instead
         # of fragmenting. Skipped when no category is given (service auto-tags).
@@ -507,8 +534,7 @@ class TransactionToolkit:
             )
 
         # Deferred purchase: the service spreads the total across N monthly installments.
-        requested = _to_int(args.get("cuotas"), default=1, minimum=1)
-        installments = min(requested, MAX_INSTALLMENTS)
+        installments = min(requested_cuotas, MAX_INSTALLMENTS)
         if installments > 1:
             parts = await self._service.create_installments(transaction, installments, user_id)
             first = parts[0]
@@ -516,8 +542,8 @@ class TransactionToolkit:
             # Be explicit when we capped the request, so the reply never claims a
             # different number than what the user asked for.
             capped = (
-                f" (pediste {requested}; el máximo es {MAX_INSTALLMENTS})"
-                if requested > MAX_INSTALLMENTS
+                f" (pediste {requested_cuotas}; el máximo es {MAX_INSTALLMENTS})"
+                if requested_cuotas > MAX_INSTALLMENTS
                 else ""
             )
             return (
