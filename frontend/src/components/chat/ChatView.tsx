@@ -139,12 +139,15 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
         router.replace("/login");
         return;
       }
+      // 429: the backend sends a friendly rate-limit notice — show it as a normal
+      // assistant reply, not the generic error, so the user knows to slow down.
+      const isRateLimited = err instanceof ApiError && err.status === 429;
       setMessages((prev) => [
         ...prev,
         {
           id: newId(),
           role: "assistant",
-          content: ERROR_MESSAGE,
+          content: isRateLimited ? err.message : ERROR_MESSAGE,
           createdAt: new Date().toISOString(),
         },
       ]);

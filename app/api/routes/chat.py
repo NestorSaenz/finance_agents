@@ -25,6 +25,7 @@ from app.src.auth.dependencies import CurrentUserId
 from app.src.chat.dependencies import ChatMemoryServiceDep
 from app.src.chat.models import ChatMessage
 from app.src.memory.dependencies import MemoryAgentServiceDep
+from app.src.ratelimit.dependencies import RateLimitServiceDep
 from app.src.users.dependencies import UserProfileServiceDep
 
 logger = get_logger(__name__)
@@ -107,6 +108,7 @@ async def chat(
     memory_agent: MemoryAgentServiceDep,
     profiles: UserProfileServiceDep,
     ingestion: IngestionDep,
+    rate_limiter: RateLimitServiceDep,
 ) -> ChatResponse:
     """Send a message to the FinanceGPT assistant.
 
@@ -124,6 +126,11 @@ async def chat(
     Returns:
         Assistant response and the conversation id to continue with.
     """
+    # Cap chat usage per user (LLM cost / abuse control) before doing any work.
+    # Runs before the graph try/except below, so an over-limit turn propagates to
+    # the exception handler as a 429 instead of being swallowed as a graph error.
+    await rate_limiter.check_chat(user_id, has_image=bool(request.image))
+
     conversation_id, history = await _load_context(memory, user_id, request.session_id)
     user_context = await _build_user_context(memory_agent, profiles, user_id)
 

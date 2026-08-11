@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # How many recent conversation messages to feed the LLM as context.
     CHAT_HISTORY_LIMIT: int = 10
 
+    # ============================================
+    # Rate Limiting (chat cost / abuse control)
+    # ============================================
+    # Caps POST /chat per authenticated user. Reads (dashboard, etc.) are unaffected.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_CHAT_PER_MINUTE: int = 10  # Burst guard: every turn (text or image).
+    RATE_LIMIT_CHAT_PER_DAY: int = 100  # Daily text turns.
+    RATE_LIMIT_IMAGES_PER_DAY: int = 10  # Daily image turns (heavier: Gemini vision).
+
     BACKEND_CORS_ORIGINS: Annotated[list[AnyUrl] | str, BeforeValidator(parse_cors)] = []
 
     @computed_field  # type: ignore[prop-decorator]  # pydantic computed_field on property

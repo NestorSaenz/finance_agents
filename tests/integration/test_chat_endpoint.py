@@ -16,10 +16,20 @@ from app.src.chat.interfaces import ChatMemoryServiceABC
 from app.src.chat.models import ChatMessage
 from app.src.memory.dependencies import get_memory_agent_service
 from app.src.memory.interfaces import MemoryAgentServiceABC
+from app.src.ratelimit.dependencies import get_rate_limit_service
+from app.src.ratelimit.interfaces import RateLimitRepositoryABC, RateLimitServiceABC
+from app.src.ratelimit.models import RateLimitBucket
+from app.src.ratelimit.services.rate_limit_service import RateLimitService
 from app.src.users.dependencies import get_user_profile_service
 from app.src.users.interfaces import UserProfileServiceABC
 from app.src.users.models import UserProfile, UserProfileUpdate
-from tests.fakes import FakeEmbeddingClient, FakeLLM, FakeToolkit, FakeVectorStore
+from tests.fakes import (
+    FakeEmbeddingClient,
+    FakeLLM,
+    FakeRateLimitService,
+    FakeToolkit,
+    FakeVectorStore,
+)
 
 CHAT_URL = "/api/v1/chat"
 FINAL_TEXT = "Tu gasto fue categorizado como restaurantes."
@@ -90,6 +100,8 @@ def _override_memory() -> None:
     app.dependency_overrides[get_memory_agent_service] = lambda: FakeMemoryAgent()
     app.dependency_overrides[get_user_profile_service] = lambda: FakeProfileService()
     app.dependency_overrides[get_ingestion_service] = lambda: StubIngestion()
+    # Permissive limiter so unrelated chat tests don't need a live rate-limit DB.
+    app.dependency_overrides[get_rate_limit_service] = lambda: FakeRateLimitService()
 
 
 @pytest.fixture
@@ -254,3 +266,53 @@ class TestChatEndpoint:
 
         assert response.status_code == 200
         assert response.json()["response"] == FINAL_TEXT  # replied despite memory being down
+
+
+class _OverLimitRepo(RateLimitRepositoryABC):
+    """Rate-limit repo stub that reports every window as already over the limit."""
+
+    async def increment(
+        self, user_id: str, bucket: RateLimitBucket, window_start: object
+    ) -> int:
+        return 999
+
+
+class TestChatRateLimiting:
+    def test_over_limit_returns_429_with_friendly_message(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        # A real service with a zero per-minute allowance -> the first turn is over.
+        service: RateLimitServiceABC = RateLimitService(
+            _OverLimitRepo(),
+            per_minute=0,
+            per_day=0,
+            images_per_day=0,
+            enabled=True,
+        )
+        app.dependency_overrides[get_rate_limit_service] = lambda: service
+
+        response = client_with_fake_graph.post(CHAT_URL, json={"message": "hola"})
+
+        assert response.status_code == 429
+        body = response.json()
+        assert body["error"] == "RATE_LIMIT_EXCEEDED"
+        assert "demasiados mensajes" in body["message"]
+        assert response.headers["Retry-After"]  # tells the client when to retry
+
+    def test_within_limit_still_returns_200(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        # A permissive service (high thresholds) lets a normal turn through.
+        service: RateLimitServiceABC = RateLimitService(
+            _OverLimitRepo(),
+            per_minute=10_000,
+            per_day=10_000,
+            images_per_day=10_000,
+            enabled=True,
+        )
+        app.dependency_overrides[get_rate_limit_service] = lambda: service
+
+        response = client_with_fake_graph.post(CHAT_URL, json={"message": "hola"})
+
+        assert response.status_code == 200
+        assert response.json()["response"] == FINAL_TEXT

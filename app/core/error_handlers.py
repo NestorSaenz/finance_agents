@@ -69,9 +69,15 @@ def register_exception_handlers(app: FastAPI) -> None:
             path=str(request.url),
             status_code=status_code,
         )
+        # Rate-limit responses carry Retry-After so clients know when to retry.
+        headers: dict[str, str] = {}
+        retry_after = exc.details.get("retry_after")
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
         return JSONResponse(
             status_code=status_code,
             content=exc.to_dict(),
+            headers=headers,
         )
 
     @app.exception_handler(LLMRateLimitError)
@@ -196,6 +202,10 @@ def _get_status_code_for_application_error(exc: ApplicationError) -> int:
     # Unauthorized/Forbidden errors
     if exc.code == "UNAUTHORIZED_ACCESS":
         return status.HTTP_403_FORBIDDEN
+
+    # Rate limiting
+    if exc.code == "RATE_LIMIT_EXCEEDED":
+        return status.HTTP_429_TOO_MANY_REQUESTS
 
     # Default to 400 Bad Request
     return status.HTTP_400_BAD_REQUEST

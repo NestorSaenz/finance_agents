@@ -351,6 +351,24 @@ class RegistrationError(DomainError):
 
 
 # =============================================================================
+# Application Errors - Rate Limiting
+# =============================================================================
+
+
+class RateLimitExceededError(ApplicationError):
+    """Raised when a user exceeds their allowed chat rate for a bucket."""
+
+    def __init__(self, bucket: str, limit: int, retry_after: int) -> None:
+        super().__init__(
+            message=(
+                "Has enviado demasiados mensajes; espera un momento y vuelve a intentarlo."
+            ),
+            code="RATE_LIMIT_EXCEEDED",
+            details={"bucket": bucket, "limit": limit, "retry_after": retry_after},
+        )
+
+
+# =============================================================================
 # Infrastructure Errors - LLM
 # =============================================================================
 
@@ -497,6 +515,8 @@ __all__ = [
     "UserNotFoundError",
     "UserProfileIncompleteError",
     "UnauthorizedAccessError",
+    # Rate Limiting
+    "RateLimitExceededError",
     # LLM
     "LLMError",
     "LLMRateLimitError",

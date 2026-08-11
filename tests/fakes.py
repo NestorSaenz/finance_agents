@@ -11,6 +11,7 @@ from typing import Any
 
 from app.shared.interfaces.database import QueryConfig, QueryResult
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, LLMResponse, Message
+from app.src.ratelimit.interfaces import RateLimitServiceABC
 
 
 class FakeLLM(LLMInterface):
@@ -84,6 +85,19 @@ class FakeToolkit:
 
     async def dispatch(self, name: str, arguments: dict[str, Any], user_id: str) -> str:
         return "ok"
+
+
+class FakeRateLimitService(RateLimitServiceABC):
+    """Permissive rate-limit stub: records calls and never limits.
+
+    Lets chat tests that aren't about rate limiting run without a live DB.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, bool]] = []
+
+    async def check_chat(self, user_id: str, *, has_image: bool) -> None:
+        self.calls.append((user_id, has_image))
 
 
 class FakeDatabase:

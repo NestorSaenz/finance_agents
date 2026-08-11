@@ -83,6 +83,19 @@ describe("ChatView", () => {
     expect(await screen.findByText(/tuve un problema/i)).toBeInTheDocument();
   });
 
+  it("shows the backend rate-limit message as a normal reply on 429", async () => {
+    const limitMessage =
+      "Has enviado demasiados mensajes; espera un momento y vuelve a intentarlo.";
+    chatMock.mockRejectedValue(new ApiError(429, limitMessage));
+    render(<ChatView />);
+
+    await sendMessage("hola");
+
+    // The friendly notice shows, not the generic error bubble.
+    expect(await screen.findByText(limitMessage)).toBeInTheDocument();
+    expect(screen.queryByText(/tuve un problema/i)).not.toBeInTheDocument();
+  });
+
   it("logs out and redirects on 401", async () => {
     chatMock.mockRejectedValue(new ApiError(401, "expired"));
     render(<ChatView />);
