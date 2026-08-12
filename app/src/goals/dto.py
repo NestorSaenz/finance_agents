@@ -131,6 +131,8 @@ class GoalListResponse(BaseModel):
     page_size: int = Field(..., ge=1, le=MAX_PAGE_SIZE)
     total_contributed: Decimal = Field(
         default=Decimal("0"),
-        ge=0,
-        description="Total contributed to goals within the requested period (0 when no period).",
+        description=(
+            "Net contributed to goals within the requested period (0 when no period). "
+            "Can be NEGATIVE when withdrawals outweigh contributions in the period."
+        ),
     )

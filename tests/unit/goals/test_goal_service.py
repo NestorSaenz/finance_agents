@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from app.core.exceptions import GoalNotFoundError
+from app.core.exceptions import (
+    GoalNotFoundError,
+    GoalWithdrawalExceedsBalanceError,
+    InvalidAmountError,
+)
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
 from app.src.goals.interfaces import (
     GoalContributionRepositoryABC,
@@ -198,6 +202,83 @@ class TestContribute:
         await service.contribute("goal-1", "u1", Decimal("100"))
 
         assert len(contribs.created) == 1  # contribution recorded, not rejected
+
+
+class TestWithdrawFromGoal:
+    async def test_reduces_current_amount_and_writes_negative_contribution(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
+
+        result = await service.withdraw_from_goal(
+            "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
+        )
+
+        # A withdrawal is recorded as a NEGATIVE dated contribution.
+        assert contribs.created == [("goal-1", "u1", Decimal("-10000"), date(2026, 6, 15))]
+        assert repo.updated_data["current_amount"] == "15000"  # 25000 - 10000
+        assert result.current_amount == Decimal("15000")
+
+    async def test_exceeding_balance_raises(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        contribs = FakeGoalContributionRepository()
+        service = _service(repo, contribs)
+
+        with pytest.raises(GoalWithdrawalExceedsBalanceError) as exc:
+            await service.withdraw_from_goal(
+                "goal-1", "u1", Decimal("30000"), date(2026, 6, 15)
+            )
+
+        assert exc.value.available == Decimal("25000")
+        assert contribs.created == []  # nothing recorded
+        assert repo.updated_data == {}  # goal untouched
+
+    async def test_moves_completed_goal_back_to_active(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(
+                status=GoalStatus.COMPLETED,
+                current=Decimal("100000"),
+                target=Decimal("100000"),
+            )
+        )
+        service = _service(repo)
+
+        await service.withdraw_from_goal(
+            "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
+        )
+
+        assert repo.updated_data["current_amount"] == "90000"
+        assert repo.updated_data["status"] == "active"  # 90k < 100k -> reopened
+
+    async def test_preserves_paused_status(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(
+                status=GoalStatus.PAUSED, current=Decimal("50000"), target=Decimal("100000")
+            )
+        )
+        service = _service(repo)
+
+        await service.withdraw_from_goal(
+            "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
+        )
+
+        assert "status" not in repo.updated_data  # paused kept, not re-derived
+
+    async def test_rejects_non_positive_amount(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
+        service = _service(repo)
+
+        with pytest.raises(InvalidAmountError):
+            await service.withdraw_from_goal(
+                "goal-1", "u1", Decimal("0"), date(2026, 6, 15)
+            )
+
+    async def test_raises_when_goal_missing(self) -> None:
+        service = _service(FakeGoalRepository(goal=None))
+        with pytest.raises(GoalNotFoundError):
+            await service.withdraw_from_goal(
+                "missing", "u1", Decimal("5000"), date(2026, 6, 15)
+            )
 
 
 class TestUpdateGoal:

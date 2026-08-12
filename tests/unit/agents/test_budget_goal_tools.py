@@ -8,6 +8,7 @@ import pytest
 from app.agents.tools.budget_tools import BudgetToolkit
 from app.agents.tools.composite_toolkit import CompositeToolkit
 from app.agents.tools.goal_tools import GoalToolkit
+from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.shared.types import (
     BudgetPeriod,
     CategoryType,
@@ -120,14 +121,18 @@ class FakeGoalService(GoalServiceABC):
         contributions_for_goal: list[GoalContribution] | None = None,
         removed_result: Goal | None = None,
         remove_returns_none: bool = False,
+        withdraw_exceeds_balance: Decimal | None = None,
     ) -> None:
         self.created: list[tuple[GoalCreate, str]] = []
         self.contributions: list[tuple[str, str, Decimal, date | None]] = []
+        self.withdrawals: list[tuple[str, str, Decimal, date]] = []
         self.deleted: list[tuple[str, str]] = []
         self.removed: list[tuple[str, str, Decimal, date | None]] = []
         # Controls what ``remove_contribution`` returns (None = "no match").
         self._removed_result = removed_result
         self._remove_returns_none = remove_returns_none
+        # When set, ``withdraw_from_goal`` raises with this available balance.
+        self._withdraw_exceeds_balance = withdraw_exceeds_balance
         self._goals = goals if goals is not None else [_goal()]
         # Rows returned by ``list_contributions`` for the single-goal query.
         self._contributions_for_goal = contributions_for_goal or []
@@ -150,6 +155,21 @@ class FakeGoalService(GoalServiceABC):
     ) -> Goal:
         self.contributions.append((goal_id, user_id, amount, contribution_date))
         return _goal(id=goal_id, current_amount=Decimal("25000") + amount)
+
+    async def withdraw_from_goal(
+        self,
+        goal_id: str,
+        user_id: str,
+        amount: Decimal,
+        withdrawal_date: date,
+    ) -> Goal:
+        if self._withdraw_exceeds_balance is not None:
+            base = self._goals[0]
+            raise GoalWithdrawalExceedsBalanceError(
+                base.name, self._withdraw_exceeds_balance
+            )
+        self.withdrawals.append((goal_id, user_id, amount, withdrawal_date))
+        return _goal(id=goal_id, current_amount=Decimal("25000") - amount)
 
     async def contributed_in_period(
         self, user_id: str, period_start: date, period_end: date
@@ -452,6 +472,51 @@ class TestGoalToolkit:
             "remove_goal_contribution", {"goal_name": "Moto", "amount": 100}, "u1"
         )
         assert not service.removed  # never reached the service
+        assert "no encontré" in result.lower()
+
+    async def test_withdraw_resolves_goal_and_returns_to_disponible(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        result = await GoalToolkit(service).dispatch(
+            "withdraw_from_goal",
+            {"goal_name": "Fondo de emergencia", "amount": 5000},
+            "u1",
+        )
+        goal_id, user_id, amount, when = service.withdrawals[0]
+        assert goal_id == "g9" and user_id == "u1" and amount == Decimal("5000")
+        assert when == datetime.now(UTC).date()  # defaults to today
+        assert "🏦" in result and "20000" in result  # 25000 - 5000
+        assert "disponible" in result.lower()
+
+    async def test_withdraw_honors_stated_date(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        await GoalToolkit(service).dispatch(
+            "withdraw_from_goal",
+            {"goal_name": "Fondo de emergencia", "amount": 3000, "date": "2026-06-15"},
+            "u1",
+        )
+        _goal_id, _user, amount, when = service.withdrawals[0]
+        assert amount == Decimal("3000")
+        assert when == date(2026, 6, 15)
+
+    async def test_withdraw_exceeding_balance_reports_available(self) -> None:
+        service = FakeGoalService(
+            goals=[_goal(id="g9", name="Fondo de emergencia", current_amount=Decimal("25000"))],
+            withdraw_exceeds_balance=Decimal("25000"),
+        )
+        result = await GoalToolkit(service).dispatch(
+            "withdraw_from_goal",
+            {"goal_name": "Fondo de emergencia", "amount": 100000},
+            "u1",
+        )
+        assert not service.withdrawals  # nothing recorded
+        assert "25000" in result and "no puedes retirar" in result.lower()
+
+    async def test_withdraw_unknown_goal_returns_message(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "withdraw_from_goal", {"goal_name": "Moto", "amount": 100}, "u1"
+        )
+        assert not service.withdrawals  # never reached the service
         assert "no encontré" in result.lower()
 
     async def test_update_goal_changes_target(self) -> None:

@@ -3,7 +3,11 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from app.core.exceptions import GoalNotFoundError
+from app.core.exceptions import (
+    GoalNotFoundError,
+    GoalWithdrawalExceedsBalanceError,
+    InvalidAmountError,
+)
 from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
 from app.shared.types import GoalId, GoalStatus, UserId
@@ -88,6 +92,39 @@ class GoalService(GoalServiceABC):
             data["status"] = GoalStatus.COMPLETED.value
             logger.info("Goal reached", goal_id=goal_id)
 
+        return await self._repository.update(goal_id, user_id, data)
+
+    async def withdraw_from_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        withdrawal_date: date,
+    ) -> Goal:
+        if amount <= 0:
+            raise InvalidAmountError(
+                float(amount), "Withdrawal amount must be positive"
+            )
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        if amount > goal.current_amount:
+            raise GoalWithdrawalExceedsBalanceError(goal.name, goal.current_amount)
+
+        # A withdrawal is a NEGATIVE contribution: it rewinds progress (mirroring
+        # ``contribute``, which writes a positive one) and, since aportes are
+        # netted out of disponible, the money returns there — no income/expense.
+        await self._contributions.create(goal_id, user_id, -amount, withdrawal_date)
+
+        # Roll back the cached running total and re-derive completion, mirroring
+        # ``update_goal``: only ACTIVE/COMPLETED is derived; paused/cancelled stay.
+        # ``new_amount`` can't go below 0 given the balance check above.
+        new_amount = goal.current_amount - amount
+        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
+        if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
+            reached = new_amount >= goal.target_amount
+            data["status"] = (
+                GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE
+            ).value
+        logger.info("Goal withdrawal", goal_id=goal_id, user_id=user_id)
         return await self._repository.update(goal_id, user_id, data)
 
     async def contributed_in_period(

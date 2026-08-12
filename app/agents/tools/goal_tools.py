@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.core.logging import get_logger
 from app.shared.types import GoalType, UserId
 from app.src.goals.interfaces import GoalServiceABC
@@ -24,6 +25,7 @@ logger = get_logger(__name__)
 CREATE_GOAL_TOOL = "create_goal"
 QUERY_GOALS_TOOL = "query_goals"
 CONTRIBUTE_GOAL_TOOL = "contribute_to_goal"
+WITHDRAW_GOAL_TOOL = "withdraw_from_goal"
 REMOVE_CONTRIBUTION_TOOL = "remove_goal_contribution"
 UPDATE_GOAL_TOOL = "update_goal"
 DELETE_GOAL_TOOL = "delete_goal"
@@ -112,6 +114,41 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "description": (
                             "Fecha del abono YYYY-MM-DD si el usuario la indica "
                             "(p. ej. 'en junio aporté X'); por defecto, hoy."
+                        ),
+                    },
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": WITHDRAW_GOAL_TOOL,
+            "description": (
+                "Retira/saca dinero de una meta existente (identificada por su "
+                "nombre): reduce lo ahorrado y ese dinero VUELVE al disponible del "
+                "usuario. Úsala cuando el usuario dice 'retira/saca $X del fondo Y'. "
+                "NO es un ingreso: nunca registres un ingreso por un retiro. Distíntela "
+                "de remove_goal_contribution, que solo borra un aporte mal registrado."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre de la meta"},
+                    "amount": {"type": "number", "description": "Monto a retirar, mayor a 0"},
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha del retiro YYYY-MM-DD si el usuario la indica; "
+                            "por defecto, hoy."
                         ),
                     },
                     "goal_target_amount": {
@@ -242,6 +279,8 @@ class GoalToolkit:
             return await self._query(arguments, user_id)
         if name == CONTRIBUTE_GOAL_TOOL:
             return await self._contribute(arguments, user_id)
+        if name == WITHDRAW_GOAL_TOOL:
+            return await self._withdraw(arguments, user_id)
         if name == REMOVE_CONTRIBUTION_TOOL:
             return await self._remove_contribution(arguments, user_id)
         if name == UPDATE_GOAL_TOOL:
@@ -330,6 +369,41 @@ class GoalToolkit:
         return (
             f"✅ Aboné ${amount} a '{updated.name}'{when}. "
             f"Llevas ${updated.current_amount} de ${updated.target_amount}.{done}"
+        )
+
+    async def _withdraw(self, args: dict[str, Any], user_id: UserId) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        try:
+            amount = _to_decimal(args.get("amount"))
+        except ValueError:
+            return "No pude registrar el retiro: el monto no es válido."
+        if amount <= 0:
+            return "El monto a retirar debe ser mayor a 0."
+
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "retirar")
+
+        # Honor the date the user stated; default to today.
+        today = datetime.now(UTC).date()
+        withdrawal_date = _opt_date(args.get("date")) or today
+        try:
+            updated = await self._service.withdraw_from_goal(
+                goal.id, user_id, amount, withdrawal_date
+            )
+        except GoalWithdrawalExceedsBalanceError as e:
+            return (
+                f"No puedes retirar ${amount} de '{goal.name}': solo tiene "
+                f"${e.available} ahorrados. Indica un monto igual o menor."
+            )
+        logger.info("Tool withdrew from goal", goal_id=goal.id, user_id=user_id)
+        return (
+            f"🏦 Retiré ${amount} de tu meta «{updated.name}». Ese dinero vuelve a "
+            f"tu disponible. Ahora llevas ${updated.current_amount} de "
+            f"${updated.target_amount}."
         )
 
     async def _remove_contribution(self, args: dict[str, Any], user_id: UserId) -> str:

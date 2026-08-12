@@ -82,6 +82,28 @@ describe("MovementsList", () => {
     expect(amount.className).toContain("text-negative");
   });
 
+  it("lists a negative goal contribution as a 'Retiro de <meta>' inflow", () => {
+    const withdrawal: GoalContributionsList = {
+      contributions: [
+        { goal_name: "Fondo de emergencia", amount: "-100000", contribution_date: "2026-06-08" },
+      ],
+      total: "-100000",
+    };
+    render(
+      <MovementsList
+        transactions={[tx()]}
+        cards={null}
+        payments={null}
+        contributions={withdrawal}
+      />,
+    );
+    // A withdrawal returns money to disponible → shown as a positive inflow.
+    expect(screen.getByText("Retiro de Fondo de emergencia")).toBeInTheDocument();
+    const amount = screen.getByText(/100,000/);
+    expect(amount.className).toContain("text-positive");
+    expect(amount.textContent).toContain("+");
+  });
+
   it("keeps goal contributions under the Efectivo filter", async () => {
     render(
       <MovementsList

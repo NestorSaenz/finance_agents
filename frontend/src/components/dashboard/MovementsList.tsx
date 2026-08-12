@@ -45,9 +45,12 @@ function matchesFilter(m: Movement, filter: MovementFilter): boolean {
   return m.kind === "tx" && m.tx.card_id === filter;
 }
 
-/** Amount that left the pocket for this movement (0 for income). */
+/** Amount that left the pocket for this movement (0 for income and for goal
+ *  withdrawals, which are money coming back — a negative contribution amount). */
 function outflow(m: Movement): number {
-  if (m.kind === "payment" || m.kind === "contribution") return Number(m.amount);
+  if (m.kind === "payment") return Number(m.amount);
+  // A positive contribution (aporte) is an outflow; a negative one (retiro) is not.
+  if (m.kind === "contribution") return Math.max(0, Number(m.amount));
   return m.tx.transaction_type === "expense" ? Number(m.tx.amount) : 0;
 }
 
@@ -201,7 +204,7 @@ export function MovementsList({
           {visible.map((m) => {
             if (m.kind === "payment") {
               return (
-                <OutflowRow
+                <SummaryRow
                   key={m.id}
                   title={`Pago a ${m.cardName}`}
                   meta={`Pago de tarjeta · ${formatDayMonth(m.date)}`}
@@ -212,8 +215,24 @@ export function MovementsList({
               );
             }
             if (m.kind === "contribution") {
+              // A negative contribution is a WITHDRAWAL: money leaves the goal and
+              // returns to disponible, so it reads as an inflow (+), not an aporte.
+              const value = Number(m.amount);
+              if (value < 0) {
+                return (
+                  <SummaryRow
+                    key={m.id}
+                    title={`Retiro de ${m.goalName}`}
+                    meta={`Retiro de meta · ${formatDayMonth(m.date)}`}
+                    pillIcon="🎯"
+                    pillLabel="Meta"
+                    amount={Math.abs(value)}
+                    isInflow
+                  />
+                );
+              }
               return (
-                <OutflowRow
+                <SummaryRow
                   key={m.id}
                   title={`Aporte a ${m.goalName}`}
                   meta={`Aporte a meta · ${formatDayMonth(m.date)}`}
@@ -231,20 +250,24 @@ export function MovementsList({
   );
 }
 
-/** A cash-outflow row shared by card payments and goal contributions: a title,
- *  a meta line with a distinct pill, and the amount shown as a negative outflow. */
-function OutflowRow({
+/** A summary row shared by card payments and goal contributions/withdrawals: a
+ *  title, a meta line with a distinct pill, and the amount. Outflows (payments,
+ *  aportes) show as a negative amount; an inflow (a goal withdrawal, money back to
+ *  disponible) shows as a positive amount in the positive tone. */
+function SummaryRow({
   title,
   meta,
   pillIcon,
   pillLabel,
   amount,
+  isInflow = false,
 }: {
   title: string;
   meta: string;
   pillIcon: string;
   pillLabel: string;
-  amount: string;
+  amount: string | number;
+  isInflow?: boolean;
 }) {
   return (
     <li className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3">
@@ -257,8 +280,13 @@ function OutflowRow({
           </span>
         </p>
       </div>
-      <p className="shrink-0 text-sm font-semibold tabular-nums text-negative">
-        −{formatMoney(amount)}
+      <p
+        className={`shrink-0 text-sm font-semibold tabular-nums ${
+          isInflow ? "text-positive" : "text-negative"
+        }`}
+      >
+        {isInflow ? "+" : "−"}
+        {formatMoney(amount)}
       </p>
     </li>
   );

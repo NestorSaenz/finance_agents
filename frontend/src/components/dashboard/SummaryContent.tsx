@@ -97,7 +97,7 @@ export function SummaryContent({
   const goalContribs = goalContributions;
   const cashAvailable = income - cashExpenses - cardPayments - goalContribs;
   const hasCashFlow =
-    income > 0 || cashExpenses > 0 || cardPayments > 0 || goalContribs > 0;
+    income > 0 || cashExpenses > 0 || cardPayments > 0 || goalContribs !== 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -136,8 +136,17 @@ export function SummaryContent({
               <dd className="tabular-nums text-negative">−{formatMoney(cardPayments)}</dd>
             </div>
             <div className="flex items-center justify-between">
-              <dt className="text-muted">Aportes a metas</dt>
-              <dd className="tabular-nums text-negative">−{formatMoney(goalContribs)}</dd>
+              {/* Net contributions: positive = money into goals (outflow); negative
+                  = net withdrawals returning to your pocket (inflow). */}
+              <dt className="text-muted">
+                {goalContribs >= 0 ? "Aportes a metas" : "Retiros de metas"}
+              </dt>
+              <dd
+                className={`tabular-nums ${goalContribs >= 0 ? "text-negative" : "text-positive"}`}
+              >
+                {goalContribs >= 0 ? "−" : "+"}
+                {formatMoney(Math.abs(goalContribs))}
+              </dd>
             </div>
             <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
               <dt className="font-medium text-ink">Disponible real</dt>

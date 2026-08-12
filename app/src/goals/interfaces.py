@@ -135,6 +135,24 @@ class GoalServiceABC(ABC):
         """
 
     @abstractmethod
+    async def withdraw_from_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        withdrawal_date: date,
+    ) -> Goal:
+        """Withdraw ``amount`` from a goal, returning the money to disponible.
+
+        A withdrawal is recorded as a NEGATIVE dated contribution: it reduces the
+        goal's ``current_amount`` and, since aportes are netted out of disponible,
+        the money returns there. It is neither an income nor an expense.
+
+        Raises ``GoalNotFoundError`` if the goal is missing and
+        ``GoalWithdrawalExceedsBalanceError`` when ``amount`` exceeds the balance.
+        """
+
+    @abstractmethod
     async def contributed_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:

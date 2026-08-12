@@ -72,6 +72,17 @@ class StubGoalService(GoalServiceABC):
     ) -> Goal:
         return _goal(status=GoalStatus.COMPLETED)
 
+    async def withdraw_from_goal(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        withdrawal_date: date,
+    ) -> Goal:
+        if not self.found:
+            raise GoalNotFoundError(goal_id)
+        return _goal()
+
     async def contributed_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:

@@ -15,6 +15,7 @@ Usage:
     raise TransactionNotFoundError(transaction_id="abc-123")
 """
 
+from decimal import Decimal
 from typing import Any
 
 # =============================================================================
@@ -203,6 +204,25 @@ class GoalNotFoundError(ApplicationError):
             message=f"Goal not found: {goal_id}",
             code="GOAL_NOT_FOUND",
             details={"goal_id": goal_id},
+        )
+
+
+class GoalWithdrawalExceedsBalanceError(DomainError):
+    """Raised when a withdrawal is larger than the goal's saved balance.
+
+    You cannot take out more than the goal currently holds. ``available`` carries
+    the goal's current balance so callers can report it to the user.
+    """
+
+    def __init__(self, goal_name: str, available: Decimal) -> None:
+        self.available = available
+        super().__init__(
+            message=(
+                f"No puedes retirar más de lo que tiene la meta '{goal_name}': "
+                f"disponible ${available}."
+            ),
+            code="GOAL_WITHDRAWAL_EXCEEDS_BALANCE",
+            details={"goal_name": goal_name, "available": str(available)},
         )
 
 
@@ -519,6 +539,7 @@ __all__ = [
     "InvalidGoalTargetError",
     "GoalAlreadyCompletedError",
     "GoalNotFoundError",
+    "GoalWithdrawalExceedsBalanceError",
     # Recurring
     "RecurringNotFoundError",
     # Category
