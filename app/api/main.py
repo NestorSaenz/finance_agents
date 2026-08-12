@@ -10,6 +10,7 @@ from app.api.routes import (
     chat,
     goals,
     health,
+    recurring,
     transactions,
     users,
 )
@@ -26,3 +27,4 @@ api_router.include_router(goals.router, prefix="/goals", tags=["Goals"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(cards.router, prefix="/cards", tags=["Cards"])
 api_router.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
+api_router.include_router(recurring.router, prefix="/recurring", tags=["Recurring"])

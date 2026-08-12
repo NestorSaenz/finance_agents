@@ -62,6 +62,36 @@ class TestCreate:
         assert "TRANSACTION_INSERT_FAILED" in str(exc_info.value.__dict__.get("code", ""))
 
 
+class TestCreateOccurrence:
+    def _occurrence(self) -> TransactionCreate:
+        return _new_transaction(category=CategoryType.SUSCRIPCIONES).model_copy(
+            update={"recurring_id": "rec-1", "occurrence_date": date(2026, 6, 15)}
+        )
+
+    async def test_writes_recurring_provenance_via_ignore_insert(self) -> None:
+        db = FakeDatabase()
+        repo = TransactionRepository(db)
+
+        created = await repo.create_occurrence(self._occurrence(), user_id="u1")
+
+        assert created is not None
+        row = db.ignore_inserted[0]
+        assert row["recurring_id"] == "rec-1"
+        assert row["occurrence_date"] == "2026-06-15"
+        assert db.inserted == []  # went through the idempotent path, not plain insert
+
+    async def test_same_occurrence_twice_creates_one(self) -> None:
+        db = FakeDatabase()
+        repo = TransactionRepository(db)
+
+        first = await repo.create_occurrence(self._occurrence(), user_id="u1")
+        second = await repo.create_occurrence(self._occurrence(), user_id="u1")
+
+        assert first is not None  # first insert wins
+        assert second is None  # duplicate (rec-1, 2026-06-15) is ignored
+        assert len(db.ignore_inserted) == 1
+
+
 class TestGetById:
     async def test_returns_none_when_missing(self) -> None:
         repo = TransactionRepository(FakeDatabase(rows=[]))

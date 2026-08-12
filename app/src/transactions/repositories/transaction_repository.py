@@ -43,26 +43,9 @@ class TransactionRepository(TransactionRepositoryABC):
         self._db = db
 
     async def create(self, transaction: TransactionCreate, user_id: UserId) -> Transaction:
-        row = {
-            "user_id": user_id,
-            "amount": decimal_to_db(transaction.amount),  # str -> exact Postgres numeric.
-            "currency": transaction.currency.value,
-            "type": transaction.transaction_type.value,
-            "description": transaction.description,
-            "category": transaction.category or CategoryType.OTROS.value,
-            "payment_method": (
-                transaction.payment_method.value if transaction.payment_method else None
-            ),
-            "card_id": transaction.card_id,
-            "transaction_date": transaction.transaction_date.isoformat(),
-            # Defaults to the purchase date (cash/debit); credit sets its payment date.
-            "budget_date": (
-                transaction.budget_date or transaction.transaction_date
-            ).isoformat(),
-            "source": transaction.source,
-        }
-
-        result = await self._db.insert(TRANSACTIONS_TABLE, row)
+        result = await self._db.insert(
+            TRANSACTIONS_TABLE, _transaction_row(transaction, user_id)
+        )
         if not result.data:
             raise InfrastructureError(
                 "Transaction insert returned no rows",
@@ -71,6 +54,34 @@ class TransactionRepository(TransactionRepositoryABC):
 
         created = _row_to_transaction(result.data[0])
         logger.info("Transaction created", transaction_id=created.id, user_id=user_id)
+        return created
+
+    async def create_occurrence(
+        self, transaction: TransactionCreate, user_id: UserId
+    ) -> Transaction | None:
+        # Exactly-once insert: the unique index on (recurring_id, occurrence_date)
+        # rejects a second row for the same scheduled occurrence, so a retried or
+        # duplicated run is a silent no-op (empty result) rather than a double charge.
+        row = _transaction_row(transaction, user_id)
+        row["recurring_id"] = transaction.recurring_id
+        row["occurrence_date"] = (
+            transaction.occurrence_date.isoformat()
+            if transaction.occurrence_date is not None
+            else None
+        )
+        result = await self._db.insert_ignore_duplicates(
+            TRANSACTIONS_TABLE, row, on_conflict="recurring_id,occurrence_date"
+        )
+        if not result.data:
+            # Duplicate occurrence — already materialized on a prior run.
+            return None
+        created = _row_to_transaction(result.data[0])
+        logger.info(
+            "Recurring occurrence materialized",
+            transaction_id=created.id,
+            recurring_id=transaction.recurring_id,
+            user_id=user_id,
+        )
         return created
 
     async def get_by_id(
@@ -144,6 +155,28 @@ class TransactionRepository(TransactionRepositoryABC):
             TRANSACTIONS_TABLE, {"user_id": user_id, "category": category}
         )
         return result.count or 0
+
+
+def _transaction_row(transaction: TransactionCreate, user_id: UserId) -> dict[str, Any]:
+    """Serialize a ``TransactionCreate`` to a transactions-table row."""
+    return {
+        "user_id": user_id,
+        "amount": decimal_to_db(transaction.amount),  # str -> exact Postgres numeric.
+        "currency": transaction.currency.value,
+        "type": transaction.transaction_type.value,
+        "description": transaction.description,
+        "category": transaction.category or CategoryType.OTROS.value,
+        "payment_method": (
+            transaction.payment_method.value if transaction.payment_method else None
+        ),
+        "card_id": transaction.card_id,
+        "transaction_date": transaction.transaction_date.isoformat(),
+        # Defaults to the purchase date (cash/debit); credit sets its payment date.
+        "budget_date": (
+            transaction.budget_date or transaction.transaction_date
+        ).isoformat(),
+        "source": transaction.source,
+    }
 
 
 def _build_filters(

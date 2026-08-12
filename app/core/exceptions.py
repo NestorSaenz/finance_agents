@@ -207,6 +207,22 @@ class GoalNotFoundError(ApplicationError):
 
 
 # =============================================================================
+# Application Errors - Recurring
+# =============================================================================
+
+
+class RecurringNotFoundError(ApplicationError):
+    """Raised when a recurring transaction template is not found."""
+
+    def __init__(self, recurring_id: str) -> None:
+        super().__init__(
+            message=f"Recurring transaction not found: {recurring_id}",
+            code="RECURRING_NOT_FOUND",
+            details={"recurring_id": recurring_id},
+        )
+
+
+# =============================================================================
 # Domain Errors - Category
 # =============================================================================
 
@@ -503,6 +519,8 @@ __all__ = [
     "InvalidGoalTargetError",
     "GoalAlreadyCompletedError",
     "GoalNotFoundError",
+    # Recurring
+    "RecurringNotFoundError",
     # Category
     "InvalidCategoryError",
     "CategoryNotFoundError",

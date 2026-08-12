@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # How many recent conversation messages to feed the LLM as context.
     CHAT_HISTORY_LIMIT: int = 10
 
+    # Shared secret guarding POST /recurring/run (the daily materialization job).
+    # A Cloud Scheduler job must send it in the X-Recurring-Secret header. Empty
+    # (the default) fails the endpoint closed, so it can never run unprotected.
+    RECURRING_RUN_SECRET: str = ""
+
+    # IANA timezone in which recurring schedules are evaluated. Day-of-month
+    # charges must fire on the user's LOCAL calendar day, so "today" and the daily
+    # run date are computed in this zone (not UTC) — otherwise a LatAm "day 30"
+    # could fire a day early near midnight.
+    RECURRING_TIMEZONE: str = "America/Bogota"
+
     # ============================================
     # Rate Limiting (chat cost / abuse control)
     # ============================================

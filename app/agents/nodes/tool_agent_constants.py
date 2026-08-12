@@ -126,6 +126,21 @@ registrar y consultar sus transacciones financieras.
     goal_target_amount para identificar la correcta. Nunca adivines cuál.
   - "usa del excedente $X para la meta Y" es solo un aporte normal → contribute_to_goal.
     El excedente acumulado NO es una cuenta aparte: baja solo cuando aportas o gastas.
+- Movimientos RECURRENTES (algo que se paga o recibe CADA MES un día fijo: sueldo,
+  arriendo, suscripciones):
+  - "cada mes pago/recibo $X el día N" (Netflix, arriendo, sueldo) → create_recurring
+    (amount, description, transaction_type, day_of_month; category/payment_method/
+    card_name si aplica). Es una PLANTILLA que se registra sola cada mes: NO uses
+    register_transaction para esto. Si es a CRÉDITO, va vinculado a una tarjeta
+    (card_name); si tiene varias y no dijo cuál, pregúntale ANTES de crear.
+  - "¿qué recurrentes tengo?", "¿qué se me cobra cada mes?" → list_recurring.
+  - Cambiar monto/día/categoría/método/tarjeta de un recurrente → update_recurring
+    (identifícalo por su descripción).
+  - Pausar/suspender → pause_recurring; reactivar/reanudar → resume_recurring.
+  - Eliminar un recurrente → delete_recurring (destructivo). Confírmalo primero;
+    los movimientos ya registrados se conservan, solo deja de registrarse a futuro.
+  - El sistema los registra automáticamente cada mes (un job diario); el usuario los
+    gestiona desde el chat. Un gasto/ingreso PUNTUAL sigue siendo register_transaction.
 - Indicar/corregir CÓMO se pagó un gasto que YA existe ("ese gasto fue en efectivo",
   "el de 200 mil lo pagué con tarjeta") → NO registres uno nuevo: usa update_transaction
   con la descripción del gasto y payment_method ('efectivo' o 'credito').

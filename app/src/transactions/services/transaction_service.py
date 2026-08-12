@@ -55,6 +55,17 @@ class TransactionService(TransactionServiceABC):
 
         return await self._repository.create(transaction, user_id)
 
+    async def categorize(self, description: str) -> Category:
+        return await self._categorizer.categorize(description)
+
+    async def materialize_occurrence(
+        self, transaction: TransactionCreate, user_id: UserId
+    ) -> Transaction | None:
+        # Category is used exactly as given (the recurring caller resolves it once
+        # per template); this path must never auto-categorize per occurrence, and
+        # the insert is idempotent on (recurring_id, occurrence_date).
+        return await self._repository.create_occurrence(transaction, user_id)
+
     async def create_installments(
         self, base: TransactionCreate, installments: int, user_id: UserId
     ) -> list[Transaction]:

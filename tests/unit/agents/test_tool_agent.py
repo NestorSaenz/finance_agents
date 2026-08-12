@@ -46,6 +46,14 @@ class FakeTxService(TransactionServiceABC):
             for _ in range(installments)
         ]
 
+    async def categorize(self, description: str) -> str:
+        return CategoryType.OTROS.value
+
+    async def materialize_occurrence(
+        self, transaction: TransactionCreate, user_id: str
+    ) -> Transaction | None:
+        return await self.create_transaction(transaction, user_id)
+
     async def get_transaction(self, transaction_id: str, user_id: str) -> Transaction:
         raise NotImplementedError
 

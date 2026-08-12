@@ -146,6 +146,31 @@ class DatabaseInterface(ABC):
         pass
 
     @abstractmethod
+    async def insert_ignore_duplicates(
+        self,
+        table: str,
+        row: dict[str, Any],
+        on_conflict: str,
+    ) -> QueryResult:
+        """Insert a row, silently skipping it if it conflicts on ``on_conflict``.
+
+        Unlike :meth:`upsert`, a conflicting row is NOT updated — it is ignored
+        (``ON CONFLICT DO NOTHING``). This provides exactly-once semantics: the
+        first insert of a ``(recurring_id, occurrence_date)`` pair persists; a
+        retry returns an EMPTY result (no rows) instead of a duplicate.
+
+        Args:
+            table: Table name.
+            row: The single row to insert.
+            on_conflict: Comma-separated columns defining the unique constraint.
+
+        Returns:
+            A :class:`QueryResult` whose ``data`` holds the inserted row, or is
+            empty when the row was a duplicate and thus ignored.
+        """
+        pass
+
+    @abstractmethod
     async def update(
         self,
         table: str,

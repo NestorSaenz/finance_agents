@@ -112,6 +112,11 @@ class FakeDatabase:
         self.inserted: list[dict[str, Any]] = []
         self.upserted: list[dict[str, Any]] = []
         self.upsert_calls: list[tuple[str, str]] = []
+        # Rows accepted by insert_ignore_duplicates, plus the conflict keys already
+        # seen (so a duplicate (on_conflict-key) tuple is ignored, modeling the DB
+        # unique index used for exactly-once materialization).
+        self.ignore_inserted: list[dict[str, Any]] = []
+        self._seen_conflict_keys: set[tuple[Any, ...]] = set()
         self.updated: list[tuple[dict[str, Any], dict[str, Any]]] = []
         self.deleted: list[dict[str, Any]] = []
         self.select_configs: list[QueryConfig | None] = []
@@ -155,6 +160,21 @@ class FakeDatabase:
         self.upserted.extend(records)
         return QueryResult(data=list(records), count=len(records))
 
+    async def insert_ignore_duplicates(
+        self, table: str, row: dict[str, Any], on_conflict: str
+    ) -> QueryResult:
+        # Model the DB unique index: a repeat of the same on_conflict-key tuple is
+        # ignored (empty result); a new key inserts and returns the row.
+        keys = tuple(row.get(column) for column in on_conflict.split(","))
+        if keys in self._seen_conflict_keys:
+            return QueryResult(data=[], count=0)
+        self._seen_conflict_keys.add(keys)
+        record = dict(row)
+        record.setdefault("id", "tx-generated-id")
+        record.setdefault("created_at", "2024-12-20T10:00:00+00:00")
+        self.ignore_inserted.append(record)
+        return QueryResult(data=[record], count=1)
+
     async def execute_rpc(self, function_name: str, params: dict[str, Any]) -> QueryResult:
         self.rpc_calls.append((function_name, params))
         return QueryResult(data=list(self.rpc_result), count=len(self.rpc_result))
@@ -194,6 +214,30 @@ def make_goal_row(**overrides: Any) -> dict[str, Any]:
         "status": "active",
         "priority": 1,
         "created_at": "2024-12-01T08:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+def make_recurring_row(**overrides: Any) -> dict[str, Any]:
+    """Build a realistic recurring_transactions table row, overridable per field."""
+    row = {
+        "id": "rec-1",
+        "user_id": "u1",
+        # Postgres numeric arrives as a string; keep it a Decimal-string so the
+        # repository's parse_decimal path is exercised (not a lossy float).
+        "amount": "50000.00",
+        "description": "Netflix",
+        "type": "expense",
+        "category": "suscripciones",
+        "payment_method": None,
+        "card_id": None,
+        "frequency": "monthly",
+        "day_of_month": 5,
+        "next_run_date": "2026-06-05",
+        "last_run_date": None,
+        "active": True,
+        "created_at": "2026-01-01T08:00:00+00:00",
     }
     row.update(overrides)
     return row

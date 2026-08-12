@@ -57,6 +57,11 @@ class FakeRepository(TransactionRepositoryABC):
             created_at=datetime.now(UTC),
         )
 
+    async def create_occurrence(
+        self, transaction: TransactionCreate, user_id: str
+    ) -> Transaction | None:
+        return await self.create(transaction, user_id)
+
     async def get_by_id(self, transaction_id: str, user_id: str) -> Transaction | None:
         return self.stored
 

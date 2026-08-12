@@ -134,6 +134,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.agents.tools.category_tools import CategoryToolkit
     from app.agents.tools.composite_toolkit import CompositeToolkit
     from app.agents.tools.goal_tools import GoalToolkit
+    from app.agents.tools.recurring_tools import RecurringToolkit
     from app.agents.tools.transaction_tools import TransactionToolkit
     from app.shared.dependencies import (
         get_database,
@@ -155,6 +156,8 @@ def get_compiled_graph() -> "CompiledStateGraph":
     )
     from app.src.goals.repositories.goal_repository import GoalRepository
     from app.src.goals.services.goal_service import GoalService
+    from app.src.recurring.repositories.recurring_repository import RecurringRepository
+    from app.src.recurring.services.recurring_service import RecurringService
     from app.src.transactions.repositories.transaction_repository import TransactionRepository
     from app.src.transactions.services.semantic_categorizer import SemanticTransactionCategorizer
     from app.src.transactions.services.transaction_service import TransactionService
@@ -183,6 +186,9 @@ def get_compiled_graph() -> "CompiledStateGraph":
         card_service,
         UserProfileService(UserProfileRepository(db)),
     )
+    recurring_service = RecurringService(
+        RecurringRepository(db), transaction_service, card_service
+    )
     toolkit = CompositeToolkit(
         [
             TransactionToolkit(transaction_service, cards=card_service),
@@ -191,6 +197,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
             CardToolkit(card_service),
             AnalysisToolkit(analysis_service),
             CategoryToolkit(transaction_service, budget_service),
+            RecurringToolkit(recurring_service, cards=card_service),
         ]
     )
 

@@ -82,6 +82,15 @@ class FakeTransactionService(TransactionServiceABC):
         self.created.append((transaction, user_id))
         return _transaction(transaction.category or CategoryType.OTROS)
 
+    async def categorize(self, description: str) -> str:
+        return CategoryType.OTROS.value
+
+    async def materialize_occurrence(
+        self, transaction: TransactionCreate, user_id: str
+    ) -> Transaction | None:
+        self.created.append((transaction, user_id))
+        return _transaction(transaction.category or CategoryType.OTROS)
+
     async def create_installments(
         self, base: TransactionCreate, installments: int, user_id: str
     ) -> list[Transaction]:

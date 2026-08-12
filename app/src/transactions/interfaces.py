@@ -32,6 +32,18 @@ class TransactionRepositoryABC(ABC):
         """Persist a new transaction and return it."""
 
     @abstractmethod
+    async def create_occurrence(
+        self, transaction: TransactionCreate, user_id: UserId
+    ) -> Transaction | None:
+        """Idempotently persist a materialized recurring occurrence.
+
+        Writes the row INCLUDING ``recurring_id``/``occurrence_date`` via an
+        ignore-on-conflict insert keyed on ``(recurring_id, occurrence_date)``.
+        Returns the created ``Transaction``, or ``None`` when that pair already
+        existed (the insert was ignored) — the caller treats both as success.
+        """
+
+    @abstractmethod
     async def get_by_id(
         self, transaction_id: TransactionId, user_id: UserId
     ) -> Transaction | None:
@@ -88,6 +100,27 @@ class TransactionServiceABC(ABC):
         self, transaction: TransactionCreate, user_id: UserId
     ) -> Transaction:
         """Create a transaction, auto-categorizing it when no category is given."""
+
+    @abstractmethod
+    async def categorize(self, description: str) -> Category:
+        """Return the most likely category for ``description`` (single call).
+
+        Exposed so callers that materialize many rows from one template can
+        categorize ONCE and reuse the result, instead of paying the categorizer
+        per row.
+        """
+
+    @abstractmethod
+    async def materialize_occurrence(
+        self, transaction: TransactionCreate, user_id: UserId
+    ) -> Transaction | None:
+        """Idempotently create a materialized recurring occurrence.
+
+        Persists the transaction with its ``recurring_id``/``occurrence_date`` via
+        an exactly-once insert. The category is used AS GIVEN (never auto-derived
+        per occurrence — the caller resolves it once). Returns the created
+        ``Transaction`` or ``None`` when the occurrence already existed.
+        """
 
     @abstractmethod
     async def create_installments(

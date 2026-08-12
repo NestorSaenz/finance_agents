@@ -30,6 +30,11 @@ class TransactionCreate(BaseModel):
     card_id: str | None = None  # credit card this charge belongs to (if any)
     currency: CurrencyType = CurrencyType.MXN
     source: str = DEFAULT_SOURCE
+    # Provenance of a materialized recurring occurrence. Both stay None on the
+    # normal create path; set together they key the DB unique index that makes
+    # materialization exactly-once (see TransactionService.materialize_occurrence).
+    recurring_id: str | None = None
+    occurrence_date: date | None = None
 
 
 class Transaction(BaseModel):

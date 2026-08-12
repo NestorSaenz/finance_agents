@@ -161,6 +161,27 @@ class SupabaseClient(DatabaseInterface):
 
         return QueryResult(data=_rows(response.data), count=len(response.data))
 
+    async def insert_ignore_duplicates(
+        self,
+        table: str,
+        row: dict[str, Any],
+        on_conflict: str,
+    ) -> QueryResult:
+        """Insert a row, ignoring it on conflict (``ON CONFLICT DO NOTHING``).
+
+        Uses supabase-py's ``ignore_duplicates=True`` so a conflicting row is a
+        no-op: the returned ``data`` is empty when the row already existed.
+        """
+        logger.info(
+            "Inserting (ignore duplicates)", table=table, on_conflict=on_conflict
+        )
+
+        response = await self._client.table(table).upsert(
+            row, on_conflict=on_conflict, ignore_duplicates=True
+        ).execute()
+
+        return QueryResult(data=_rows(response.data), count=len(response.data))
+
     async def update(
         self,
         table: str,
