@@ -114,6 +114,48 @@ class TestList:
         assert body["recurring"][0]["active"] is True
 
 
+class TestCreate:
+    def test_create_valid_returns_row(self, client: TestClient) -> None:
+        response = client.post(
+            BASE_URL,
+            json={
+                "amount": "50000",
+                "description": "Netflix",
+                "transaction_type": "expense",
+                "day_of_month": 5,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["description"] == "Netflix"
+        assert body["amount"] == "50000"  # Decimal -> string
+        assert body["day_of_month"] == 5
+
+    def test_create_invalid_day_rejected(self, client: TestClient) -> None:
+        response = client.post(
+            BASE_URL,
+            json={
+                "amount": "50000",
+                "description": "Netflix",
+                "transaction_type": "expense",
+                "day_of_month": 32,
+            },
+        )
+        assert response.status_code == 422
+
+    def test_create_invalid_amount_rejected(self, client: TestClient) -> None:
+        response = client.post(
+            BASE_URL,
+            json={
+                "amount": "0",
+                "description": "Netflix",
+                "transaction_type": "expense",
+                "day_of_month": 5,
+            },
+        )
+        assert response.status_code == 422
+
+
 class TestRun:
     def test_run_with_correct_secret_runs(self, client: TestClient) -> None:
         response = client.post(

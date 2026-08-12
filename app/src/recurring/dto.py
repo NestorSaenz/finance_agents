@@ -3,11 +3,33 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.shared.types import PaymentMethod, TransactionType
+from app.shared.types import Category, PaymentMethod, TransactionType, normalize_category
 
 from .models import RecurringFrequency, RecurringTransaction
+
+
+class RecurringCreateRequest(BaseModel):
+    """Request body for creating a recurring template (onboarding form).
+
+    The form only creates cash/debit templates: ``payment_method`` defaults to
+    ``efectivo`` and there is no credit-card wiring here (``card_id`` stays unset).
+    """
+
+    amount: Decimal = Field(..., gt=0, examples=[50000])
+    description: str = Field(..., min_length=1, max_length=500, examples=["Sueldo"])
+    transaction_type: TransactionType
+    category: Category | None = Field(
+        default=None, description="Category (custom values accepted)"
+    )
+    payment_method: PaymentMethod = Field(default=PaymentMethod.EFECTIVO)
+    day_of_month: int = Field(..., ge=1, le=31, description="Day of month (1-31)")
+
+    @field_validator("category")
+    @classmethod
+    def _normalize_category(cls, value: str | None) -> str | None:
+        return normalize_category(value) if value else None
 
 
 class RecurringResponse(BaseModel):

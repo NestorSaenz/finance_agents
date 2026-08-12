@@ -16,10 +16,12 @@ from app.src.auth.dependencies import CurrentUserId
 from app.src.recurring.clock import recurring_today
 from app.src.recurring.dependencies import RecurringServiceDep
 from app.src.recurring.dto import (
+    RecurringCreateRequest,
     RecurringListResponse,
     RecurringResponse,
     RecurringRunResponse,
 )
+from app.src.recurring.models import RecurringCreate
 
 logger = get_logger(__name__)
 
@@ -46,6 +48,18 @@ async def verify_recurring_secret(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid or missing recurring run secret",
         )
+
+
+@router.post("", response_model=RecurringResponse)
+async def create_recurring(
+    request: RecurringCreateRequest,
+    service: RecurringServiceDep,
+    user_id: CurrentUserId,
+) -> RecurringResponse:
+    """Create a recurring template (used by the onboarding form)."""
+    rec = RecurringCreate(**request.model_dump())
+    created = await service.create_recurring(rec, user_id)
+    return RecurringResponse.from_domain(created)
 
 
 @router.get("", response_model=RecurringListResponse)

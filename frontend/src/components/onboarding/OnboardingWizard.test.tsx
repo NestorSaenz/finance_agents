@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OnboardingWizard } from "./OnboardingWizard";
 
-const { onboardingMock, budgetMock, cardMock } = vi.hoisted(() => ({
+const { onboardingMock, budgetMock, cardMock, recurringMock } = vi.hoisted(() => ({
   onboardingMock: vi.fn(),
   budgetMock: vi.fn(),
   cardMock: vi.fn(),
+  recurringMock: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -15,6 +16,7 @@ vi.mock("@/lib/api", () => ({
     completeOnboarding: (...args: unknown[]) => onboardingMock(...args),
     createBudget: (...args: unknown[]) => budgetMock(...args),
     createCard: (...args: unknown[]) => cardMock(...args),
+    createRecurring: (...args: unknown[]) => recurringMock(...args),
   },
 }));
 vi.mock("@/context/AuthContext", () => ({
@@ -25,6 +27,7 @@ beforeEach(() => {
   onboardingMock.mockReset().mockResolvedValue({});
   budgetMock.mockReset().mockResolvedValue({});
   cardMock.mockReset().mockResolvedValue({});
+  recurringMock.mockReset().mockResolvedValue({});
 });
 
 describe("OnboardingWizard", () => {
@@ -44,6 +47,7 @@ describe("OnboardingWizard", () => {
       "tok",
     );
     expect(budgetMock).not.toHaveBeenCalled();
+    expect(recurringMock).not.toHaveBeenCalled();
   });
 
   it("submits income and category caps on finish", async () => {
@@ -61,13 +65,15 @@ describe("OnboardingWizard", () => {
       screen.getByLabelText(/Tope mensual para Alimentación/i),
       "5000",
     );
-    // Step 2 -> step 3 (cards), then add a card and finish.
+    // Step 2 -> step 3 (cards): add a card and continue.
     await userEvent.click(screen.getByText("Continuar"));
     await userEvent.click(screen.getByText("Agregar tarjeta"));
     await userEvent.type(screen.getByLabelText(/Nombre de la tarjeta 1/i), "Visa BBVA");
     await userEvent.type(screen.getByLabelText(/Cupo de la tarjeta 1/i), "5000000");
     await userEvent.type(screen.getByLabelText(/Día de corte de la tarjeta 1/i), "15");
     await userEvent.type(screen.getByLabelText(/Día de pago de la tarjeta 1/i), "5");
+    // Step 3 -> step 4 (movimientos fijos), then finish without adding any.
+    await userEvent.click(screen.getByText("Continuar"));
     await userEvent.click(screen.getByText("Finalizar"));
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
@@ -87,5 +93,60 @@ describe("OnboardingWizard", () => {
       cutoff_day: 15,
       payment_day: 5,
     });
+    // No fixed movements were added on the last step.
+    expect(recurringMock).not.toHaveBeenCalled();
+  });
+
+  /** Advance from the welcome step to the fixed-movements step (step 4). */
+  async function goToRecurringStep() {
+    await userEvent.click(screen.getByText("Continuar")); // step 1 -> 2
+    await userEvent.click(screen.getByText("Continuar")); // step 2 -> 3
+    await userEvent.click(screen.getByText("Continuar")); // step 3 -> 4
+  }
+
+  it("creates a fixed movement on finish", async () => {
+    const onDone = vi.fn();
+    render(<OnboardingWizard onDone={onDone} />);
+
+    await goToRecurringStep();
+
+    await userEvent.click(screen.getByText("Agregar movimiento"));
+    await userEvent.type(
+      screen.getByLabelText(/Descripción del movimiento 1/i),
+      "Sueldo",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Ingreso" }));
+    await userEvent.type(screen.getByLabelText(/Monto del movimiento 1/i), "1000000");
+    await userEvent.type(screen.getByLabelText(/Día del mes del movimiento 1/i), "1");
+    await userEvent.click(screen.getByText("Finalizar"));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(recurringMock).toHaveBeenCalledTimes(1);
+    expect(recurringMock.mock.calls[0][0]).toEqual({
+      description: "Sueldo",
+      amount: 1000000,
+      transaction_type: "income",
+      day_of_month: 1,
+    });
+  });
+
+  it("does not create fixed movements when the last step is skipped", async () => {
+    const onDone = vi.fn();
+    render(<OnboardingWizard onDone={onDone} />);
+
+    await goToRecurringStep();
+
+    // Fill a row but click "Omitir" instead of "Finalizar".
+    await userEvent.click(screen.getByText("Agregar movimiento"));
+    await userEvent.type(
+      screen.getByLabelText(/Descripción del movimiento 1/i),
+      "Sueldo",
+    );
+    await userEvent.type(screen.getByLabelText(/Monto del movimiento 1/i), "1000000");
+    await userEvent.type(screen.getByLabelText(/Día del mes del movimiento 1/i), "1");
+    await userEvent.click(screen.getByText("Omitir"));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(recurringMock).not.toHaveBeenCalled();
   });
 });

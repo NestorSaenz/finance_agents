@@ -153,6 +153,31 @@ export interface TransactionList {
   page_size: number;
 }
 
+export interface Recurring {
+  id: string;
+  description: string;
+  amount: string;
+  transaction_type: "income" | "expense";
+  category: string | null;
+  payment_method: string | null;
+  day_of_month: number;
+  next_run_date: string;
+  active: boolean;
+}
+
+export interface RecurringList {
+  recurring: Recurring[];
+  total: number;
+}
+
+export interface RecurringCreatePayload {
+  description: string;
+  amount: number;
+  transaction_type: "income" | "expense";
+  day_of_month: number;
+  category?: string;
+}
+
 export interface UserProfile {
   display_name: string | null;
   monthly_income: string | null;

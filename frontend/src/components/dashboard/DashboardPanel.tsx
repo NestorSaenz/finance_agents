@@ -10,6 +10,7 @@ import type {
   CardPaymentsList,
   CreditCardStatusList,
   Goal,
+  Recurring,
   SpendingSummary,
   SummaryPeriod,
   Transaction,
@@ -67,6 +68,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [cards, setCards] = useState<CreditCardStatusList | null>(null);
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
   const [surplus, setSurplus] = useState(0);
+  const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +89,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         cardsData,
         paymentsData,
         surplusData,
+        recurringData,
       ] = await Promise.all([
         api.spendingSummary(period, token),
         api.transactions(period, token),
@@ -96,6 +99,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.cardsStatus(period, token),
         api.cardPayments(period, token),
         api.excedente(period, token),
+        // Recurrentes are the same regardless of the selected period.
+        api.recurring(token),
       ]);
       setSummary(summaryData);
       setMovements(movementsData.transactions);
@@ -106,6 +111,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setCards(cardsData);
       setPayments(paymentsData);
       setSurplus(Number(surplusData.accumulated_surplus ?? 0));
+      setRecurring(recurringData.recurring);
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -121,6 +127,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setCards(null);
       setPayments(null);
       setSurplus(0);
+      setRecurring([]);
     } finally {
       setLoading(false);
     }
@@ -264,6 +271,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               accumulatedSurplus={surplus}
               cards={cards}
               payments={payments}
+              recurring={recurring}
               period={period}
             />
           ) : null}

@@ -13,6 +13,8 @@ import type {
   GoalList,
   LoginPayload,
   OnboardingPayload,
+  RecurringCreatePayload,
+  RecurringList,
   SessionResponse,
   SignupPayload,
   SpendingSummary,
@@ -148,4 +150,13 @@ export const api = {
 
   createBudget: (payload: BudgetCreatePayload, token: string | null): Promise<unknown> =>
     request("/budgets", { method: "POST", body: payload, token }),
+
+  recurring: (token: string | null): Promise<RecurringList> =>
+    request("/recurring", { token }),
+
+  createRecurring: (
+    payload: RecurringCreatePayload,
+    token: string | null,
+  ): Promise<unknown> =>
+    request("/recurring", { method: "POST", body: payload, token }),
 };

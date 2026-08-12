@@ -9,6 +9,7 @@ import { Logo } from "@/components/ui/Logo";
 
 import { CardsStep, newCard, type CardDraft } from "./CardsStep";
 import { CategoryCapsStep } from "./CategoryCapsStep";
+import { RecurringStep, newRecurring, type RecurringDraft } from "./RecurringStep";
 import { WelcomeStep } from "./WelcomeStep";
 
 // The 18 real categories (they power auto-categorization). "otros" is excluded
@@ -54,7 +55,7 @@ interface OnboardingWizardProps {
 
 export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
   const { token } = useAuth();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = useState("");
   const [income, setIncome] = useState("");
   const [savings, setSavings] = useState("");
@@ -65,6 +66,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
   // User-defined categories added during onboarding (beyond the canonical set).
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [cards, setCards] = useState<CardDraft[]>([]);
+  const [recurring, setRecurring] = useState<RecurringDraft[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,6 +109,16 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
     setCards((prev) => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
   }
 
+  function updateRecurring(
+    index: number,
+    field: keyof Omit<RecurringDraft, "id">,
+    value: string,
+  ) {
+    setRecurring((prev) =>
+      prev.map((r, i) => (i === index ? { ...r, [field]: value } : r)),
+    );
+  }
+
   // Only cards with every field valid are created; the rest are ignored.
   const validCards = cards.filter(
     (c) =>
@@ -116,7 +128,12 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
       isValidDay(c.payment),
   );
 
-  async function finish(withData: boolean) {
+  // A fixed movement needs description + amount + day to be sent; the rest ignored.
+  const validRecurring = recurring.filter(
+    (r) => r.description.trim() !== "" && Number(r.amount) > 0 && isValidDay(r.day),
+  );
+
+  async function finish(withData: boolean, includeRecurring = false) {
     if (submitting) return;
     setSubmitting(true);
     setError(null);
@@ -165,6 +182,19 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
               token,
             ),
           ),
+          ...(includeRecurring
+            ? validRecurring.map((r) =>
+                api.createRecurring(
+                  {
+                    description: r.description.trim(),
+                    amount: Number(r.amount),
+                    transaction_type: r.transactionType,
+                    day_of_month: Number(r.day),
+                  },
+                  token,
+                ),
+              )
+            : []),
         ]);
       }
       onDone();
@@ -179,7 +209,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
       <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-xl sm:p-8">
         <div className="mb-6 flex items-center justify-between">
           <Logo />
-          <span className="text-xs font-medium text-muted">Paso {step} de 3</span>
+          <span className="text-xs font-medium text-muted">Paso {step} de 4</span>
         </div>
 
         {step === 1 ? (
@@ -213,16 +243,28 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
             onBack={() => setStep(1)}
             onContinue={() => setStep(3)}
           />
-        ) : (
+        ) : step === 3 ? (
           <CardsStep
             cards={cards}
-            submitting={submitting}
-            error={error}
             onUpdate={updateCard}
             onRemove={(index) => setCards((prev) => prev.filter((_, i) => i !== index))}
             onAdd={() => setCards((prev) => [...prev, newCard()])}
             onBack={() => setStep(2)}
-            onFinish={() => void finish(true)}
+            onContinue={() => setStep(4)}
+          />
+        ) : (
+          <RecurringStep
+            recurring={recurring}
+            submitting={submitting}
+            error={error}
+            onUpdate={updateRecurring}
+            onRemove={(index) =>
+              setRecurring((prev) => prev.filter((_, i) => i !== index))
+            }
+            onAdd={() => setRecurring((prev) => [...prev, newRecurring()])}
+            onBack={() => setStep(3)}
+            onSkip={() => void finish(true, false)}
+            onFinish={() => void finish(true, true)}
           />
         )}
       </div>

@@ -13,6 +13,7 @@ const {
   cardsMock,
   paymentsMock,
   excedenteMock,
+  recurringMock,
   ApiError,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -32,6 +33,7 @@ const {
     cardsMock: vi.fn(),
     paymentsMock: vi.fn(),
     excedenteMock: vi.fn(),
+    recurringMock: vi.fn(),
     ApiError: ApiErrorMock,
   };
 });
@@ -46,6 +48,7 @@ vi.mock("@/lib/api", () => ({
     cardsStatus: (...args: unknown[]) => cardsMock(...args),
     cardPayments: (...args: unknown[]) => paymentsMock(...args),
     excedente: (...args: unknown[]) => excedenteMock(...args),
+    recurring: (...args: unknown[]) => recurringMock(...args),
   },
   ApiError,
 }));
@@ -95,6 +98,7 @@ beforeEach(() => {
   cardsMock.mockReset().mockResolvedValue(EMPTY_CARDS);
   paymentsMock.mockReset().mockResolvedValue({ payments: [], total: "0" });
   excedenteMock.mockReset().mockResolvedValue({ accumulated_surplus: "0" });
+  recurringMock.mockReset().mockResolvedValue({ recurring: [], total: 0 });
 });
 
 describe("DashboardPanel", () => {
@@ -209,6 +213,73 @@ describe("DashboardPanel", () => {
     expect(await screen.findByText("Tarjetas de crédito")).toBeInTheDocument();
     expect(screen.getByText("Visa BBVA")).toBeInTheDocument();
     expect(screen.getByText("Disponible")).toBeInTheDocument();
+  });
+
+  it("renders the Recurrentes card with grouped rows and the net", async () => {
+    summaryMock.mockResolvedValue(summary());
+    recurringMock.mockResolvedValue({
+      recurring: [
+        {
+          id: "r1",
+          description: "Sueldo",
+          amount: "1000000",
+          transaction_type: "income",
+          category: null,
+          payment_method: "efectivo",
+          day_of_month: 1,
+          next_run_date: "2026-09-01",
+          active: true,
+        },
+        {
+          id: "r2",
+          description: "Arriendo",
+          amount: "400000",
+          transaction_type: "expense",
+          category: "vivienda",
+          payment_method: "efectivo",
+          day_of_month: 5,
+          next_run_date: "2026-09-05",
+          active: true,
+        },
+        {
+          id: "r3",
+          description: "Netflix",
+          amount: "50000",
+          transaction_type: "expense",
+          category: "suscripciones",
+          payment_method: "efectivo",
+          day_of_month: 10,
+          next_run_date: "2026-09-10",
+          active: false,
+        },
+      ],
+      total: 3,
+    });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+
+    expect(await screen.findByText("Recurrentes")).toBeInTheDocument();
+    expect(screen.getByText("Ingresos fijos")).toBeInTheDocument();
+    expect(screen.getByText("Gastos fijos")).toBeInTheDocument();
+    expect(screen.getByText("Sueldo")).toBeInTheDocument();
+    expect(screen.getByText("Arriendo")).toBeInTheDocument();
+    expect(screen.getByText("Netflix")).toBeInTheDocument();
+    // The paused recurrente shows the "pausado" pill (text, not color-only).
+    expect(screen.getByText("pausado")).toBeInTheDocument();
+    // Net fijo = active income (1,000,000) − active expense (400,000) = 600,000;
+    // the paused Netflix is excluded from the total.
+    expect(screen.getByText("Neto fijo mensual")).toBeInTheDocument();
+    expect(screen.getByText(/600,000/)).toBeInTheDocument();
+    expect(recurringMock).toHaveBeenCalledWith("tok");
+  });
+
+  it("omits the Recurrentes card when there are none", async () => {
+    summaryMock.mockResolvedValue(summary());
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText("Balance");
+
+    expect(screen.queryByText("Recurrentes")).not.toBeInTheDocument();
   });
 
   it("requests a new period when a period tab is clicked", async () => {

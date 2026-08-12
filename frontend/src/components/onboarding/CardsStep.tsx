@@ -21,25 +21,21 @@ const INPUT =
 
 interface CardsStepProps {
   cards: CardDraft[];
-  submitting: boolean;
-  error: string | null;
   onUpdate: (index: number, field: keyof CardDraft, value: string) => void;
   onRemove: (index: number) => void;
   onAdd: () => void;
   onBack: () => void;
-  onFinish: () => void;
+  onContinue: () => void;
 }
 
 /** Onboarding step 3: register credit cards (name only, no sensitive data). */
 export function CardsStep({
   cards,
-  submitting,
-  error,
   onUpdate,
   onRemove,
   onAdd,
   onBack,
-  onFinish,
+  onContinue,
 }: CardsStepProps) {
   return (
     <>
@@ -112,21 +108,19 @@ export function CardsStep({
         <button
           type="button"
           onClick={onAdd}
-          className="inline-flex items-center justify-center gap-1 rounded-xl border border-dashed border-line py-2.5 text-sm font-medium text-muted hover:text-ink"
+          className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-dashed border-line py-2.5 text-sm font-medium text-muted hover:text-ink"
         >
           <Plus className="h-4 w-4" aria-hidden />
           Agregar tarjeta
         </button>
       </div>
 
-      {error && <p className="mt-4 text-sm text-negative">{error}</p>}
-
       <div className="mt-6 flex items-center justify-between gap-3">
-        <Button variant="ghost" onClick={onBack} disabled={submitting}>
+        <Button variant="ghost" onClick={onBack}>
           Atrás
         </Button>
-        <Button onClick={onFinish} loading={submitting} className="min-w-28">
-          Finalizar
+        <Button onClick={onContinue} className="min-w-28">
+          Continuar
         </Button>
       </div>
     </>
