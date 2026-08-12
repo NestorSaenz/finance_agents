@@ -15,8 +15,16 @@ from app.agents.tools.transaction_tools import (
     TransactionToolkit,
     _credit_budget_date,
 )
-from app.core.exceptions import TransactionNotFoundError
-from app.shared.types import CategoryType, CurrencyType, PaymentMethod, TransactionType
+from app.core.exceptions import BudgetNotFoundError, TransactionNotFoundError
+from app.shared.types import (
+    BudgetPeriod,
+    CategoryType,
+    CurrencyType,
+    PaymentMethod,
+    TransactionType,
+)
+from app.src.budgets.interfaces import BudgetServiceABC
+from app.src.budgets.models import Budget, BudgetCreate, BudgetStatus
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
 from tests.unit.agents.test_card_tools import FakeCardService, _card
@@ -80,7 +88,19 @@ class FakeTransactionService(TransactionServiceABC):
 
     async def create_transaction(self, transaction: TransactionCreate, user_id: str) -> Transaction:
         self.created.append((transaction, user_id))
-        return _transaction(transaction.category or CategoryType.OTROS)
+        # Reflect the input so callers (e.g. the budget nudge) see the real
+        # amount/type/dates, mirroring what the repository would persist.
+        return _transaction(
+            transaction.category or CategoryType.OTROS,
+            amount=transaction.amount,
+            transaction_type=transaction.transaction_type,
+        ).model_copy(
+            update={
+                "description": transaction.description,
+                "transaction_date": transaction.transaction_date,
+                "budget_date": transaction.budget_date or transaction.transaction_date,
+            }
+        )
 
     async def categorize(self, description: str) -> str:
         return CategoryType.OTROS.value
@@ -144,6 +164,203 @@ class FakeTransactionService(TransactionServiceABC):
 
     async def get_spending_summary(self, user_id: str, **kwargs: object) -> SpendingSummary:
         raise NotImplementedError
+
+
+def _budget(
+    amount: Decimal = Decimal("1000"),
+    alert_threshold: Decimal = Decimal("80"),
+    alert_enabled: bool = True,
+    name: str = "Restaurantes",
+    category: str = "restaurantes",
+) -> Budget:
+    return Budget(
+        id="b1",
+        user_id="u1",
+        name=name,
+        amount=amount,
+        category=category,
+        currency=CurrencyType.MXN,
+        period_type=BudgetPeriod.MONTHLY,
+        start_date=date(2026, 8, 1),
+        end_date=None,
+        alert_threshold=alert_threshold,
+        alert_enabled=alert_enabled,
+        is_active=True,
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+
+def _status(
+    budget: Budget,
+    spent: Decimal,
+    percentage: float,
+    period_start: date = date(2026, 8, 1),
+    period_end: date = date(2026, 8, 31),
+) -> BudgetStatus:
+    threshold_amt = budget.amount * budget.alert_threshold / 100
+    return BudgetStatus(
+        budget=budget,
+        period_start=period_start,
+        period_end=period_end,
+        spent=spent,
+        remaining=budget.amount - spent,
+        percentage=percentage,
+        alert_triggered=spent >= threshold_amt,
+    )
+
+
+class FakeBudgetService(BudgetServiceABC):
+    """Budget service stub: only resolve_budget + get_budget_status are real."""
+
+    def __init__(
+        self,
+        budget: Budget | None = None,
+        status: BudgetStatus | None = None,
+        raise_on_status: bool = False,
+    ) -> None:
+        self._budget = budget
+        self._status = status
+        self._raise_on_status = raise_on_status
+
+    async def resolve_budget(self, reference: str, user_id: str) -> Budget | None:
+        return self._budget
+
+    async def get_budget_status(
+        self, budget_id: str, user_id: str, as_of: date | None = None
+    ) -> BudgetStatus:
+        if self._raise_on_status:
+            raise BudgetNotFoundError(budget_id)
+        assert self._status is not None
+        return self._status
+
+    # --- unused abstract methods (not exercised by the nudge) ---
+    async def create_budget(self, budget: BudgetCreate, user_id: str) -> Budget:
+        raise NotImplementedError
+
+    async def get_budget(self, budget_id: str, user_id: str) -> Budget:
+        raise NotImplementedError
+
+    async def list_budgets(
+        self, user_id: str, *, page: int, page_size: int
+    ) -> tuple[list[Budget], int]:
+        raise NotImplementedError
+
+    async def get_active_alerts(
+        self, user_id: str, as_of: date | None = None
+    ) -> list[BudgetStatus]:
+        raise NotImplementedError
+
+    async def get_all_status(
+        self, user_id: str, as_of: date | None = None
+    ) -> list[BudgetStatus]:
+        raise NotImplementedError
+
+    async def update_budget(
+        self,
+        budget_id: str,
+        user_id: str,
+        *,
+        name: str | None = None,
+        amount: Decimal | None = None,
+    ) -> Budget:
+        raise NotImplementedError
+
+    async def delete_budget(self, budget_id: str, user_id: str) -> Budget:
+        raise NotImplementedError
+
+    async def recategorize(self, user_id: str, old: str, new: str) -> int:
+        raise NotImplementedError
+
+    async def delete_by_category(self, user_id: str, category: str) -> int:
+        raise NotImplementedError
+
+
+class TestBudgetNudge:
+    async def _register_expense(
+        self, budgets: FakeBudgetService, *, amount: int = 100, tx_type: str = "expense"
+    ) -> str:
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, budgets=budgets)
+        return await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": amount,
+                "description": "pizza",
+                "transaction_type": tx_type,
+                "category": "restaurantes",
+                "transaction_date": "2026-08-15",
+            },
+            user_id="u1",
+        )
+
+    async def test_expense_crossing_threshold_appends_percentage_nudge(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(budget, spent=Decimal("820"), percentage=82.0)  # before=720
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "vas al 82%" in result
+        assert "⚠️" in result
+
+    async def test_expense_well_under_budget_has_no_nudge(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(budget, spent=Decimal("200"), percentage=20.0)  # before=150
+        result = await self._register_expense(FakeBudgetService(budget, status), amount=50)
+
+        assert "⚠️" not in result
+
+    async def test_expense_crossing_100_percent_appends_over_budget_nudge(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(budget, spent=Decimal("1050"), percentage=105.0)  # before=950
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "te pasaste" in result
+        assert "⚠️" in result
+
+    async def test_no_budget_for_category_has_no_nudge(self) -> None:
+        result = await self._register_expense(FakeBudgetService(budget=None))
+
+        assert "⚠️" not in result
+
+    async def test_alert_disabled_has_no_nudge(self) -> None:
+        budget = _budget(alert_enabled=False)
+        status = _status(budget, spent=Decimal("900"), percentage=90.0)
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "⚠️" not in result
+
+    async def test_income_never_nudges(self) -> None:
+        budget = _budget()
+        status = _status(budget, spent=Decimal("900"), percentage=90.0)
+        result = await self._register_expense(
+            FakeBudgetService(budget, status), amount=5000, tx_type="income"
+        )
+
+        assert "⚠️" not in result
+
+    async def test_status_error_still_returns_confirmation(self) -> None:
+        budget = _budget()
+        budgets = FakeBudgetService(budget, status=None, raise_on_status=True)
+        result = await self._register_expense(budgets)
+
+        assert "registré" in result.lower()
+        assert "⚠️" not in result
+
+    async def test_toolkit_without_budgets_has_no_nudge(self) -> None:
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service)  # no budgets wired
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": 100,
+                "description": "pizza",
+                "transaction_type": "expense",
+                "category": "restaurantes",
+            },
+            user_id="u1",
+        )
+
+        assert "⚠️" not in result
 
 
 class TestSchemas:

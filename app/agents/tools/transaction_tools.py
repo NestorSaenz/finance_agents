@@ -33,6 +33,7 @@ from app.shared.types import (
     UserId,
     normalize_category,
 )
+from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.cards.cycle import compute_cycle, next_payment_date
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
@@ -436,10 +437,13 @@ class TransactionToolkit:
         self,
         service: TransactionServiceABC,
         cards: "CreditCardServiceABC | None" = None,
+        budgets: "BudgetServiceABC | None" = None,
     ) -> None:
         self._service = service
         # Optional: resolves a credit charge to a specific card by name.
         self._cards = cards
+        # Optional: lets a registered expense warn when it crosses its budget.
+        self._budgets = budgets
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
@@ -560,10 +564,67 @@ class TransactionToolkit:
         impact = ""
         if created.budget_date.strftime("%Y-%m") != created.transaction_date.strftime("%Y-%m"):
             impact = f" Afectará tu presupuesto de {_budget_month_label(created.budget_date)}."
-        return (
+        confirmation = (
             f"✅ Registré: {created.description} — ${created.amount} "
             f"({created.category}, {created.transaction_date}{method}).{impact}"
         )
+        return f"{confirmation}{await self._budget_nudge(created, user_id)}"
+
+    async def _budget_nudge(self, created: Transaction, user_id: UserId) -> str:
+        """Best-effort in-chat budget alert appended to an expense confirmation.
+
+        Returns a short warning (already prefixed with ``\\n``) only when THIS
+        expense is the one that crosses its category budget's alert threshold or
+        its 100% limit — so later expenses in an already-over budget don't repeat
+        the nudge. Best-effort: it must NEVER break or fail a registration, so any
+        lookup error is swallowed and yields no nudge.
+        """
+        if (
+            self._budgets is None
+            or created.transaction_type != TransactionType.EXPENSE
+            or created.category is None
+        ):
+            return ""
+        try:
+            budget = await self._budgets.resolve_budget(created.category, user_id)
+            if budget is None:
+                return ""
+            # resolve_budget can match by NAME to a differently-categorized budget,
+            # whose `spent` wouldn't include this expense — making the `before`
+            # baseline wrong. Only nudge when the budget actually covers this
+            # category (or is an overall budget, category=None → sums everything).
+            if budget.category is not None and budget.category != created.category:
+                return ""
+            status = await self._budgets.get_budget_status(budget.id, user_id)
+            if not status.budget.alert_enabled:
+                return ""
+            # A credit charge for a future month doesn't touch the current period.
+            if not (status.period_start <= created.budget_date <= status.period_end):
+                return ""
+            limit = status.budget.amount
+            if limit <= 0:
+                return ""
+            spent_after = status.spent
+            before = spent_after - created.amount
+            threshold_amt = limit * status.budget.alert_threshold / 100
+            name = status.budget.name or created.category
+            # Nudge only on the crossing tx (over-budget takes priority over the
+            # approaching-threshold warning when a single tx trips both).
+            if before < limit <= spent_after:
+                return (
+                    f"\n⚠️ Con esto te pasaste de tu tope de {name}: "
+                    f"{_money(spent_after)} de {_money(limit)}."
+                )
+            if before < threshold_amt <= spent_after:
+                pct = round(status.percentage)
+                return (
+                    f"\n⚠️ Ojo: vas al {pct}% de tu tope de {name} "
+                    f"({_money(spent_after)} de {_money(limit)})."
+                )
+            return ""
+        except Exception as exc:  # noqa: BLE001 - best-effort nudge, never fail registration
+            logger.warning("Budget nudge failed", error=str(exc), user_id=user_id)
+            return ""
 
     async def _resolve_card_id(
         self, args: dict[str, Any], payment_method: PaymentMethod | None, user_id: UserId
@@ -974,6 +1035,11 @@ def _format_analysis(
         lines.append("Patrones detectados:")
         lines.extend(f"- {pattern}" for pattern in patterns)
     return "\n".join(lines)
+
+
+def _money(value: Decimal) -> str:
+    """Format an amount like the rest of the tool: thousands, no decimals."""
+    return f"${value:,.0f}"
 
 
 def _to_decimal(value: Any) -> Decimal:

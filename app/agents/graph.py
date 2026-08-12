@@ -191,7 +191,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     )
     toolkit = CompositeToolkit(
         [
-            TransactionToolkit(transaction_service, cards=card_service),
+            TransactionToolkit(transaction_service, cards=card_service, budgets=budget_service),
             BudgetToolkit(budget_service),
             GoalToolkit(goal_service),
             CardToolkit(card_service),
