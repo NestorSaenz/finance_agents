@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -39,7 +40,8 @@ class UserProfileUpdate(BaseModel):
     # (present or future) can ever persist a garbage currency that would mislabel
     # every amount. The service/DTO validate earlier for friendlier errors.
     currency: str | None = Field(default=None)
-    # Store-only for now; no endpoint sets it yet (a later cut wires it).
+    # Self-guarding: validate the IANA zone here too, so no caller can persist a
+    # garbage timezone that would resolve "today" in the wrong day.
     timezone: str | None = Field(default=None, max_length=64)
 
     @field_validator("currency")
@@ -51,3 +53,15 @@ class UserProfileUpdate(BaseModel):
         if code not in ISO_4217_CODES:
             raise ValueError(f"Unknown currency code: {value!r}")
         return code
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        tz = value.strip()
+        try:
+            ZoneInfo(tz)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"Unknown timezone: {value!r}") from e
+        return tz

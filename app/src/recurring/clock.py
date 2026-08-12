@@ -7,13 +7,10 @@ Both the create path (first ``next_run_date``) and the daily run endpoint comput
 their reference day through this single helper so they never disagree.
 """
 
-from datetime import UTC, date, datetime, tzinfo
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import date
 
 from app.core.config import settings
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
+from app.shared.clock import local_today
 
 
 def recurring_today() -> date:
@@ -21,15 +18,7 @@ def recurring_today() -> date:
 
     Falls back to UTC (with a warning) if ``RECURRING_TIMEZONE`` is misconfigured,
     so an operator typo can never crash the daily run that materializes money.
+    Delegates to the shared ``local_today`` helper so the app has one timezone
+    clock; the name/signature are kept to avoid churn in recurring call sites.
     """
-    tz: tzinfo
-    try:
-        tz = ZoneInfo(settings.RECURRING_TIMEZONE)
-    except (ZoneInfoNotFoundError, ValueError) as e:
-        logger.warning(
-            "Invalid RECURRING_TIMEZONE; falling back to UTC",
-            configured=settings.RECURRING_TIMEZONE,
-            error=str(e),
-        )
-        tz = UTC
-    return datetime.now(tz).date()
+    return local_today(settings.RECURRING_TIMEZONE)

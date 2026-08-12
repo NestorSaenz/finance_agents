@@ -1,7 +1,9 @@
 """User-profile use cases (business logic)."""
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from app.core.config import settings
-from app.core.exceptions import InvalidCurrencyError
+from app.core.exceptions import InvalidCurrencyError, InvalidTimezoneError
 from app.core.logging import get_logger
 from app.shared.types import UserId
 
@@ -28,6 +30,10 @@ class UserProfileService(UserProfileServiceABC):
         # default when none is stored (the stored column stays nullable).
         if profile.currency is None:
             profile.currency = settings.DEFAULT_CURRENCY
+        # Same for the timezone: always hand back a valid IANA string so callers
+        # can resolve "today" in the user's local day without extra guards.
+        if profile.timezone is None:
+            profile.timezone = settings.DEFAULT_TIMEZONE
         return profile
 
     async def update_profile(
@@ -43,4 +49,16 @@ class UserProfileService(UserProfileServiceABC):
             user_id, UserProfileUpdate(currency=normalized)
         )
         logger.info("User currency set", user_id=user_id, currency=normalized)
+        return profile
+
+    async def set_timezone(self, user_id: UserId, tz: str) -> UserProfile:
+        normalized = tz.strip()
+        try:
+            ZoneInfo(normalized)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise InvalidTimezoneError(normalized) from e
+        profile = await self._repository.upsert(
+            user_id, UserProfileUpdate(timezone=normalized)
+        )
+        logger.info("User timezone set", user_id=user_id, timezone=normalized)
         return profile

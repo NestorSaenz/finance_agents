@@ -10,6 +10,7 @@ from typing import Any
 
 from app.agents.nodes.analyst_constants import get_category_label
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.periods import period_label
 from app.shared.types import UserId
 from app.src.analysis.interfaces import AnalysisServiceABC
@@ -59,7 +60,9 @@ class AnalysisToolkit:
     async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
         if name == ANALYZE_FINANCES_TOOL:
             period = str(arguments.get("period", "este_mes")).lower()
-            snapshot = await self._service.snapshot(user_id, period)
+            snapshot = await self._service.snapshot(
+                user_id, period, today=current_today()
+            )
             return _format_snapshot(snapshot)
         raise ValueError(f"Unknown analysis tool: {name}")
 

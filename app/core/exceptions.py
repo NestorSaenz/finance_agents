@@ -359,6 +359,20 @@ class InvalidCurrencyError(DomainError):
         )
 
 
+class InvalidTimezoneError(DomainError):
+    """Raised when a proposed timezone is not a recognized IANA zone."""
+
+    def __init__(self, tz: str) -> None:
+        super().__init__(
+            message=(
+                f"Zona horaria no reconocida: '{tz}'. Usa un identificador IANA "
+                "válido (por ejemplo America/Bogota, America/Mexico_City)."
+            ),
+            code="INVALID_TIMEZONE",
+            details={"timezone": tz},
+        )
+
+
 class UnauthorizedAccessError(ApplicationError):
     """Raised when user tries to access resources they don't own."""
 
@@ -568,6 +582,7 @@ __all__ = [
     "UserNotFoundError",
     "UserProfileIncompleteError",
     "InvalidCurrencyError",
+    "InvalidTimezoneError",
     "UnauthorizedAccessError",
     # Rate Limiting
     "RateLimitExceededError",

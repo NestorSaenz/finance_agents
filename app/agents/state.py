@@ -19,6 +19,7 @@ class AgentState(TypedDict):
     # Auth + long-term memory.
     user_id: str
     user_context: str  # durable facts about the user (Memory Agent), for personalization
+    timezone: str  # user's IANA timezone, for resolving relative dates in their local day
 
     # Routing / results.
     detected_intent: str
@@ -32,6 +33,7 @@ def build_initial_state(
     user_id: str,
     history: list[BaseMessage] | None = None,
     user_context: str = "",
+    timezone: str = "",
 ) -> AgentState:
     """Build a fresh :class:`AgentState` for a new user turn.
 
@@ -40,6 +42,7 @@ def build_initial_state(
         user_id: Identifier of the user owning the conversation.
         history: Prior conversation messages (oldest first) for multi-turn context.
         user_context: The user's long-term knowledge facts, for personalization.
+        timezone: The user's IANA timezone, used to resolve "today" in their local day.
 
     Returns:
         A fully populated initial state.
@@ -48,6 +51,7 @@ def build_initial_state(
         messages=[*(history or []), HumanMessage(content=message)],
         user_id=user_id,
         user_context=user_context,
+        timezone=timezone,
         detected_intent="unknown",
         category_suggestion=None,
         next_agent="",

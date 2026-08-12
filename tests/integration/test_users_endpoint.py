@@ -36,11 +36,15 @@ class StubProfileService(UserProfileServiceABC):
             monthly_income=data.monthly_income,
             savings_goal_percentage=data.savings_goal_percentage,
             currency=data.currency,
+            timezone=data.timezone,
             onboarding_completed=bool(data.onboarding_completed),
         )
 
     async def set_currency(self, user_id: UserId, code: str) -> UserProfile:
         return UserProfile(user_id=user_id, currency=code.strip().upper())
+
+    async def set_timezone(self, user_id: UserId, tz: str) -> UserProfile:
+        return UserProfile(user_id=user_id, timezone=tz.strip())
 
 
 def _client(service: UserProfileServiceABC) -> Iterator[TestClient]:
@@ -148,6 +152,31 @@ class TestOnboarding:
         try:
             response = client.post(
                 f"{BASE_URL}/me/onboarding", json={"currency": "XYZ"}
+            )
+            assert response.status_code == 422
+        finally:
+            next(gen, None)
+
+    def test_stores_valid_timezone(self, service: StubProfileService) -> None:
+        gen = _client(service)
+        client = next(gen)
+        try:
+            response = client.post(
+                f"{BASE_URL}/me/onboarding", json={"timezone": "America/Bogota"}
+            )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["timezone"] == "America/Bogota"
+            assert service.updates[0][1].timezone == "America/Bogota"
+        finally:
+            next(gen, None)
+
+    def test_rejects_unknown_timezone(self, service: StubProfileService) -> None:
+        gen = _client(service)
+        client = next(gen)
+        try:
+            response = client.post(
+                f"{BASE_URL}/me/onboarding", json={"timezone": "Mars/Phobos"}
             )
             assert response.status_code == 422
         finally:

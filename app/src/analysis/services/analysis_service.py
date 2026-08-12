@@ -45,8 +45,11 @@ class AnalysisService(AnalysisServiceABC):
         self._cards = cards
         self._profiles = profiles
 
-    async def snapshot(self, user_id: UserId, period: str) -> FinancialSnapshot:
-        start, end = resolve_period(period)
+    async def snapshot(
+        self, user_id: UserId, period: str, today: date | None = None
+    ) -> FinancialSnapshot:
+        # ``today`` (the user's local day) anchors the period window; None → UTC.
+        start, end = resolve_period(period, today=today)
 
         # These reads are independent, so fetch them concurrently instead of
         # paying five sequential round-trips.
@@ -56,11 +59,14 @@ class AnalysisService(AnalysisServiceABC):
                     user_id, period_start=start, period_end=end
                 ),
                 self._profiles.get_profile(user_id),
-                self._budgets.get_all_status(user_id),
+                # Anchor budget periods and card cycles on the user's local day
+                # (None → the services' own UTC fallback) so a near-midnight
+                # analysis doesn't mix a local transaction window with UTC statuses.
+                self._budgets.get_all_status(user_id, as_of=today),
                 self._goals.list_goals(
                     user_id, page=1, page_size=_GOALS_PAGE, as_of=end
                 ),
-                self._cards.get_all_status(user_id),
+                self._cards.get_all_status(user_id, as_of=today),
             )
         )
         goals = goals_page[0]

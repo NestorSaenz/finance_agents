@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # primary market (Colombia).
     DEFAULT_CURRENCY: str = "COP"
 
+    # Default IANA timezone applied when a user has not set one. Used to resolve
+    # relative dates ("hoy", "ayer") on the user's LOCAL calendar day instead of
+    # UTC. Same value as RECURRING_TIMEZONE (the app's primary market).
+    DEFAULT_TIMEZONE: str = "America/Bogota"
+
     # Shared secret guarding POST /recurring/run (the daily materialization job).
     # A Cloud Scheduler job must send it in the X-Recurring-Secret header. Empty
     # (the default) fails the endpoint closed, so it can never run unprotected.

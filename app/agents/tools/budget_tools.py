@@ -7,7 +7,6 @@ at dispatch time and is NEVER part of the tool schema nor read from the model's
 arguments.
 """
 
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -15,6 +14,7 @@ from pydantic import ValidationError
 
 from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.types import BudgetPeriod, UserId, normalize_category
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.budgets.models import BudgetCreate, BudgetStatus
@@ -144,7 +144,7 @@ class BudgetToolkit:
                 amount=_to_decimal(args.get("amount")),
                 category=_to_category(args.get("category")),
                 period_type=_to_period(args.get("period_type")),
-                start_date=datetime.now(UTC).date(),
+                start_date=current_today(),
             )
         except (ValidationError, ValueError) as e:
             logger.warning("Invalid budget args from tool", error=str(e))
@@ -179,7 +179,9 @@ class BudgetToolkit:
         lines: list[str] = []
         for budget in budgets:
             try:
-                status = await self._service.get_budget_status(budget.id, user_id)
+                status = await self._service.get_budget_status(
+                    budget.id, user_id, as_of=current_today()
+                )
                 lines.append(_format_status(status))
             except Exception as e:  # noqa: BLE001 - one budget failing shouldn't drop the rest.
                 logger.warning("Budget status failed", budget_id=budget.id, error=str(e))

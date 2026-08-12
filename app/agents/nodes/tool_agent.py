@@ -8,7 +8,7 @@ time — never from the model.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import date
 
 from langchain_core.messages import AIMessage
 
@@ -22,6 +22,7 @@ from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
 from app.core.logging import get_logger
 from app.core.observability import record_tool_span, start_tool_span
+from app.shared.clock import bound_today, current_today, local_today
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, Message, MessageRole, ToolCall
 
 logger = get_logger(__name__)
@@ -77,9 +78,16 @@ async def tool_agent_node(
 
     logger.info("Tool agent processing", user_id=user_id, turns=len(history))
 
+    # Resolve the user's local "today" ONCE for this turn. The SAME value feeds
+    # the system prompt (so the model reads relative dates like "hoy"/"ayer" in
+    # the user's day) AND the request-scoped ContextVar every dispatched tool
+    # reads — prompt-today and tool-today can never disagree. Empty timezone →
+    # None → UTC fallback (no warning) for callers that don't set one.
+    today = local_today(state.get("timezone") or None)
+
     try:
         final_text = await _run_tool_loop(
-            llm, toolkit, history, user_message, user_id, user_block
+            llm, toolkit, history, user_message, user_id, user_block, today
         )
     except Exception as e:  # noqa: BLE001 - LLM/tool boundary: degrade gracefully.
         logger.error("Tool agent failed", error=str(e))
@@ -97,6 +105,7 @@ async def _run_tool_loop(
     user_message: str,
     user_id: str,
     user_block: str = "",
+    today: date | None = None,
 ) -> str:
     """Run a bounded ReAct-style tool loop and return the final answer.
 
@@ -106,14 +115,19 @@ async def _run_tool_loop(
     the loop works identically across Groq, Vertex/Gemini, and Cohere. The model
     keeps requesting tools until it has enough, then answers; the round cap is a
     hard backstop against runaway cost.
+
+    ``today`` is the user's local calendar day (resolved once by the caller). It
+    is stamped into the prompt AND bound to the request-scoped ContextVar so every
+    dispatched tool defaults omitted dates to the SAME day. Defaults to UTC today
+    for callers that omit it.
     """
     # Enough room for a structured, in-depth analysis when the user asks for one.
     config = LLMConfig(temperature=0.2, max_tokens=900)
+    day = today or current_today()
     # Give the model today's date so it can resolve relative dates ("hoy", "ayer").
-    today = datetime.now(UTC).date().isoformat()
     system_prompt = (
         f"{TOOL_AGENT_SYSTEM_PROMPT}\n\n"
-        f"La fecha de hoy es {today}. Úsala para interpretar fechas relativas "
+        f"La fecha de hoy es {day.isoformat()}. Úsala para interpretar fechas relativas "
         f"como 'hoy' o 'ayer' (formato ISO YYYY-MM-DD).\n"
         "Si necesitas varios datos independientes, pide todas esas herramientas "
         "en el mismo turno para resolverlo más rápido."
@@ -127,22 +141,25 @@ async def _run_tool_loop(
         Message(role=MessageRole.USER, content=user_message),
     ]
 
-    for _ in range(MAX_TOOL_ROUNDS):
-        response = await llm.generate_with_tools(messages, toolkit.schemas, config)
+    # Bind the SAME day the prompt carries so every tool dispatched below reads it
+    # via current_today() — without threading it through dispatch (security contract).
+    with bound_today(day):
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = await llm.generate_with_tools(messages, toolkit.schemas, config)
 
-        if not response.tool_calls:
-            return response.content.strip() or "¿En qué puedo ayudarte con tus finanzas?"
+            if not response.tool_calls:
+                return response.content.strip() or "¿En qué puedo ayudarte con tus finanzas?"
 
-        # Execute every tool the model asked for this round, concurrently.
-        results = await asyncio.gather(
-            *[_safe_dispatch(toolkit, call, user_id) for call in response.tool_calls]
-        )
-        logger.info("Tool round", tools=[call.name for call in response.tool_calls])
-        messages.append(_tool_call_note(response.tool_calls))
-        messages.append(_tool_results_message(response.tool_calls, results))
+            # Execute every tool the model asked for this round, concurrently.
+            results = await asyncio.gather(
+                *[_safe_dispatch(toolkit, call, user_id) for call in response.tool_calls]
+            )
+            logger.info("Tool round", tools=[call.name for call in response.tool_calls])
+            messages.append(_tool_call_note(response.tool_calls))
+            messages.append(_tool_results_message(response.tool_calls, results))
 
-    # Rounds exhausted: force a final plain-text answer from what we gathered.
-    return await _force_answer(llm, user_message, messages, config)
+        # Rounds exhausted: force a final plain-text answer from what we gathered.
+        return await _force_answer(llm, user_message, messages, config)
 
 
 def _history_block(history: list[Message]) -> str:

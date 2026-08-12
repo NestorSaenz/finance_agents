@@ -5,7 +5,7 @@ supplied by the toolkit from the authenticated context at dispatch time and is
 NEVER part of the tool schema. Cards are referenced by NAME (no ids exposed).
 """
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.types import UserId
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CardPaymentCreate, CreditCardCreate
@@ -180,7 +181,9 @@ class CardToolkit:
         )
 
     async def _query(self, user_id: UserId) -> str:
-        statuses = await self._service.get_all_status(user_id)
+        # Anchor the cycle/next-payment on the user's local day, not UTC, so a
+        # near-midnight query doesn't report the next cycle a day early.
+        statuses = await self._service.get_all_status(user_id, as_of=current_today())
         if not statuses:
             return "No tienes tarjetas registradas."
         lines = [
@@ -205,7 +208,7 @@ class CardToolkit:
             return f"No encontré una tarjeta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
 
         # Honor the date the user stated ("pagué el 1 de julio"); default to today.
-        today = datetime.now(UTC).date()
+        today = current_today()
         payment_date = _opt_date(args.get("payment_date")) or today
         await self._service.register_payment(
             card.id, user_id, CardPaymentCreate(amount=amount, payment_date=payment_date)

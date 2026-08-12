@@ -13,8 +13,14 @@ class AnalysisServiceABC(ABC):
     """Contract for building a holistic financial snapshot."""
 
     @abstractmethod
-    async def snapshot(self, user_id: UserId, period: str) -> FinancialSnapshot:
-        """Aggregate the user's finances for ``period`` into a snapshot."""
+    async def snapshot(
+        self, user_id: UserId, period: str, today: date | None = None
+    ) -> FinancialSnapshot:
+        """Aggregate the user's finances for ``period`` into a snapshot.
+
+        ``today`` anchors the period boundaries to the user's local day; ``None``
+        keeps the service pure and falls back to UTC (its default reference).
+        """
 
     @abstractmethod
     async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:

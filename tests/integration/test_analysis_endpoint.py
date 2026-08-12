@@ -21,7 +21,9 @@ class StubAnalysisService(AnalysisServiceABC):
         self.surplus = surplus
         self.calls: list[tuple[str, date]] = []
 
-    async def snapshot(self, user_id: UserId, period: str) -> FinancialSnapshot:
+    async def snapshot(
+        self, user_id: UserId, period: str, today: date | None = None
+    ) -> FinancialSnapshot:
         raise NotImplementedError
 
     async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:

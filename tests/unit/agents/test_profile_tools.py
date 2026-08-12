@@ -2,8 +2,12 @@
 
 import pytest
 
-from app.agents.tools.profile_tools import SET_CURRENCY_TOOL, ProfileToolkit
-from app.core.exceptions import InvalidCurrencyError
+from app.agents.tools.profile_tools import (
+    SET_CURRENCY_TOOL,
+    SET_TIMEZONE_TOOL,
+    ProfileToolkit,
+)
+from app.core.exceptions import InvalidCurrencyError, InvalidTimezoneError
 from app.shared.types import UserId
 from app.src.users.interfaces import UserProfileServiceABC
 from app.src.users.models import UserProfile, UserProfileUpdate
@@ -12,10 +16,11 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeProfileService(UserProfileServiceABC):
-    """Records set_currency calls; validates against a tiny known set."""
+    """Records set_currency/set_timezone calls; validates against tiny known sets."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.tz_calls: list[tuple[str, str]] = []
 
     async def get_profile(self, user_id: UserId) -> UserProfile:
         return UserProfile(user_id=user_id)
@@ -31,6 +36,13 @@ class FakeProfileService(UserProfileServiceABC):
         if normalized not in {"GTQ", "USD", "COP"}:
             raise InvalidCurrencyError(normalized)
         return UserProfile(user_id=user_id, currency=normalized)
+
+    async def set_timezone(self, user_id: UserId, tz: str) -> UserProfile:
+        normalized = tz.strip()
+        self.tz_calls.append((user_id, normalized))
+        if normalized not in {"America/Bogota", "America/Mexico_City"}:
+            raise InvalidTimezoneError(normalized)
+        return UserProfile(user_id=user_id, timezone=normalized)
 
 
 async def test_valid_currency_returns_confirmation() -> None:
@@ -80,3 +92,47 @@ async def test_unknown_tool_raises() -> None:
 
     with pytest.raises(ValueError, match="Unknown profile tool"):
         await toolkit.dispatch("nope", {}, "u1")
+
+
+async def test_valid_timezone_returns_confirmation() -> None:
+    service = FakeProfileService()
+    toolkit = ProfileToolkit(service)
+
+    result = await toolkit.dispatch(
+        SET_TIMEZONE_TOOL, {"timezone": "America/Bogota"}, "u1"
+    )
+
+    assert result == "✅ Listo, usaré tu zona America/Bogota para las fechas."
+    assert service.tz_calls == [("u1", "America/Bogota")]
+
+
+async def test_invalid_timezone_returns_friendly_message() -> None:
+    service = FakeProfileService()
+    toolkit = ProfileToolkit(service)
+
+    result = await toolkit.dispatch(SET_TIMEZONE_TOOL, {"timezone": "Mars/Phobos"}, "u1")
+
+    assert result == "No reconozco esa zona; dime tu ciudad, p. ej. 'Bogotá'."
+
+
+async def test_empty_timezone_returns_friendly_message() -> None:
+    service = FakeProfileService()
+    toolkit = ProfileToolkit(service)
+
+    result = await toolkit.dispatch(SET_TIMEZONE_TOOL, {}, "u1")
+
+    assert "No reconozco esa zona" in result
+    assert service.tz_calls == []
+
+
+async def test_timezone_user_id_from_arguments_is_ignored() -> None:
+    service = FakeProfileService()
+    toolkit = ProfileToolkit(service)
+
+    await toolkit.dispatch(
+        SET_TIMEZONE_TOOL,
+        {"timezone": "America/Mexico_City", "user_id": "attacker"},
+        "u1",
+    )
+
+    assert service.tz_calls == [("u1", "America/Mexico_City")]

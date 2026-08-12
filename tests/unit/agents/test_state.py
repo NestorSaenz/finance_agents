@@ -19,10 +19,18 @@ class TestBuildInitialState:
 
         assert state["user_id"] == "u1"
         assert state["user_context"] == ""
+        assert state["timezone"] == ""
         assert state["detected_intent"] == "unknown"
         assert state["category_suggestion"] is None
         assert state["next_agent"] == ""
         assert state["should_respond"] is False
+
+    def test_carries_timezone(self) -> None:
+        state = build_initial_state(
+            message="hola", user_id="u1", timezone="America/Bogota"
+        )
+
+        assert state["timezone"] == "America/Bogota"
 
     def test_prepends_history_then_current_message(self) -> None:
         history = [HumanMessage(content="hola"), AIMessage(content="¡Hola!")]

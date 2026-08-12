@@ -41,6 +41,7 @@ async def complete_onboarding(
             monthly_income=request.monthly_income,
             savings_goal_percentage=request.savings_goal_percentage,
             currency=request.currency,
+            timezone=request.timezone,
             onboarding_completed=True,
         ),
     )

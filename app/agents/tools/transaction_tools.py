@@ -10,7 +10,7 @@ arguments. The model only provides the transaction data.
 import asyncio
 import re
 import unicodedata
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
 
@@ -25,6 +25,7 @@ from app.agents.nodes.analyst_utils import (
 )
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.periods import period_label, resolve_period
 from app.shared.types import (
     PaymentMethod,
@@ -595,7 +596,9 @@ class TransactionToolkit:
             # category (or is an overall budget, category=None → sums everything).
             if budget.category is not None and budget.category != created.category:
                 return ""
-            status = await self._budgets.get_budget_status(budget.id, user_id)
+            status = await self._budgets.get_budget_status(
+                budget.id, user_id, as_of=current_today()
+            )
             if not status.budget.alert_enabled:
                 return ""
             # A credit charge for a future month doesn't touch the current period.
@@ -681,7 +684,7 @@ class TransactionToolkit:
                     "¿De qué mes? Dímelo como '2026-06' (año-mes) o "
                     "'este_mes' / 'mes_pasado' / 'todo'."
                 )
-            start, end = resolve_period(period)
+            start, end = resolve_period(period, today=current_today())
             items = [t for t in items if start <= t.transaction_date <= end]
         payment = _to_payment_method(args.get("payment_method"))
         if payment is PaymentMethod.EFECTIVO:
@@ -772,7 +775,7 @@ class TransactionToolkit:
         if period:
             if period not in _NAMED_PERIODS and not _MONTH_ARG_RE.match(period):
                 return "¿De qué período? Dime un mes ('2026-07'), 'todo', o un rango de fechas."
-            start, end = resolve_period(period)
+            start, end = resolve_period(period, today=current_today())
             scope_label = period_label(period)
         elif (start is None) != (end is None):
             return "Para un rango necesito AMBAS fechas: inicio y fin (YYYY-MM-DD)."
@@ -980,7 +983,7 @@ def _tx_to_dict(t: Transaction) -> dict[str, Any]:
 
 def _period_range(period: str) -> tuple[date | None, date | None]:
     """Return (start, end) dates for a named period; (None, None) means all-time."""
-    today = datetime.now(UTC).date()
+    today = current_today()
     if period == "todo":
         return None, None
     if period == "mes_pasado":
@@ -1079,8 +1082,8 @@ def _to_date(value: Any) -> date:
         try:
             return date.fromisoformat(value[:10])
         except ValueError:
-            return datetime.now(UTC).date()
-    return datetime.now(UTC).date()
+            return current_today()
+    return current_today()
 
 
 def _credit_budget_date(card: CreditCard | None, transaction_date: date) -> date:

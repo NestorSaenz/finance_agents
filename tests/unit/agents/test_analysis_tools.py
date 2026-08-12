@@ -59,9 +59,13 @@ def _snapshot() -> FinancialSnapshot:
 class FakeAnalysis:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.todays: list[date | None] = []
 
-    async def snapshot(self, user_id: UserId, period: str) -> FinancialSnapshot:
+    async def snapshot(
+        self, user_id: UserId, period: str, today: date | None = None
+    ) -> FinancialSnapshot:
         self.calls.append((user_id, period))
+        self.todays.append(today)
         return _snapshot()
 
 
@@ -86,3 +90,13 @@ async def test_defaults_to_este_mes() -> None:
     service = FakeAnalysis()
     await AnalysisToolkit(service).dispatch(ANALYZE_FINANCES_TOOL, {}, "u1")  # type: ignore[arg-type]
     assert service.calls[0] == ("u1", "este_mes")
+
+
+async def test_threads_bound_local_today_to_snapshot() -> None:
+    from app.shared.clock import bound_today
+
+    service = FakeAnalysis()
+    with bound_today(date(2026, 8, 11)):
+        await AnalysisToolkit(service).dispatch(ANALYZE_FINANCES_TOOL, {}, "u1")  # type: ignore[arg-type]
+    # The tool anchors the snapshot's period to the turn's local day.
+    assert service.todays == [date(2026, 8, 11)]

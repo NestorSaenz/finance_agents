@@ -132,7 +132,7 @@ async def chat(
     await rate_limiter.check_chat(user_id, has_image=bool(request.image))
 
     conversation_id, history = await _load_context(memory, user_id, request.session_id)
-    user_context = await _build_user_context(memory_agent, profiles, user_id)
+    user_context, timezone = await _build_user_context(memory_agent, profiles, user_id)
 
     logger.info(
         "Chat request received",
@@ -155,6 +155,7 @@ async def chat(
         user_id=user_id,
         history=history,
         user_context=user_context,
+        timezone=timezone,
     )
     # Fresh thread id per request: history is injected explicitly, so the
     # in-memory checkpointer must not also carry it over. recursion_limit is a
@@ -258,16 +259,23 @@ async def _build_user_context(
     memory_agent: MemoryAgentServiceDep,
     profiles: UserProfileServiceDep,
     user_id: str,
-) -> str:
-    """Compose the user context: their name (if known) + long-term memory facts.
+) -> tuple[str, str]:
+    """Compose ``(context, timezone)`` from one profile read.
 
-    Both parts are best-effort so the chat never fails if one lookup breaks.
+    The context is the user's name (if known) + long-term memory facts + currency.
+    The timezone (IANA) is surfaced from the SAME profile fetch so the graph can
+    resolve "today" in the user's local day. Both are best-effort: the chat never
+    fails if a lookup breaks, and the timezone falls back to the app default.
     """
     facts = await memory_agent.get_context(user_id)
+    timezone = settings.DEFAULT_TIMEZONE
     try:
         profile = await profiles.get_profile(user_id)
         name = (profile.display_name or "").strip()
         currency = (profile.currency or "").strip()
+        # get_profile defaults timezone to DEFAULT_TIMEZONE, so this is always a
+        # valid IANA string; guard the empty case anyway.
+        timezone = (profile.timezone or "").strip() or settings.DEFAULT_TIMEZONE
     except Exception as e:  # noqa: BLE001 - profile is best-effort context.
         logger.warning("Could not load profile", error=str(e))
         name = ""
@@ -280,7 +288,7 @@ async def _build_user_context(
         parts.append(facts)
     if currency:
         parts.append(f"Moneda del usuario: {currency}.")
-    return "\n".join(parts)
+    return "\n".join(parts), timezone
 
 
 async def _load_context(

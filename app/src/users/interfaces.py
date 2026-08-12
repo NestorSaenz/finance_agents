@@ -38,3 +38,10 @@ class UserProfileServiceABC(ABC):
 
         Raises ``InvalidCurrencyError`` when the (normalized) code is unknown.
         """
+
+    @abstractmethod
+    async def set_timezone(self, user_id: UserId, tz: str) -> UserProfile:
+        """Validate ``tz`` as an IANA zone and persist it as the user's timezone.
+
+        Raises ``InvalidTimezoneError`` when the zone is unknown.
+        """

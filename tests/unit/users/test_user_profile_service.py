@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from app.core.config import settings
-from app.core.exceptions import InvalidCurrencyError
+from app.core.exceptions import InvalidCurrencyError, InvalidTimezoneError
 from app.shared.types import UserId
 from app.src.users.interfaces import UserProfileRepositoryABC
 from app.src.users.models import UserProfile, UserProfileUpdate
@@ -125,3 +125,53 @@ async def test_set_currency_preserves_existing_onboarding_state() -> None:
     stored = await service.get_profile("u1")
     assert stored.onboarding_completed is True
     assert stored.currency == "MXN"
+
+
+@pytest.mark.asyncio
+async def test_get_profile_defaults_timezone_when_unset() -> None:
+    service = UserProfileService(FakeProfileRepository())
+
+    profile = await service.get_profile("u1")
+
+    assert profile.timezone == settings.DEFAULT_TIMEZONE
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_persists_valid_zone() -> None:
+    repo = FakeProfileRepository()
+    service = UserProfileService(repo)
+
+    profile = await service.set_timezone("u1", "America/Bogota")
+
+    assert profile.timezone == "America/Bogota"
+    stored = await service.get_profile("u1")
+    assert stored.timezone == "America/Bogota"
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_strips_whitespace() -> None:
+    service = UserProfileService(FakeProfileRepository())
+
+    profile = await service.set_timezone("u1", "  America/Mexico_City ")
+
+    assert profile.timezone == "America/Mexico_City"
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_rejects_unknown_zone() -> None:
+    service = UserProfileService(FakeProfileRepository())
+
+    with pytest.raises(InvalidTimezoneError):
+        await service.set_timezone("u1", "Mars/Phobos")
+
+
+def test_update_model_rejects_garbage_timezone() -> None:
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    with _pytest.raises(ValidationError):
+        UserProfileUpdate(timezone="Not/AZone")
+
+
+def test_update_model_accepts_valid_timezone() -> None:
+    assert UserProfileUpdate(timezone="America/Bogota").timezone == "America/Bogota"

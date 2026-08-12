@@ -1,7 +1,8 @@
 """Unit tests for the tool-calling agent node."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -9,8 +10,9 @@ from app.agents.context import category_context_block
 from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, tool_agent_node
 from app.agents.state import build_initial_state
 from app.agents.tools.transaction_tools import TransactionToolkit
+from app.shared.clock import current_today, local_today
 from app.shared.interfaces.llm import LLMResponse, MessageRole, ToolCall
-from app.shared.types import CategoryType, CurrencyType, TransactionType
+from app.shared.types import CategoryType, CurrencyType, TransactionType, UserId
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
 from tests.fakes import FakeLLM
@@ -248,6 +250,56 @@ class TestToolAgentNode:
         result = await tool_agent_node(state, llm, toolkit)
 
         assert result["messages"][-1].content == "¿Cuánto gastaste?"
+
+    async def test_one_today_feeds_both_prompt_and_tools(self) -> None:
+        """The turn resolves ONE local today; the prompt and every dispatched tool see it."""
+        observed: list[date] = []
+        captured: dict[str, list] = {}
+
+        class RecordingToolkit:
+            """Minimal Toolkit that records current_today() at dispatch time."""
+
+            @property
+            def schemas(self) -> list[dict[str, Any]]:
+                return [
+                    {
+                        "type": "function",
+                        "function": {"name": "probe", "parameters": {"type": "object"}},
+                    }
+                ]
+
+            async def dispatch(
+                self, name: str, arguments: dict[str, Any], user_id: UserId
+            ) -> str:
+                observed.append(current_today())
+                return "ok"
+
+        probe_call = LLMResponse(
+            content="",
+            model="fake",
+            tool_calls=[
+                ToolCall(id="1", name="probe", arguments={}),
+                ToolCall(id="2", name="probe", arguments={}),
+            ],
+        )
+
+        class CapturingLLM(ScriptedToolLLM):
+            async def generate_with_tools(self, messages, tools, config=None):  # type: ignore[no-untyped-def]
+                captured.setdefault("messages", list(messages))
+                return await super().generate_with_tools(messages, tools, config)
+
+        llm = CapturingLLM([probe_call, _text("Listo.")])
+        state = build_initial_state(
+            message="¿qué gasté hoy?", user_id="u1", timezone="America/Bogota"
+        )
+
+        await tool_agent_node(state, llm, RecordingToolkit())
+
+        expected = local_today("America/Bogota")
+        # The prompt carries the Bogota local date...
+        assert expected.isoformat() in captured["messages"][0].content
+        # ...and BOTH tools dispatched across the gather saw the SAME value.
+        assert observed == [expected, expected]
 
     async def test_llm_failure_degrades_gracefully(self) -> None:
         class BrokenLLM(FakeLLM):

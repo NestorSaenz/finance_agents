@@ -1,6 +1,7 @@
 """Data Transfer Objects for the users API layer."""
 
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -29,6 +30,11 @@ class OnboardingRequest(BaseModel):
         max_length=3,
         description="ISO-4217 display currency code (e.g. COP, USD); labeling only",
     )
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description="IANA timezone (e.g. America/Bogota); resolves 'today' locally",
+    )
 
     @field_validator("currency")
     @classmethod
@@ -40,6 +46,19 @@ class OnboardingRequest(BaseModel):
         if normalized not in ISO_4217_CODES:
             raise ValueError(f"Unsupported currency code: {value!r}")
         return normalized
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: str | None) -> str | None:
+        """Validate as a known IANA zone (else 422)."""
+        if value is None:
+            return None
+        tz = value.strip()
+        try:
+            ZoneInfo(tz)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"Unsupported timezone: {value!r}") from e
+        return tz
 
 
 class UserProfileResponse(BaseModel):

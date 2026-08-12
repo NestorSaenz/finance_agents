@@ -79,6 +79,9 @@ class FakeProfileService(UserProfileServiceABC):
     async def set_currency(self, user_id: str, code: str) -> UserProfile:
         return UserProfile(user_id=user_id, currency=code.strip().upper())
 
+    async def set_timezone(self, user_id: str, tz: str) -> UserProfile:
+        return UserProfile(user_id=user_id, timezone=tz.strip())
+
 
 INGESTION_REPLY = "Leí esto de tu imagen:\n- Supermercado: $200,000 (gasto)\n\n¿Los registro tal cual?"
 

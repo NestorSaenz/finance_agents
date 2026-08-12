@@ -8,7 +8,7 @@ arguments. Contributions reference a goal by NAME (resolved to an id server-side
 so the model never handles internal ids.
 """
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.types import GoalType, UserId
 from app.src.goals.interfaces import GoalServiceABC
 from app.src.goals.models import Goal, GoalCreate, GoalProgress
@@ -401,7 +402,7 @@ class GoalToolkit:
             return _ambiguous_message(name, matches, "abonar")
 
         # Honor the date the user stated ("en junio aporté X"); default to today.
-        today = datetime.now(UTC).date()
+        today = current_today()
         contribution_date = _opt_date(args.get("date")) or today
         updated = await self._service.contribute(
             goal.id, user_id, amount, contribution_date
@@ -430,7 +431,7 @@ class GoalToolkit:
             return _ambiguous_message(name, matches, "retirar")
 
         # Honor the date the user stated; default to today.
-        today = datetime.now(UTC).date()
+        today = current_today()
         withdrawal_date = _opt_date(args.get("date")) or today
         try:
             updated = await self._service.withdraw_from_goal(
@@ -466,7 +467,7 @@ class GoalToolkit:
 
         # Honor the date the user stated; default to today (used only when the
         # adjustment moves real money, i.e. writes a contribution/withdrawal).
-        on_date = _opt_date(args.get("date")) or datetime.now(UTC).date()
+        on_date = _opt_date(args.get("date")) or current_today()
         updated = await self._service.set_goal_amount(
             goal.id, user_id, amount, on_date
         )
