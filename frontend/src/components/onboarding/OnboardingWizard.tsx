@@ -49,6 +49,19 @@ function isValidDay(v: string): boolean {
   return Number.isInteger(n) && n >= 1 && n <= 31;
 }
 
+/**
+ * Best-effort IANA timezone of the browser (e.g. "America/Bogota"), stored so
+ * the backend can schedule/format in the user's local time. Silent — no UI.
+ * Returns undefined on older browsers so the field is simply omitted.
+ */
+function detectTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 interface OnboardingWizardProps {
   onDone: () => void;
 }
@@ -145,12 +158,15 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
         withData && savings !== "" && savingsValid ? savingsValue : undefined;
       // Name is always sent (even when skipping caps) so Safi can greet by name.
       const displayName = name.trim() || undefined;
+      // Silently auto-detected; omitted entirely on browsers that can't report it.
+      const timezone = detectTimezone();
       await api.completeOnboarding(
         {
           display_name: displayName,
           monthly_income: monthlyIncome,
           savings_goal_percentage: savingsGoal,
           currency,
+          ...(timezone ? { timezone } : {}),
         },
         token,
       );

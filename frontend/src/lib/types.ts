@@ -206,6 +206,8 @@ export interface OnboardingPayload {
   savings_goal_percentage?: number;
   /** ISO-4217 currency code chosen during onboarding. */
   currency?: string;
+  /** IANA timezone auto-detected from the browser (e.g. "America/Bogota"). */
+  timezone?: string;
 }
 
 export interface BudgetCreatePayload {

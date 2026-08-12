@@ -39,12 +39,12 @@ describe("OnboardingWizard", () => {
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(onboardingMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         display_name: undefined,
         monthly_income: undefined,
         savings_goal_percentage: undefined,
         currency: "COP",
-      },
+      }),
       "tok",
     );
     expect(budgetMock).not.toHaveBeenCalled();
@@ -63,6 +63,28 @@ describe("OnboardingWizard", () => {
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(onboardingMock.mock.calls[0][0]).toMatchObject({ currency: "USD" });
+  });
+
+  it("auto-detects and sends the browser timezone silently", async () => {
+    // Make the detected timezone deterministic regardless of the CI host.
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ timeZone: "America/Bogota" } as Intl.ResolvedDateTimeFormatOptions);
+
+    const onDone = vi.fn();
+    render(<OnboardingWizard onDone={onDone} />);
+
+    // No timezone UI exists — detection is silent.
+    expect(screen.queryByText(/zona horaria/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Omitir"));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onboardingMock.mock.calls[0][0]).toMatchObject({
+      timezone: "America/Bogota",
+    });
+
+    resolvedOptions.mockRestore();
   });
 
   it("submits income and category caps on finish", async () => {
@@ -93,12 +115,12 @@ describe("OnboardingWizard", () => {
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(onboardingMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         display_name: "Néstor",
         monthly_income: 30000,
         savings_goal_percentage: 20,
         currency: "COP",
-      },
+      }),
       "tok",
     );
     expect(budgetMock).toHaveBeenCalledTimes(1);
