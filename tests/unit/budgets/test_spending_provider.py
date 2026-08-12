@@ -44,6 +44,33 @@ class TestGetSpent:
 
         assert spent == Decimal("100.0")
 
+    async def test_fallback_excludes_recurring_expenses(self) -> None:
+        # A budget watches VARIABLE spending: movements materialized from a
+        # recurrente (recurring_id set) are fixed/predictable and don't count.
+        rows = [
+            make_transaction_row(id="t1", amount=100.0, transaction_date="2024-12-05"),
+            make_transaction_row(
+                id="t2", amount=250.0, transaction_date="2024-12-10", recurring_id="rec-1"
+            ),
+        ]
+        provider = TransactionSpendingProvider(FakeDatabase(rows=rows))
+
+        spent = await provider.get_spent(
+            "u1", CategoryType.RESTAURANTES, date(2024, 12, 1), date(2024, 12, 31)
+        )
+
+        assert spent == Decimal("100.0")  # the recurring $250 is excluded
+
+    async def test_fallback_selects_recurring_id(self) -> None:
+        db = FakeDatabase(rows=[])
+        provider = TransactionSpendingProvider(db)
+
+        await provider.get_spent(
+            "u1", CategoryType.RESTAURANTES, date(2024, 12, 1), date(2024, 12, 31)
+        )
+
+        assert "recurring_id" in db.select_configs[-1].select
+
     async def test_filters_include_expense_and_category(self) -> None:
         db = FakeDatabase(rows=[])
         provider = TransactionSpendingProvider(db)

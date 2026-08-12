@@ -69,12 +69,16 @@ class TransactionSpendingProvider(BudgetSpendingABC):
             filters["category"] = category_value
 
         config = QueryConfig(
-            select="amount,transaction_date,budget_date", filters=filters
+            select="amount,transaction_date,budget_date,recurring_id", filters=filters
         )
         result = await self._db.select(TRANSACTIONS_TABLE, config)
 
         total = Decimal("0")
         for row in result.data:
+            # Recurring (fixed) expenses don't count toward a budget: it watches the
+            # variable spending you control, not the predictable ones (see mig. 014).
+            if row.get("recurring_id") is not None:
+                continue
             # Attribute by budget_date (credit -> payment month); older rows without
             # it fall back to transaction_date, matching the sum_expenses SQL.
             impact = _parse_date(row.get("budget_date") or row.get("transaction_date"))
