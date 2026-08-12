@@ -1,4 +1,5 @@
 import { LineChart } from "lucide-react";
+import Link from "next/link";
 
 const SUGGESTIONS = [
   "Gasté 200.000 en el supermercado",
@@ -30,6 +31,13 @@ export function EmptyState({ onPick }: { onPick: (text: string) => void }) {
           </button>
         ))}
       </div>
+
+      <Link
+        href="/guia"
+        className="mt-6 text-sm font-medium text-brand-700 underline-offset-4 hover:underline"
+      >
+        ¿Qué puedes hacer? → Ver la guía
+      </Link>
     </div>
   );
 }

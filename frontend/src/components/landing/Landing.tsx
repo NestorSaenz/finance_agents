@@ -49,6 +49,12 @@ export function Landing() {
           <Logo />
           <div className="flex items-center gap-2 sm:gap-3">
             <Link
+              href="/guia"
+              className="hidden min-h-10 items-center rounded-xl px-3 text-sm font-medium text-muted transition-colors hover:bg-slate-100 hover:text-ink sm:inline-flex"
+            >
+              Guía
+            </Link>
+            <Link
               href="/login"
               className="inline-flex min-h-10 items-center rounded-xl px-3 text-sm font-medium text-muted transition-colors hover:bg-slate-100 hover:text-ink"
             >
@@ -93,6 +99,13 @@ export function Landing() {
               Ya tengo cuenta
             </Link>
           </div>
+          <Link
+            href="/guia"
+            className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-brand-700 underline-offset-4 hover:underline"
+          >
+            Ver qué puedes hacer
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </Link>
         </div>
 
         {/* Chat preview mockup */}
