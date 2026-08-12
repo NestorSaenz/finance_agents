@@ -6,6 +6,7 @@ secret header instead of a user token, so it never resolves a ``CurrentUserId``.
 """
 
 import hmac
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -13,7 +14,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.src.auth.dependencies import CurrentUserId
-from app.src.recurring.clock import recurring_today
 from app.src.recurring.dependencies import RecurringServiceDep
 from app.src.recurring.dto import (
     RecurringCreateRequest,
@@ -86,6 +86,6 @@ async def run_recurring(service: RecurringServiceDep) -> RecurringRunResponse:
     System endpoint: called daily by Cloud Scheduler with the shared secret
     header. Returns the number of transactions created.
     """
-    created = await service.run_due(recurring_today())
+    created = await service.run_due(datetime.now(UTC))
     logger.info("Recurring run completed", created=created)
     return RecurringRunResponse(created=created)

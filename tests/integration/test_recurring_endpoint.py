@@ -80,7 +80,7 @@ class StubRecurringService(RecurringServiceABC):
     ) -> list[RecurringTransaction]:
         return [_rec()]
 
-    async def run_due(self, as_of: date) -> int:
+    async def run_due(self, now: datetime) -> int:
         self.run_calls += 1
         return self.run_created
 

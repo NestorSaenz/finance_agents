@@ -6,7 +6,9 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from app.core.config import settings
 from app.core.exceptions import RecurringNotFoundError
+from app.shared.clock import bound_today
 from app.shared.types import Category, PaymentMethod, TransactionType, UserId
 from app.src.recurring.interfaces import RecurringRepositoryABC
 from app.src.recurring.models import (
@@ -15,7 +17,6 @@ from app.src.recurring.models import (
     RecurringTransaction,
     RecurringUpdate,
 )
-from app.src.recurring.services import recurring_service as service_module
 from app.src.recurring.services.recurring_service import RecurringService
 from app.src.transactions.interfaces import TransactionCategorizerABC
 from app.src.transactions.models import TransactionCreate
@@ -23,6 +24,8 @@ from app.src.transactions.repositories.transaction_repository import (
     TransactionRepository,
 )
 from app.src.transactions.services.transaction_service import TransactionService
+from app.src.users.interfaces import UserProfileServiceABC
+from app.src.users.models import UserProfile, UserProfileUpdate
 from tests.fakes import FakeDatabase
 from tests.unit.agents.test_card_tools import FakeCardService, _card
 from tests.unit.agents.test_transaction_tools import FakeTransactionService
@@ -104,6 +107,7 @@ class FakeRecurringRepository(RecurringRepositoryABC):
         self.created: list[RecurringTransaction] = []
         self.updates: list[tuple[str, dict[str, object]]] = []
         self.deleted: list[str] = []
+        self.due_calls: list[date] = []
         self._counter = 0
 
     async def create(
@@ -142,6 +146,7 @@ class FakeRecurringRepository(RecurringRepositoryABC):
         return [r for r in self._items if r.user_id == user_id]
 
     async def list_due(self, as_of: date) -> list[RecurringTransaction]:
+        self.due_calls.append(as_of)
         return [r for r in self._items if r.active and r.next_run_date <= as_of]
 
     async def update(
@@ -160,16 +165,53 @@ class FakeRecurringRepository(RecurringRepositoryABC):
         self._items = [r for r in self._items if r.id != recurring_id]
 
 
+class FakeProfileService(UserProfileServiceABC):
+    """Returns a per-user timezone and counts profile lookups.
+
+    Mirrors the real service: a user with no configured tz gets
+    ``DEFAULT_TIMEZONE`` (never ``None``). Pass ``tz_by_user={"u": None}`` to
+    simulate a profile that hands back no zone (exercises the UTC fallback).
+    """
+
+    def __init__(self, tz_by_user: dict[str, str | None] | None = None) -> None:
+        self._tz_by_user = tz_by_user or {}
+        self.get_calls: list[str] = []
+
+    async def get_profile(self, user_id: UserId) -> UserProfile:
+        self.get_calls.append(user_id)
+        tz = self._tz_by_user.get(user_id, settings.DEFAULT_TIMEZONE)
+        return UserProfile(user_id=user_id, timezone=tz)
+
+    async def update_profile(
+        self, user_id: UserId, data: UserProfileUpdate
+    ) -> UserProfile:
+        raise NotImplementedError
+
+    async def set_currency(self, user_id: UserId, code: str) -> UserProfile:
+        raise NotImplementedError
+
+    async def set_timezone(self, user_id: UserId, tz: str) -> UserProfile:
+        raise NotImplementedError
+
+
 def _service(
     repo: FakeRecurringRepository,
     transactions: FakeTransactionService | None = None,
     cards: FakeCardService | None = None,
+    profiles: FakeProfileService | None = None,
 ) -> RecurringService:
     return RecurringService(
         repo,
         transactions or FakeTransactionService(),
         cards or FakeCardService(cards=[]),
+        profiles or FakeProfileService(),
     )
+
+
+# A UTC instant at midday: its calendar date is stable across common zones
+# (Bogota UTC-5, Tokyo UTC+9), so run_due tests can target a specific "today".
+def _at(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, 12, 0, tzinfo=UTC)
 
 
 def _create_input(day_of_month: int, **overrides: object) -> RecurringCreate:
@@ -184,40 +226,31 @@ def _create_input(day_of_month: int, **overrides: object) -> RecurringCreate:
 
 
 class TestCreateNextRunDate:
-    def _freeze(self, monkeypatch: pytest.MonkeyPatch, today: date) -> None:
-        monkeypatch.setattr(service_module, "_today", lambda: today)
-
-    async def test_day_later_this_month_uses_this_month(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._freeze(monkeypatch, date(2026, 6, 10))
+    # The first ``next_run_date`` is computed from the request-scoped local day
+    # (``bound_today``), so create schedules off the USER'S calendar day.
+    async def test_day_later_this_month_uses_this_month(self) -> None:
         repo = FakeRecurringRepository()
-        created = await _service(repo).create_recurring(_create_input(20), "u1")
+        with bound_today(date(2026, 6, 10)):
+            created = await _service(repo).create_recurring(_create_input(20), "u1")
         assert created.next_run_date == date(2026, 6, 20)
 
-    async def test_day_equal_today_uses_today(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._freeze(monkeypatch, date(2026, 6, 15))
+    async def test_day_equal_today_uses_today(self) -> None:
         repo = FakeRecurringRepository()
-        created = await _service(repo).create_recurring(_create_input(15), "u1")
+        with bound_today(date(2026, 6, 15)):
+            created = await _service(repo).create_recurring(_create_input(15), "u1")
         assert created.next_run_date == date(2026, 6, 15)
 
-    async def test_day_already_passed_rolls_to_next_month(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._freeze(monkeypatch, date(2026, 6, 25))
+    async def test_day_already_passed_rolls_to_next_month(self) -> None:
         repo = FakeRecurringRepository()
-        created = await _service(repo).create_recurring(_create_input(10), "u1")
+        with bound_today(date(2026, 6, 25)):
+            created = await _service(repo).create_recurring(_create_input(10), "u1")
         assert created.next_run_date == date(2026, 7, 10)
 
-    async def test_day_31_clamps_in_short_month(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_day_31_clamps_in_short_month(self) -> None:
         # February 2026 has 28 days -> day 31 clamps to Feb 28.
-        self._freeze(monkeypatch, date(2026, 2, 5))
         repo = FakeRecurringRepository()
-        created = await _service(repo).create_recurring(_create_input(31), "u1")
+        with bound_today(date(2026, 2, 5)):
+            created = await _service(repo).create_recurring(_create_input(31), "u1")
         assert created.next_run_date == date(2026, 2, 28)
 
 
@@ -227,7 +260,7 @@ class TestRunDue:
         txs = FakeTransactionService()
         service = _service(repo, txs)
 
-        created = await service.run_due(date(2026, 6, 20))
+        created = await service.run_due(_at(date(2026, 6, 20)))
 
         assert created == 1
         tx, uid = txs.created[0]
@@ -239,13 +272,22 @@ class TestRunDue:
         assert data["last_run_date"] == "2026-06-15"
         assert data["next_run_date"] == "2026-07-15"
 
+    async def test_candidate_window_is_widened_by_one_day(self) -> None:
+        # The DB scan uses now.date()+1 so no timezone's local "today" is missed.
+        repo = FakeRecurringRepository([_rec(next_run_date=date(2026, 6, 15))])
+        service = _service(repo)
+
+        await service.run_due(_at(date(2026, 6, 20)))
+
+        assert repo.due_calls == [date(2026, 6, 21)]
+
     async def test_catch_up_is_bounded_by_max(self) -> None:
         # A next_run_date years in the past would produce > 24 occurrences.
         repo = FakeRecurringRepository([_rec(next_run_date=date(2020, 1, 15))])
         txs = FakeTransactionService()
         service = _service(repo, txs)
 
-        created = await service.run_due(date(2026, 6, 20))
+        created = await service.run_due(_at(date(2026, 6, 20)))
 
         assert created == 24  # MAX_CATCHUP_RUNS
         assert len(txs.created) == 24
@@ -260,7 +302,7 @@ class TestRunDue:
         txs = FakeTransactionService()
         service = _service(repo, txs)
 
-        created = await service.run_due(date(2026, 6, 20))
+        created = await service.run_due(_at(date(2026, 6, 20)))
 
         assert created == 1  # only the active one materialized
 
@@ -278,7 +320,7 @@ class TestRunDue:
         txs = FakeTransactionService()
         service = _service(repo, txs, FakeCardService(cards=[card]))
 
-        created = await service.run_due(date(2026, 6, 20))
+        created = await service.run_due(_at(date(2026, 6, 20)))
 
         assert created == 1
         tx, _uid = txs.created[0]
@@ -291,10 +333,81 @@ class TestRunDue:
         txs = FakeTransactionService()
         service = _service(repo, txs)
 
-        created = await service.run_due(date(2026, 6, 20))
+        created = await service.run_due(_at(date(2026, 6, 20)))
 
         assert created == 0
         assert txs.created == []
+
+
+class TestRunDuePerOwnerTimezone:
+    async def test_each_template_fires_only_on_its_owners_local_day(self) -> None:
+        # One instant where the Bogota (UTC-5) and Kiritimati (UTC+14) calendar
+        # days differ: 03:00 UTC on Jun 15 is still Jun 14 in Bogota but already
+        # Jun 15 in Kiritimati. Each user has a template due on day 15.
+        instant = datetime(2026, 6, 15, 3, 0, tzinfo=UTC)
+        repo = FakeRecurringRepository(
+            [
+                _rec(rec_id="bog", user_id="bog", next_run_date=date(2026, 6, 15)),
+                _rec(rec_id="kir", user_id="kir", next_run_date=date(2026, 6, 15)),
+            ]
+        )
+        txs = FakeTransactionService()
+        profiles = FakeProfileService(
+            {"bog": "America/Bogota", "kir": "Pacific/Kiritimati"}
+        )
+        service = _service(repo, txs, profiles=profiles)
+
+        created = await service.run_due(instant)
+
+        # Only Kiritimati is on its local day 15; Bogota is still day 14 -> 0.
+        assert created == 1
+        assert [uid for _tx, uid in txs.created] == ["kir"]
+
+    async def test_profile_fetched_once_per_user_not_per_template(self) -> None:
+        # Two templates for the same user must cost ONE profile lookup (cache).
+        repo = FakeRecurringRepository(
+            [
+                _rec(rec_id="a", user_id="u1", next_run_date=date(2026, 6, 15)),
+                _rec(rec_id="b", user_id="u1", next_run_date=date(2026, 6, 15)),
+            ]
+        )
+        profiles = FakeProfileService({"u1": "America/Bogota"})
+        service = _service(repo, FakeTransactionService(), profiles=profiles)
+
+        created = await service.run_due(_at(date(2026, 6, 20)))
+
+        assert created == 2
+        assert profiles.get_calls == ["u1"]  # fetched once, cached for both
+
+    async def test_none_timezone_falls_back_to_utc(self) -> None:
+        # A profile that yields no zone resolves the owner's today in UTC.
+        instant = datetime(2026, 6, 15, 3, 0, tzinfo=UTC)  # UTC date is Jun 15
+        repo = FakeRecurringRepository(
+            [_rec(user_id="u1", next_run_date=date(2026, 6, 15))]
+        )
+        txs = FakeTransactionService()
+        profiles = FakeProfileService({"u1": None})
+        service = _service(repo, txs, profiles=profiles)
+
+        created = await service.run_due(instant)
+
+        assert created == 1  # UTC today is Jun 15 -> due
+
+    async def test_unset_timezone_uses_default(self) -> None:
+        # A user who never configured a tz gets DEFAULT_TIMEZONE (America/Bogota),
+        # preserving the previous single-timezone behavior.
+        assert settings.DEFAULT_TIMEZONE == "America/Bogota"
+        repo = FakeRecurringRepository(
+            [_rec(user_id="u1", next_run_date=date(2026, 6, 15))]
+        )
+        txs = FakeTransactionService()
+        profiles = FakeProfileService()  # no override -> DEFAULT_TIMEZONE
+        service = _service(repo, txs, profiles=profiles)
+
+        created = await service.run_due(_at(date(2026, 6, 20)))
+
+        assert created == 1
+        assert profiles.get_calls == ["u1"]
 
 
 class TestMutations:
@@ -308,16 +421,14 @@ class TestMutations:
 
         assert updated.amount == Decimal("99999")
 
-    async def test_update_day_reschedules_next_run(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(service_module, "_today", lambda: date(2026, 6, 10))
+    async def test_update_day_reschedules_next_run(self) -> None:
         repo = FakeRecurringRepository([_rec(day_of_month=15)])
         service = _service(repo)
 
-        updated = await service.update_recurring(
-            "rec-1", "u1", RecurringUpdate(day_of_month=20)
-        )
+        with bound_today(date(2026, 6, 10)):
+            updated = await service.update_recurring(
+                "rec-1", "u1", RecurringUpdate(day_of_month=20)
+            )
 
         assert updated.day_of_month == 20
         assert updated.next_run_date == date(2026, 6, 20)
@@ -409,8 +520,8 @@ class TestIdempotency:
         txs = _real_tx_service(db)
         first_repo = FakeRecurringRepository([_rec(next_run_date=date(2026, 6, 15))])
         created = await RecurringService(
-            first_repo, txs, FakeCardService(cards=[])
-        ).run_due(date(2026, 6, 15))
+            first_repo, txs, FakeCardService(cards=[]), FakeProfileService()
+        ).run_due(_at(date(2026, 6, 15)))
         assert created == 1
         assert len(db.ignore_inserted) == 1
 
@@ -418,8 +529,8 @@ class TestIdempotency:
         # re-attempts the same occurrence -> ignored, no new transaction.
         replay_repo = FakeRecurringRepository([_rec(next_run_date=date(2026, 6, 15))])
         recreated = await RecurringService(
-            replay_repo, txs, FakeCardService(cards=[])
-        ).run_due(date(2026, 6, 15))
+            replay_repo, txs, FakeCardService(cards=[]), FakeProfileService()
+        ).run_due(_at(date(2026, 6, 15)))
         assert recreated == 0
         assert len(db.ignore_inserted) == 1  # still exactly one
 
@@ -432,8 +543,8 @@ class TestIdempotency:
         await txs.materialize_occurrence(_occurrence_tx("rec-1", date(2026, 6, 15)), "u1")
         repo = FakeRecurringRepository([_rec(next_run_date=date(2026, 6, 15))])
         created = await RecurringService(
-            repo, txs, FakeCardService(cards=[])
-        ).run_due(date(2026, 6, 15))
+            repo, txs, FakeCardService(cards=[]), FakeProfileService()
+        ).run_due(_at(date(2026, 6, 15)))
         assert created == 0  # was a duplicate
         # But the schedule advanced to July regardless.
         _rid, data = repo.updates[-1]
@@ -450,8 +561,8 @@ class TestIdempotency:
         repo._items[0] = repo._items[0].model_copy(update={"category": None})
 
         created = await RecurringService(
-            repo, txs, FakeCardService(cards=[])
-        ).run_due(date(2026, 6, 15))
+            repo, txs, FakeCardService(cards=[]), FakeProfileService()
+        ).run_due(_at(date(2026, 6, 15)))
 
         assert created >= 5  # several catch-up months
         assert categorizer.calls == 1  # categorized once, reused for all
@@ -475,30 +586,30 @@ class TestPartialFailureIsolation:
                 _rec(rec_id="good", description="Good", next_run_date=date(2026, 6, 15)),
             ]
         )
-        service = RecurringService(repo, txs, FakeCardService(cards=[]))
+        service = RecurringService(
+            repo, txs, FakeCardService(cards=[]), FakeProfileService()
+        )
 
-        created = await service.run_due(date(2026, 6, 15))
+        created = await service.run_due(_at(date(2026, 6, 15)))
 
         assert created == 1  # the good one still materialized
         assert len(db.ignore_inserted) == 1
 
         # A re-run does not duplicate the one already done (bad still fails).
-        recreated = await service.run_due(date(2026, 6, 15))
+        recreated = await service.run_due(_at(date(2026, 6, 15)))
         assert len(db.ignore_inserted) == 1
         assert recreated == 0  # good already advanced; bad keeps failing, no dupes
 
 
 class TestResumeReschedules:
-    async def test_resume_skips_missed_months(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(service_module, "_today", lambda: date(2026, 6, 10))
+    async def test_resume_skips_missed_months(self) -> None:
         repo = FakeRecurringRepository(
             [_rec(day_of_month=15, next_run_date=date(2020, 1, 15), active=False)]
         )
         service = _service(repo)
 
-        updated = await service.set_active("rec-1", "u1", True)
+        with bound_today(date(2026, 6, 10)):
+            updated = await service.set_active("rec-1", "u1", True)
 
         assert updated.active is True
         # Rescheduled to the next FUTURE occurrence, not the stale 2020 date.
@@ -534,7 +645,7 @@ class TestDeletedCardFallback:
         txs = FakeTransactionService()
         service = _service(repo, txs, FakeCardService(cards=[]))  # no cards on file
 
-        created = await service.run_due(date(2026, 6, 15))
+        created = await service.run_due(_at(date(2026, 6, 15)))
 
         assert created == 1
         tx, _uid = txs.created[0]

@@ -14,7 +14,7 @@ UTC, so importing this never depends on a request being in flight.
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import UTC, date, datetime, tzinfo
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.logging import get_logger
@@ -26,22 +26,31 @@ logger = get_logger(__name__)
 _LOCAL_TODAY: ContextVar[date | None] = ContextVar("local_today", default=None)
 
 
-def local_today(tz: str | None) -> date:
-    """Return the current calendar day in IANA timezone ``tz``.
+def local_date(instant: datetime, tz: str | None) -> date:
+    """Return the calendar date of ``instant`` in IANA timezone ``tz``.
 
-    Falls back to UTC (with a warning) when ``tz`` is ``None`` or not a known
-    zone, so a bad/absent value can never crash the turn — it just resolves
-    "today" in UTC, exactly as before per-user timezones existed.
+    ``instant`` must be timezone-aware. Falls back to the UTC date (with a
+    warning) when ``tz`` is ``None`` or not a known zone, so a bad/absent value
+    can never crash the caller — it just resolves the date in UTC, exactly as
+    before per-user timezones existed.
     """
     if tz is None:
-        return datetime.now(UTC).date()
-    zone: tzinfo
+        return instant.astimezone(UTC).date()
     try:
         zone = ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError) as e:
         logger.warning("Invalid user timezone; falling back to UTC", configured=tz, error=str(e))
-        zone = UTC
-    return datetime.now(zone).date()
+        return instant.astimezone(UTC).date()
+    return instant.astimezone(zone).date()
+
+
+def local_today(tz: str | None) -> date:
+    """Return the current calendar day in IANA timezone ``tz``.
+
+    Thin wrapper over :func:`local_date` for "now", so there is one timezone
+    conversion implementation. Same UTC fallback semantics.
+    """
+    return local_date(datetime.now(UTC), tz)
 
 
 @contextmanager

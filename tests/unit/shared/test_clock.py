@@ -2,7 +2,25 @@
 
 from datetime import UTC, date, datetime
 
-from app.shared.clock import bound_today, current_today, local_today
+from app.shared.clock import bound_today, current_today, local_date, local_today
+
+
+def test_local_date_resolves_the_date_in_the_given_timezone() -> None:
+    # 03:00 UTC on Jan 2: still Jan 1 in Bogota (UTC-5 -> 22:00 Jan 1) but already
+    # Jan 2 in Tokyo (UTC+9 -> 12:00 Jan 2). One instant, two calendar days.
+    instant = datetime(2026, 1, 2, 3, 0, tzinfo=UTC)
+    assert local_date(instant, "America/Bogota") == date(2026, 1, 1)
+    assert local_date(instant, "Asia/Tokyo") == date(2026, 1, 2)
+
+
+def test_local_date_falls_back_to_utc_on_invalid_zone() -> None:
+    instant = datetime(2026, 1, 2, 3, 0, tzinfo=UTC)
+    assert local_date(instant, "Mars/Phobos") == date(2026, 1, 2)
+
+
+def test_local_date_falls_back_to_utc_on_none() -> None:
+    instant = datetime(2026, 1, 2, 3, 0, tzinfo=UTC)
+    assert local_date(instant, None) == date(2026, 1, 2)
 
 
 def test_local_today_uses_the_given_timezone() -> None:

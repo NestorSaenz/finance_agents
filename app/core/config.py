@@ -47,20 +47,15 @@ class Settings(BaseSettings):
     DEFAULT_CURRENCY: str = "COP"
 
     # Default IANA timezone applied when a user has not set one. Used to resolve
-    # relative dates ("hoy", "ayer") on the user's LOCAL calendar day instead of
-    # UTC. Same value as RECURRING_TIMEZONE (the app's primary market).
+    # relative dates ("hoy", "ayer") and day-of-month recurring schedules on the
+    # user's LOCAL calendar day instead of UTC. Defaults to the app's primary
+    # market (Colombia).
     DEFAULT_TIMEZONE: str = "America/Bogota"
 
     # Shared secret guarding POST /recurring/run (the daily materialization job).
     # A Cloud Scheduler job must send it in the X-Recurring-Secret header. Empty
     # (the default) fails the endpoint closed, so it can never run unprotected.
     RECURRING_RUN_SECRET: str = ""
-
-    # IANA timezone in which recurring schedules are evaluated. Day-of-month
-    # charges must fire on the user's LOCAL calendar day, so "today" and the daily
-    # run date are computed in this zone (not UTC) — otherwise a LatAm "day 30"
-    # could fire a day early near midnight.
-    RECURRING_TIMEZONE: str = "America/Bogota"
 
     # ============================================
     # Rate Limiting (chat cost / abuse control)

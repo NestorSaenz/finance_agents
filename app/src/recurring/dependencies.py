@@ -7,6 +7,7 @@ from fastapi import Depends
 from app.shared.dependencies import DatabaseDep
 from app.src.cards.dependencies import CreditCardServiceDep
 from app.src.transactions.dependencies import TransactionServiceDep
+from app.src.users.dependencies import UserProfileServiceDep
 
 from .interfaces import RecurringRepositoryABC, RecurringServiceABC
 from .repositories.recurring_repository import RecurringRepository
@@ -22,9 +23,14 @@ def get_recurring_service(
     repository: Annotated[RecurringRepositoryABC, Depends(get_recurring_repository)],
     transactions: TransactionServiceDep,
     cards: CreditCardServiceDep,
+    profiles: UserProfileServiceDep,
 ) -> RecurringServiceABC:
-    """Provide the recurring service (needs the transaction and card services)."""
-    return RecurringService(repository, transactions, cards)
+    """Provide the recurring service.
+
+    Needs the transaction and card services to materialize occurrences, and the
+    profile service to resolve each owner's local "today" in the daily run.
+    """
+    return RecurringService(repository, transactions, cards, profiles)
 
 
 RecurringServiceDep = Annotated[RecurringServiceABC, Depends(get_recurring_service)]

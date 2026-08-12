@@ -189,7 +189,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
         user_profile_service,
     )
     recurring_service = RecurringService(
-        RecurringRepository(db), transaction_service, card_service
+        RecurringRepository(db), transaction_service, card_service, user_profile_service
     )
     toolkit = CompositeToolkit(
         [

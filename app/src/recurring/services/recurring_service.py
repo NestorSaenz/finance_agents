@@ -2,10 +2,11 @@
 
 import calendar
 import unicodedata
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from app.core.exceptions import RecurringNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today, local_date
 from app.shared.serialization import decimal_to_db
 from app.shared.types import Category, PaymentMethod, UserId
 from app.src.cards.cycle import compute_cycle, next_payment_date
@@ -13,8 +14,8 @@ from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import TransactionCreate
+from app.src.users.interfaces import UserProfileServiceABC
 
-from ..clock import recurring_today
 from ..constants import MAX_CATCHUP_RUNS
 from ..interfaces import RecurringRepositoryABC, RecurringServiceABC
 from ..models import (
@@ -39,10 +40,12 @@ class RecurringService(RecurringServiceABC):
         repository: RecurringRepositoryABC,
         transactions: TransactionServiceABC,
         cards: CreditCardServiceABC,
+        profiles: UserProfileServiceABC,
     ) -> None:
         self._repository = repository
         self._transactions = transactions
         self._cards = cards
+        self._profiles = profiles
 
     async def create_recurring(
         self, rec: RecurringCreate, user_id: UserId
@@ -143,18 +146,36 @@ class RecurringService(RecurringServiceABC):
             and (needle in stored or (len(stored) >= 4 and stored in needle))
         ]
 
-    async def run_due(self, as_of: date) -> int:
-        due = await self._repository.list_due(as_of)
+    async def run_due(self, now: datetime) -> int:
+        # Materialize each template against ITS OWNER's local "today" (day-of-month
+        # schedules must fire on the user's calendar day, not a single global tz).
+        # Any user's local today is within ±1 day of the UTC date, so widen the
+        # candidate window to ``now + 1 day``: this covers every timezone without
+        # missing a due template, and a template not yet due in its owner's tz
+        # (next_run_date > owner_today) simply materializes 0.
+        cutoff = now.date() + timedelta(days=1)
+        due = await self._repository.list_due(cutoff)
         # Cache each user's cards once per run so materializing several credit
         # templates for the same user doesn't refetch the card list every time.
         card_cache: dict[str, list[CreditCard]] = {}
+        # Cache each owner's local "today" so N users cost N profile lookups, not
+        # one per template.
+        today_by_user: dict[UserId, date] = {}
         created = 0
         for rec in due:
             # Per-template failure isolation (batch-job boundary): one flaky
             # template must never abort the whole multi-user run. A broad catch
             # with context logging is acceptable here per the review skill.
             try:
-                created += await self._materialize(rec, as_of, card_cache)
+                owner_today = today_by_user.get(rec.user_id)
+                if owner_today is None:
+                    # ``get_profile`` always yields a valid IANA tz (DEFAULT_TIMEZONE
+                    # when the user never set one), so this preserves the old global
+                    # behavior for those users and honors the real tz for the rest.
+                    profile = await self._profiles.get_profile(rec.user_id)
+                    owner_today = local_date(now, profile.timezone)
+                    today_by_user[rec.user_id] = owner_today
+                created += await self._materialize(rec, owner_today, card_cache)
             except Exception as exc:  # noqa: BLE001 - batch boundary, logged + continue
                 logger.error(
                     "Recurring template failed; skipping",
@@ -288,9 +309,10 @@ class RecurringService(RecurringServiceABC):
 
 
 def _today() -> date:
-    # Evaluated in the configured recurring timezone (not UTC) so day-of-month
-    # schedules fire on the user's local calendar day.
-    return recurring_today()
+    # The request-scoped local day of the user in the current chat turn (UTC
+    # outside a bound turn, e.g. the REST create path), so day-of-month schedules
+    # fire on the user's local calendar day.
+    return current_today()
 
 
 def _clamp_day(year: int, month: int, day: int) -> date:

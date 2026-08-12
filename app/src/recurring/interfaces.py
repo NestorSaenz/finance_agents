@@ -1,7 +1,7 @@
 """Contracts (ABCs) for the recurring-transactions module."""
 
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 
 from app.shared.types import UserId
 
@@ -103,10 +103,13 @@ class RecurringServiceABC(ABC):
         """
 
     @abstractmethod
-    async def run_due(self, as_of: date) -> int:
+    async def run_due(self, now: datetime) -> int:
         """Materialize every due template into real transactions.
 
-        For each due template, catch up occurrence-by-occurrence (bounded by
+        ``now`` is a timezone-aware UTC instant. Each template is evaluated
+        against ITS OWNER's local calendar day (derived from the owner's stored
+        timezone), catching up occurrence-by-occurrence (bounded by
         ``MAX_CATCHUP_RUNS``) while it is active and its ``next_run_date`` is on
-        or before ``as_of``. Returns the number of transactions created.
+        or before that owner's local today. Returns the number of transactions
+        created.
         """

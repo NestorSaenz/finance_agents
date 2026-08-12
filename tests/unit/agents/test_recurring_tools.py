@@ -119,7 +119,7 @@ class FakeRecurringService(RecurringServiceABC):
             else []
         )
 
-    async def run_due(self, as_of: date) -> int:
+    async def run_due(self, now: datetime) -> int:
         return 0
 
 
