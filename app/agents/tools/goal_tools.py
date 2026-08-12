@@ -26,6 +26,7 @@ CREATE_GOAL_TOOL = "create_goal"
 QUERY_GOALS_TOOL = "query_goals"
 CONTRIBUTE_GOAL_TOOL = "contribute_to_goal"
 WITHDRAW_GOAL_TOOL = "withdraw_from_goal"
+SET_GOAL_AMOUNT_TOOL = "set_goal_amount"
 REMOVE_CONTRIBUTION_TOOL = "remove_goal_contribution"
 UPDATE_GOAL_TOOL = "update_goal"
 DELETE_GOAL_TOOL = "delete_goal"
@@ -166,6 +167,45 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": SET_GOAL_AMOUNT_TOOL,
+            "description": (
+                "Ajusta/corrige/FIJA el total ahorrado de una meta a un valor EXACTO "
+                "(identificada por su nombre). Úsala cuando el usuario dice cuánto TIENE "
+                "ahora la meta, no cuánto añadir: 'ajusta/corrige/deja el ahorro de X en "
+                "$Y', 'la meta X tiene $Y', 'pon la meta X en 0'. Reconcilia el total con "
+                "sus aportes. NO la uses para aportar (contribute_to_goal SUMA) ni para "
+                "retirar (withdraw_from_goal RESTA); nunca borres aportes para cuadrar el total."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre de la meta"},
+                    "amount": {
+                        "type": "number",
+                        "description": "Total ahorrado deseado (0 o mayor)",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha YYYY-MM-DD del ajuste si el usuario la indica; "
+                            "por defecto, hoy."
+                        ),
+                    },
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": REMOVE_CONTRIBUTION_TOOL,
             "description": (
                 "Borra un aporte puntual de una meta (por su monto y, si hace falta, "
@@ -281,6 +321,8 @@ class GoalToolkit:
             return await self._contribute(arguments, user_id)
         if name == WITHDRAW_GOAL_TOOL:
             return await self._withdraw(arguments, user_id)
+        if name == SET_GOAL_AMOUNT_TOOL:
+            return await self._set_amount(arguments, user_id)
         if name == REMOVE_CONTRIBUTION_TOOL:
             return await self._remove_contribution(arguments, user_id)
         if name == UPDATE_GOAL_TOOL:
@@ -404,6 +446,34 @@ class GoalToolkit:
             f"🏦 Retiré ${amount} de tu meta «{updated.name}». Ese dinero vuelve a "
             f"tu disponible. Ahora llevas ${updated.current_amount} de "
             f"${updated.target_amount}."
+        )
+
+    async def _set_amount(self, args: dict[str, Any], user_id: UserId) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        try:
+            amount = _to_decimal(args.get("amount"))
+        except ValueError:
+            return "No pude ajustar la meta: el monto no es válido."
+        if amount < 0:
+            return "El total ahorrado de la meta no puede ser negativo."
+
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "ajustar")
+
+        # Honor the date the user stated; default to today (used only when the
+        # adjustment moves real money, i.e. writes a contribution/withdrawal).
+        on_date = _opt_date(args.get("date")) or datetime.now(UTC).date()
+        updated = await self._service.set_goal_amount(
+            goal.id, user_id, amount, on_date
+        )
+        logger.info("Tool set goal amount", goal_id=goal.id, user_id=user_id)
+        return (
+            f"✅ Ajusté tu meta «{updated.name}»: ahora tiene ${updated.current_amount} "
+            f"ahorrados (de ${updated.target_amount})."
         )
 
     async def _remove_contribution(self, args: dict[str, Any], user_id: UserId) -> str:

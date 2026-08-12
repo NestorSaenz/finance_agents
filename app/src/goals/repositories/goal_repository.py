@@ -1,5 +1,6 @@
 """Supabase-backed goal repository (data access only)."""
 
+from decimal import Decimal
 from typing import Any
 
 from app.core.exceptions import GoalNotFoundError, InfrastructureError
@@ -43,7 +44,10 @@ class GoalRepository(GoalRepositoryABC):
             "description": goal.description,
             "type": goal.goal_type.value,
             "target_amount": decimal_to_db(goal.target_amount),
-            "current_amount": decimal_to_db(goal.current_amount),
+            # Goals are always born at 0: money only enters via dated
+            # contributions (the ledger), so ``current_amount`` starts at 0 and
+            # is kept == sum(contributions) by every subsequent write.
+            "current_amount": decimal_to_db(Decimal("0")),
             "currency": goal.currency.value,
             "target_date": goal.target_date.isoformat() if goal.target_date else None,
             "status": GoalStatus.ACTIVE.value,

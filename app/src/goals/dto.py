@@ -18,7 +18,6 @@ class GoalCreateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     goal_type: GoalType = Field(default=GoalType.SAVINGS)
     target_amount: Decimal = Field(..., gt=0, examples=[100000])
-    current_amount: Decimal = Field(default=Decimal("0"), ge=0, examples=[25000])
     currency: CurrencyType = Field(default=CurrencyType.MXN)
     target_date: date | None = Field(default=None, examples=["2025-12-31"])
     priority: int = Field(default=DEFAULT_PRIORITY, ge=1)

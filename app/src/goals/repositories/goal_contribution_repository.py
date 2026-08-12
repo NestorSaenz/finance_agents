@@ -69,6 +69,20 @@ class GoalContributionRepository(GoalContributionRepositoryABC):
                 totals[str(row["goal_id"])] += _parse_decimal(row.get("amount"))
         return dict(totals)
 
+    async def sum_for_goal(self, user_id: UserId, goal_id: GoalId) -> Decimal:
+        config = QueryConfig(
+            select="amount",
+            filters={"user_id": user_id, "goal_id": goal_id},
+        )
+        result = await self._db.select(GOAL_CONTRIBUTIONS_TABLE, config)
+        # Signed sum of every contribution for the goal (positive aportes and
+        # negative withdrawals) — the ledger balance the goal's cached
+        # ``current_amount`` must equal. Summed in Python, like ``sum_in_period``.
+        return sum(
+            (_parse_decimal(row.get("amount")) for row in result.data),
+            start=Decimal("0"),
+        )
+
     async def sum_in_period(
         self, user_id: UserId, start: date, end: date
     ) -> Decimal:

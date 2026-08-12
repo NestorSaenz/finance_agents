@@ -167,11 +167,12 @@ class GoalBase(BaseModel):
 
 
 class GoalCreate(GoalBase):
-    """Model for creating a new goal."""
+    """Model for creating a new goal.
 
-    current_amount: Amount = Field(
-        default=Decimal("0"), ge=0, description="Current progress"
-    )
+    Goals are always born at 0; an opening balance is expressed as a contribution
+    (see app.src.goals) so ``current_amount`` never drifts from the ledger.
+    """
+
     priority: int = Field(default=1, ge=1, le=5, description="Priority level")
 
 

@@ -11,13 +11,18 @@ from .constants import DEFAULT_PRIORITY
 
 
 class GoalCreate(BaseModel):
-    """Data required to create a financial goal."""
+    """Data required to create a financial goal.
+
+    A goal is always born at ``current_amount == 0``: money only enters through
+    dated ``goal_contributions`` (the ledger), so there is no way to create a
+    goal that already holds savings with no backing contribution. To seed an
+    already-saved amount, create the goal then record a contribution.
+    """
 
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
     goal_type: GoalType = GoalType.SAVINGS
     target_amount: Decimal = Field(..., gt=0, description="Target amount (positive)")
-    current_amount: Decimal = Field(default=Decimal("0"), ge=0)
     currency: CurrencyType = CurrencyType.MXN
     target_date: date | None = None
     priority: int = Field(default=DEFAULT_PRIORITY, ge=1)

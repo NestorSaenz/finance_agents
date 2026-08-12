@@ -83,16 +83,11 @@ class GoalService(GoalServiceABC):
             goal_id, user_id, amount, contribution_date or _today()
         )
 
-        # Keep ``current_amount`` as a cached running total so unfiltered reads
-        # stay cheap; the dated contribution above is the source of truth for
-        # per-month progress.
-        new_amount = goal.current_amount + amount
-        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
-        if new_amount >= goal.target_amount:
-            data["status"] = GoalStatus.COMPLETED.value
-            logger.info("Goal reached", goal_id=goal_id)
-
-        return await self._repository.update(goal_id, user_id, data)
+        # Recompute ``current_amount`` from the ledger (never ``current ± amount``)
+        # so the cache can NEVER drift from ``sum(contributions)``: any prior
+        # divergence is self-healed here. The dated contribution above remains the
+        # source of truth for per-month progress.
+        return await self._recompute_cache(goal, user_id)
 
     async def withdraw_from_goal(
         self,
@@ -106,25 +101,54 @@ class GoalService(GoalServiceABC):
                 float(amount), "Withdrawal amount must be positive"
             )
         goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
-        if amount > goal.current_amount:
-            raise GoalWithdrawalExceedsBalanceError(goal.name, goal.current_amount)
+        # Validate against the LEDGER balance (sum of contributions), never the
+        # cached ``current_amount`` which could have drifted: you cannot take out
+        # more than the ledger actually holds.
+        balance = await self._contributions.sum_for_goal(user_id, goal_id)
+        if amount > balance:
+            raise GoalWithdrawalExceedsBalanceError(goal.name, balance)
 
         # A withdrawal is a NEGATIVE contribution: it rewinds progress (mirroring
         # ``contribute``, which writes a positive one) and, since aportes are
         # netted out of disponible, the money returns there — no income/expense.
         await self._contributions.create(goal_id, user_id, -amount, withdrawal_date)
 
-        # Roll back the cached running total and re-derive completion, mirroring
-        # ``update_goal``: only ACTIVE/COMPLETED is derived; paused/cancelled stay.
-        # ``new_amount`` can't go below 0 given the balance check above.
-        new_amount = goal.current_amount - amount
-        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
-        if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
-            reached = new_amount >= goal.target_amount
-            data["status"] = (
-                GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE
-            ).value
         logger.info("Goal withdrawal", goal_id=goal_id, user_id=user_id)
+        # Recompute the cache from the ledger and re-derive completion.
+        return await self._recompute_cache(goal, user_id)
+
+    async def set_goal_amount(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        on_date: date,
+    ) -> Goal:
+        if amount < 0:
+            raise InvalidAmountError(
+                float(amount), "Goal amount must be zero or positive"
+            )
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        balance = await self._contributions.sum_for_goal(user_id, goal_id)
+
+        if amount > balance:
+            # Real money in: record only the delta as a contribution so the ledger
+            # (and the dashboard's cash-flow) reflects exactly what was added.
+            return await self.contribute(goal_id, user_id, amount - balance, on_date)
+        if amount < balance:
+            # Real money out: withdraw the delta (a negative contribution).
+            return await self.withdraw_from_goal(
+                goal_id, user_id, balance - amount, on_date
+            )
+
+        # amount == balance: PURE RECONCILE — the ledger already sums to ``amount``,
+        # so snap the cache to it and write NO ledger row (zero cash-flow impact).
+        # This also covers "déjalo en 0" when the ledger balance is 0.
+        logger.info("Goal amount reconciled", goal_id=goal_id, user_id=user_id)
+        data: dict[str, object] = {"current_amount": decimal_to_db(amount)}
+        status = _status_after(goal, amount)
+        if status is not None:
+            data["status"] = status
         return await self._repository.update(goal_id, user_id, data)
 
     async def contributed_in_period(
@@ -215,17 +239,10 @@ class GoalService(GoalServiceABC):
 
         await self._contributions.delete(match.id, user_id)
 
-        # Roll back the cached running total and re-derive completion, mirroring
-        # ``update_goal``: only ACTIVE/COMPLETED is derived; paused/cancelled stay.
-        new_amount = max(goal.current_amount - amount, Decimal("0"))
-        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
-        if goal.status in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
-            reached = new_amount >= goal.target_amount
-            data["status"] = (
-                GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE
-            ).value
         logger.info("Goal contribution removed", goal_id=goal_id, user_id=user_id)
-        return await self._repository.update(goal_id, user_id, data)
+        # Recompute the cache straight from the ledger (no ``max(..., 0)`` floor,
+        # which masked drift) and re-derive completion.
+        return await self._recompute_cache(goal, user_id)
 
     async def get_progress(
         self, goal_id: GoalId, user_id: UserId, as_of: date | None = None
@@ -238,6 +255,34 @@ class GoalService(GoalServiceABC):
     ) -> list[GoalContribution]:
         await self.get_goal(goal_id, user_id)  # existence/ownership check
         return await self._contributions.list_for_goal(user_id, goal_id)
+
+    async def _recompute_cache(self, goal: Goal, user_id: UserId) -> Goal:
+        """Persist ``current_amount = sum(all contributions)`` and re-derive status.
+
+        The single writer of ``current_amount`` for every ledger mutation: it reads
+        the ledger back (never trusting the previous cache) so the invariant
+        ``current_amount == sum(contributions)`` holds after each write and any
+        prior drift is healed. Completion is re-derived only for ACTIVE/COMPLETED
+        goals; paused/cancelled keep their status.
+        """
+        new_amount = await self._contributions.sum_for_goal(user_id, goal.id)
+        data: dict[str, object] = {"current_amount": decimal_to_db(new_amount)}
+        status = _status_after(goal, new_amount)
+        if status is not None:
+            data["status"] = status
+        return await self._repository.update(goal.id, user_id, data)
+
+
+def _status_after(goal: Goal, new_amount: Decimal) -> str | None:
+    """Return the status value to persist for ``new_amount``, or None to keep it.
+
+    Only ACTIVE/COMPLETED goals have completion re-derived (reaching the target
+    completes, dropping below reopens); paused/cancelled goals are left untouched.
+    """
+    if goal.status not in (GoalStatus.ACTIVE, GoalStatus.COMPLETED):
+        return None
+    reached = new_amount >= goal.target_amount
+    return str((GoalStatus.COMPLETED if reached else GoalStatus.ACTIVE).value)
 
 
 def _with_cumulative(goal: Goal, cumulative: Decimal) -> Goal:

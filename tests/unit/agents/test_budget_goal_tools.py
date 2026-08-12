@@ -126,6 +126,7 @@ class FakeGoalService(GoalServiceABC):
         self.created: list[tuple[GoalCreate, str]] = []
         self.contributions: list[tuple[str, str, Decimal, date | None]] = []
         self.withdrawals: list[tuple[str, str, Decimal, date]] = []
+        self.set_amounts: list[tuple[str, str, Decimal, date]] = []
         self.deleted: list[tuple[str, str]] = []
         self.removed: list[tuple[str, str, Decimal, date | None]] = []
         # Controls what ``remove_contribution`` returns (None = "no match").
@@ -170,6 +171,16 @@ class FakeGoalService(GoalServiceABC):
             )
         self.withdrawals.append((goal_id, user_id, amount, withdrawal_date))
         return _goal(id=goal_id, current_amount=Decimal("25000") - amount)
+
+    async def set_goal_amount(
+        self,
+        goal_id: str,
+        user_id: str,
+        amount: Decimal,
+        on_date: date,
+    ) -> Goal:
+        self.set_amounts.append((goal_id, user_id, amount, on_date))
+        return _goal(id=goal_id, current_amount=amount)
 
     async def contributed_in_period(
         self, user_id: str, period_start: date, period_end: date
@@ -517,6 +528,47 @@ class TestGoalToolkit:
             "withdraw_from_goal", {"goal_name": "Moto", "amount": 100}, "u1"
         )
         assert not service.withdrawals  # never reached the service
+        assert "no encontré" in result.lower()
+
+    async def test_set_goal_amount_resolves_and_sets(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        result = await GoalToolkit(service).dispatch(
+            "set_goal_amount",
+            {"goal_name": "Fondo de emergencia", "amount": 40000},
+            "u1",
+        )
+        goal_id, user_id, amount, when = service.set_amounts[0]
+        assert goal_id == "g9" and user_id == "u1" and amount == Decimal("40000")
+        assert when == datetime.now(UTC).date()  # defaults to today
+        assert "✅" in result and "40000" in result
+
+    async def test_set_goal_amount_honors_stated_date(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        await GoalToolkit(service).dispatch(
+            "set_goal_amount",
+            {"goal_name": "Fondo de emergencia", "amount": 0, "date": "2026-06-15"},
+            "u1",
+        )
+        _goal_id, _user, amount, when = service.set_amounts[0]
+        assert amount == Decimal("0")  # "pon la meta en 0"
+        assert when == date(2026, 6, 15)
+
+    async def test_set_goal_amount_rejects_negative(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g9", name="Fondo de emergencia")])
+        result = await GoalToolkit(service).dispatch(
+            "set_goal_amount",
+            {"goal_name": "Fondo de emergencia", "amount": -100},
+            "u1",
+        )
+        assert not service.set_amounts  # never reached the service
+        assert "no puede ser negativo" in result.lower()
+
+    async def test_set_goal_amount_unknown_goal_returns_message(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "set_goal_amount", {"goal_name": "Moto", "amount": 100}, "u1"
+        )
+        assert not service.set_amounts
         assert "no encontré" in result.lower()
 
     async def test_update_goal_changes_target(self) -> None:

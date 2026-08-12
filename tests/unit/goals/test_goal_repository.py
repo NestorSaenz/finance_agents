@@ -14,7 +14,6 @@ def _new_goal() -> GoalCreate:
         name="Viaje a Japón",
         goal_type=GoalType.SAVINGS,
         target_amount=Decimal("100000"),
-        current_amount=Decimal("25000"),
         currency=CurrencyType.MXN,
         target_date=date(2025, 12, 31),
     )
@@ -30,7 +29,7 @@ class TestCreate:
         inserted = db.inserted[0]
         assert inserted["type"] == "savings"
         assert inserted["target_amount"] == "100000"
-        assert inserted["current_amount"] == "25000"
+        assert inserted["current_amount"] == "0"  # goals are always born at 0
         assert inserted["status"] == "active"
         assert result.target_amount == Decimal("100000.0")
         assert result.goal_type == GoalType.SAVINGS

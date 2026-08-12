@@ -50,7 +50,8 @@ class FakeGoalRepository(GoalRepositoryABC):
         self.deleted: str | None = None
 
     async def create(self, goal: GoalCreate, user_id: UserId) -> Goal:
-        return _goal(current=goal.current_amount, target=goal.target_amount)
+        # Goals are born at 0; an opening balance is a contribution, not a field.
+        return _goal(current=Decimal("0"), target=goal.target_amount)
 
     async def get_by_id(self, goal_id: GoalId, user_id: UserId) -> Goal | None:
         return self.goal
@@ -82,6 +83,7 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
         contributions: list[tuple[Decimal, date]] | None = None,
         for_goal: list[GoalContribution] | None = None,
         in_period: list[GoalContribution] | None = None,
+        ledger_sum: Decimal | None = None,
     ) -> None:
         self.created: list[tuple[str, str, Decimal, date]] = []
         self.deleted: list[str] = []
@@ -92,11 +94,21 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
         self._for_goal = for_goal or []
         # Seeded rows returned verbatim by ``list_in_period`` (already newest-first).
         self._in_period = in_period or []
+        # Signed ledger balance for the goal (what ``sum_for_goal`` returns).
+        # Defaults to the sum of the seeded ``for_goal`` rows; ``create``/``delete``
+        # keep it in step so recompute-from-ledger can be asserted. Set it
+        # independently of the goal's cached ``current_amount`` to model drift.
+        self._ledger_sum = (
+            ledger_sum
+            if ledger_sum is not None
+            else sum((c.amount for c in self._for_goal), start=Decimal("0"))
+        )
 
     async def create(
         self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
     ) -> GoalContribution:
         self.created.append((goal_id, user_id, amount, contribution_date))
+        self._ledger_sum += amount
         return GoalContribution(
             id="c1",
             goal_id=goal_id,
@@ -105,6 +117,9 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
             contribution_date=contribution_date,
             created_at=datetime.now(UTC),
         )
+
+    async def sum_for_goal(self, user_id: UserId, goal_id: GoalId) -> Decimal:
+        return self._ledger_sum
 
     async def sums_up_to(self, user_id: UserId, as_of: date) -> dict[str, Decimal]:
         return dict(self._sums)
@@ -129,7 +144,13 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
 
     async def delete(self, contribution_id: str, user_id: UserId) -> None:
         self.deleted.append(contribution_id)
-        # Drop from the seeded list so the service test observes a real removal.
+        # Drop from the seeded list so the service test observes a real removal,
+        # keeping the ledger balance in step with the deletion.
+        removed = next(
+            (c for c in self._for_goal if c.id == contribution_id), None
+        )
+        if removed is not None:
+            self._ledger_sum -= removed.amount
         self._for_goal = [c for c in self._for_goal if c.id != contribution_id]
 
 
@@ -152,15 +173,30 @@ class TestGetGoal:
 
 class TestContribute:
     async def test_adds_amount(self) -> None:
+        # Ledger already holds 25000 (matching the cache); a 5000 aporte snaps the
+        # recomputed cache to the ledger total of 30000.
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
-        contribs = FakeGoalContributionRepository()
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("25000"))
         service = _service(repo, contribs)
 
         result = await service.contribute("goal-1", "u1", Decimal("5000"))
 
         assert repo.updated_data["current_amount"] == "30000"
-        assert "status" not in repo.updated_data  # not yet reached
+        assert repo.updated_data["status"] == "active"  # 30k < 100k, still active
         assert result.current_amount == Decimal("30000")
+
+    async def test_recomputes_from_ledger_healing_drifted_cache(self) -> None:
+        # The cached current_amount (999) has drifted from the real ledger (100).
+        # A 50 aporte recomputes straight from the ledger: 100 + 50 = 150, NOT
+        # 999 + 50 — the drift is healed, not carried forward.
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("999")))
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("100"))
+        service = _service(repo, contribs)
+
+        result = await service.contribute("goal-1", "u1", Decimal("50"))
+
+        assert repo.updated_data["current_amount"] == "150"
+        assert result.current_amount == Decimal("150")
 
     async def test_inserts_a_dated_contribution(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
@@ -183,10 +219,12 @@ class TestContribute:
 
     async def test_completes_when_target_reached(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("95000")))
-        service = _service(repo)
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("95000"))
+        service = _service(repo, contribs)
 
         result = await service.contribute("goal-1", "u1", Decimal("10000"))
 
+        assert repo.updated_data["current_amount"] == "105000"
         assert repo.updated_data["status"] == "completed"
         assert result.status == GoalStatus.COMPLETED
 
@@ -196,7 +234,7 @@ class TestContribute:
         repo = FakeGoalRepository(
             goal=_goal(status=GoalStatus.COMPLETED, current=Decimal("500000"))
         )
-        contribs = FakeGoalContributionRepository()
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("500000"))
         service = _service(repo, contribs)
 
         await service.contribute("goal-1", "u1", Decimal("100"))
@@ -207,29 +245,32 @@ class TestContribute:
 class TestWithdrawFromGoal:
     async def test_reduces_current_amount_and_writes_negative_contribution(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
-        contribs = FakeGoalContributionRepository()
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("25000"))
         service = _service(repo, contribs)
 
         result = await service.withdraw_from_goal(
             "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
         )
 
-        # A withdrawal is recorded as a NEGATIVE dated contribution.
+        # A withdrawal is recorded as a NEGATIVE dated contribution; the cache is
+        # recomputed from the ledger (25000 - 10000).
         assert contribs.created == [("goal-1", "u1", Decimal("-10000"), date(2026, 6, 15))]
-        assert repo.updated_data["current_amount"] == "15000"  # 25000 - 10000
+        assert repo.updated_data["current_amount"] == "15000"
         assert result.current_amount == Decimal("15000")
 
-    async def test_exceeding_balance_raises(self) -> None:
+    async def test_exceeding_balance_raises_against_ledger(self) -> None:
+        # The cache says 25000 but the LEDGER holds only 8000; the balance check
+        # must use the ledger, so withdrawing 10000 is rejected and reports 8000.
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
-        contribs = FakeGoalContributionRepository()
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("8000"))
         service = _service(repo, contribs)
 
         with pytest.raises(GoalWithdrawalExceedsBalanceError) as exc:
             await service.withdraw_from_goal(
-                "goal-1", "u1", Decimal("30000"), date(2026, 6, 15)
+                "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
             )
 
-        assert exc.value.available == Decimal("25000")
+        assert exc.value.available == Decimal("8000")  # ledger, not cache
         assert contribs.created == []  # nothing recorded
         assert repo.updated_data == {}  # goal untouched
 
@@ -241,7 +282,8 @@ class TestWithdrawFromGoal:
                 target=Decimal("100000"),
             )
         )
-        service = _service(repo)
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("100000"))
+        service = _service(repo, contribs)
 
         await service.withdraw_from_goal(
             "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
@@ -256,7 +298,8 @@ class TestWithdrawFromGoal:
                 status=GoalStatus.PAUSED, current=Decimal("50000"), target=Decimal("100000")
             )
         )
-        service = _service(repo)
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("50000"))
+        service = _service(repo, contribs)
 
         await service.withdraw_from_goal(
             "goal-1", "u1", Decimal("10000"), date(2026, 6, 15)
@@ -475,10 +518,14 @@ def _contribution(
 
 
 class TestRemoveContribution:
-    async def test_deletes_match_and_decrements_current_amount(self) -> None:
+    async def test_deletes_match_and_recomputes_current_amount(self) -> None:
+        # Ledger holds 25000 total, of which the removed row is 5000; after the
+        # delete the cache is recomputed from the ledger to 20000.
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
         seeded = [_contribution("c1", Decimal("5000"), date(2026, 6, 15))]
-        contribs = FakeGoalContributionRepository(for_goal=seeded)
+        contribs = FakeGoalContributionRepository(
+            for_goal=seeded, ledger_sum=Decimal("25000")
+        )
         service = _service(repo, contribs)
 
         result = await service.remove_contribution("goal-1", "u1", Decimal("5000"))
@@ -539,7 +586,8 @@ class TestRemoveContribution:
             )
         )
         contribs = FakeGoalContributionRepository(
-            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))]
+            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))],
+            ledger_sum=Decimal("100000"),
         )
         service = _service(repo, contribs)
 
@@ -555,7 +603,8 @@ class TestRemoveContribution:
             )
         )
         contribs = FakeGoalContributionRepository(
-            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))]
+            for_goal=[_contribution("c1", Decimal("10000"), date(2026, 6, 15))],
+            ledger_sum=Decimal("50000"),
         )
         service = _service(repo, contribs)
 
@@ -563,23 +612,98 @@ class TestRemoveContribution:
 
         assert "status" not in repo.updated_data  # paused kept, not re-derived
 
-    async def test_floors_current_amount_at_zero(self) -> None:
+    async def test_recomputes_from_ledger_without_floor(self) -> None:
+        # No more max(..., 0) floor: removing a contribution snaps the cache to
+        # whatever the ledger now sums to (here the last row, leaving 0).
         repo = FakeGoalRepository(
-            goal=_goal(current=Decimal("5000"), target=Decimal("100000"))
+            goal=_goal(current=Decimal("8000"), target=Decimal("100000"))
         )
         contribs = FakeGoalContributionRepository(
-            for_goal=[_contribution("c1", Decimal("8000"), date(2026, 6, 15))]
+            for_goal=[_contribution("c1", Decimal("8000"), date(2026, 6, 15))],
+            ledger_sum=Decimal("8000"),
         )
         service = _service(repo, contribs)
 
         await service.remove_contribution("goal-1", "u1", Decimal("8000"))
 
-        assert repo.updated_data["current_amount"] == "0"  # 5k - 8k floored at 0
+        assert repo.updated_data["current_amount"] == "0"  # recomputed from ledger
 
     async def test_raises_when_goal_missing(self) -> None:
         service = _service(FakeGoalRepository(goal=None))
         with pytest.raises(GoalNotFoundError):
             await service.remove_contribution("missing", "u1", Decimal("5000"))
+
+
+class TestSetGoalAmount:
+    async def test_equal_to_ledger_is_pure_reconcile_no_contribution(self) -> None:
+        # amount == ledger balance: snap the (drifted) cache to it, write NO row.
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("999")))
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("100"))
+        service = _service(repo, contribs)
+
+        result = await service.set_goal_amount(
+            "goal-1", "u1", Decimal("100"), date(2026, 6, 15)
+        )
+
+        assert contribs.created == []  # zero cash-flow impact
+        assert repo.updated_data["current_amount"] == "100"
+        assert result.current_amount == Decimal("100")
+
+    async def test_zero_when_ledger_zero_writes_no_contribution(self) -> None:
+        # "déjalo en 0" when the ledger is already 0: pure reconcile, no row.
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("500")))
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("0"))
+        service = _service(repo, contribs)
+
+        result = await service.set_goal_amount(
+            "goal-1", "u1", Decimal("0"), date(2026, 6, 15)
+        )
+
+        assert contribs.created == []
+        assert repo.updated_data["current_amount"] == "0"
+        assert result.current_amount == Decimal("0")
+
+    async def test_above_ledger_records_delta_contribution(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("100")))
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("100"))
+        service = _service(repo, contribs)
+
+        result = await service.set_goal_amount(
+            "goal-1", "u1", Decimal("150"), date(2026, 6, 15)
+        )
+
+        # Only the +50 delta is recorded (real money in), then recomputed to 150.
+        assert contribs.created == [("goal-1", "u1", Decimal("50"), date(2026, 6, 15))]
+        assert repo.updated_data["current_amount"] == "150"
+        assert result.current_amount == Decimal("150")
+
+    async def test_below_ledger_withdraws_delta(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(current=Decimal("100")))
+        contribs = FakeGoalContributionRepository(ledger_sum=Decimal("100"))
+        service = _service(repo, contribs)
+
+        result = await service.set_goal_amount(
+            "goal-1", "u1", Decimal("40"), date(2026, 6, 15)
+        )
+
+        # The -60 delta is recorded as a negative contribution (real money out).
+        assert contribs.created == [("goal-1", "u1", Decimal("-60"), date(2026, 6, 15))]
+        assert repo.updated_data["current_amount"] == "40"
+        assert result.current_amount == Decimal("40")
+
+    async def test_rejects_negative_amount(self) -> None:
+        service = _service(FakeGoalRepository(goal=_goal()))
+        with pytest.raises(InvalidAmountError):
+            await service.set_goal_amount(
+                "goal-1", "u1", Decimal("-1"), date(2026, 6, 15)
+            )
+
+    async def test_raises_when_goal_missing(self) -> None:
+        service = _service(FakeGoalRepository(goal=None))
+        with pytest.raises(GoalNotFoundError):
+            await service.set_goal_amount(
+                "missing", "u1", Decimal("100"), date(2026, 6, 15)
+            )
 
 
 class TestProgress:

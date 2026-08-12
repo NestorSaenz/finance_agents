@@ -69,6 +69,14 @@ class GoalContributionRepositoryABC(ABC):
         """
 
     @abstractmethod
+    async def sum_for_goal(self, user_id: UserId, goal_id: GoalId) -> Decimal:
+        """Return the signed sum of ALL of a goal's contributions (no date bound).
+
+        This is the ledger balance a goal's cached ``current_amount`` must equal.
+        One fetch, summed in Python (mirrors ``sum_in_period``).
+        """
+
+    @abstractmethod
     async def sum_in_period(
         self, user_id: UserId, start: date, end: date
     ) -> Decimal:
@@ -150,6 +158,23 @@ class GoalServiceABC(ABC):
 
         Raises ``GoalNotFoundError`` if the goal is missing and
         ``GoalWithdrawalExceedsBalanceError`` when ``amount`` exceeds the balance.
+        """
+
+    @abstractmethod
+    async def set_goal_amount(
+        self, goal_id: GoalId, user_id: UserId, amount: Decimal, on_date: date
+    ) -> Goal:
+        """Reconcile a goal's saved amount to ``amount``, keeping the ledger honest.
+
+        Let ``s`` be the goal's ledger balance (sum of its contributions):
+
+        - ``amount == s``: pure reconcile — set ``current_amount`` to ``amount``
+          and write NO ledger row (zero cash-flow impact).
+        - ``amount > s``: real money in — record a ``amount - s`` contribution.
+        - ``amount < s``: real money out — withdraw ``s - amount``.
+
+        Raises ``InvalidAmountError`` when ``amount`` is negative and
+        ``GoalNotFoundError`` when the goal is missing.
         """
 
     @abstractmethod

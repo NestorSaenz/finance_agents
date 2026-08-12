@@ -83,6 +83,17 @@ class StubGoalService(GoalServiceABC):
             raise GoalNotFoundError(goal_id)
         return _goal()
 
+    async def set_goal_amount(
+        self,
+        goal_id: GoalId,
+        user_id: UserId,
+        amount: Decimal,
+        on_date: date,
+    ) -> Goal:
+        if not self.found:
+            raise GoalNotFoundError(goal_id)
+        return _goal()
+
     async def contributed_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
@@ -167,9 +178,10 @@ def client() -> Iterator[TestClient]:
 
 class TestCrud:
     def test_create_goal(self, client: TestClient) -> None:
+        # Goals are born at 0: the create request no longer accepts current_amount.
         response = client.post(
             BASE_URL,
-            json={"name": "Viaje a Japón", "target_amount": 100000, "current_amount": 30000},
+            json={"name": "Viaje a Japón", "target_amount": 100000},
         )
         assert response.status_code == 200
         assert response.json()["id"] == "goal-1"

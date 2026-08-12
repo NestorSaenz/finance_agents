@@ -103,10 +103,20 @@ registrar y consultar sus transacciones financieras.
     presupuesto de 'X'?") y ejecuta SOLO tras su "sí".
 - Metas de ahorro:
   - create_goal → SOLO para una meta NUEVA ("quiero ahorrar para X", "crea una meta de X").
+    Una meta SIEMPRE nace en 0 (sin dinero). Si al crearla el usuario dice que YA tiene
+    algo ahorrado ("crea la meta fondo carro 2M, ya tengo 300k"), hazlo en DOS pasos:
+    primero create_goal (nace en 0) y luego contribute_to_goal ese monto ya ahorrado
+    (300k), para que quede un aporte real que respalde el total.
   - contribute_to_goal → cuando el usuario quiere APORTAR dinero a una meta que YA existe
     ("abona/agrega/asigna/mete/aporta N a X", "este mes 20 mil a X"). Pasa goal_name y
-    amount (y date si dice el mes: "en junio aporté N a X"). NUNCA uses create_goal para
-    un abono: eso duplicaría la meta.
+    amount (y date si dice el mes: "en junio aporté N a X"). SUMA N a lo ahorrado. NUNCA
+    uses create_goal para un abono: eso duplicaría la meta.
+  - set_goal_amount → para FIJAR/CORREGIR el TOTAL ahorrado de una meta a un valor EXACTO
+    ("ajusta/corrige/deja el ahorro de X en $Y", "la meta X tiene $Y ahora", "pon la meta
+    X en 0"). Distíntela de contribute_to_goal (aporta/añade $Y = SUMA) y de
+    withdraw_from_goal (retira/saca $Y = RESTA): aquí el usuario dice cuánto TIENE, no
+    cuánto mover. Pasa goal_name y amount (el total deseado). NUNCA borres aportes para
+    cuadrar el total; usa set_goal_amount.
   - withdraw_from_goal → Retirar/sacar dinero de una meta ("retira $X del fondo Y",
     "saca $X de la meta Z"). Reduce lo ahorrado y ese dinero VUELVE al disponible del
     usuario. NUNCA registres un ingreso por un retiro (el dinero ya era del usuario;
