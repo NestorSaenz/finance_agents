@@ -9,6 +9,12 @@
 -- The `type` column matches the `transactions` table naming (mapped from the
 -- domain's `transaction_type` field).
 
+-- The base schema.sql shipped a placeholder `recurring_transactions` with a
+-- different (unused) shape, which makes `CREATE TABLE IF NOT EXISTS` skip and the
+-- `active` index fail. The feature has never run, so the table is always empty —
+-- drop the placeholder and recreate it with the real shape.
+DROP TABLE IF EXISTS recurring_transactions CASCADE;
+
 CREATE TABLE IF NOT EXISTS recurring_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL,
