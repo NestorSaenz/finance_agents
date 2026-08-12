@@ -1,10 +1,11 @@
 "use client";
 
-import { formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
 import type { Goal } from "@/lib/types";
 
 /** Savings goals with a progress bar (current vs target). */
 export function GoalProgress({ goals }: { goals: Goal[] }) {
+  const money = useMoney();
   // Show goals still in play (active/completed), most-funded first.
   const visible = goals
     .filter((g) => g.status === "active" || g.status === "completed")
@@ -24,8 +25,8 @@ export function GoalProgress({ goals }: { goals: Goal[] }) {
             <div className="mb-1 flex items-baseline justify-between text-sm">
               <span className="text-ink">{g.name}</span>
               <span className={done ? "text-positive" : "text-muted"}>
-                {formatMoney(current)}{" "}
-                <span className="text-muted">/ {formatMoney(target)}</span>
+                {money(current)}{" "}
+                <span className="text-muted">/ {money(target)}</span>
               </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">

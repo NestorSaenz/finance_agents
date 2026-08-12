@@ -6,10 +6,27 @@ import { formatMoney } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
+/** Curated list of currencies offered at onboarding (value = ISO-4217 code). */
+export const ONBOARDING_CURRENCIES: { code: string; label: string }[] = [
+  { code: "COP", label: "Peso colombiano (COP)" },
+  { code: "USD", label: "Dólar estadounidense (USD)" },
+  { code: "MXN", label: "Peso mexicano (MXN)" },
+  { code: "EUR", label: "Euro (EUR)" },
+  { code: "PEN", label: "Sol peruano (PEN)" },
+  { code: "CLP", label: "Peso chileno (CLP)" },
+  { code: "ARS", label: "Peso argentino (ARS)" },
+  { code: "BRL", label: "Real brasileño (BRL)" },
+  { code: "UYU", label: "Peso uruguayo (UYU)" },
+  { code: "GTQ", label: "Quetzal guatemalteco (GTQ)" },
+  { code: "GBP", label: "Libra esterlina (GBP)" },
+  { code: "CAD", label: "Dólar canadiense (CAD)" },
+];
+
 interface WelcomeStepProps {
   name: string;
   income: string;
   savings: string;
+  currency: string;
   incomeValid: boolean;
   savingsValid: boolean;
   savingsPreview: number | null;
@@ -17,6 +34,7 @@ interface WelcomeStepProps {
   onNameChange: (v: string) => void;
   onIncomeChange: (v: string) => void;
   onSavingsChange: (v: string) => void;
+  onCurrencyChange: (v: string) => void;
   onSkip: () => void;
   onContinue: () => void;
 }
@@ -26,6 +44,7 @@ export function WelcomeStep({
   name,
   income,
   savings,
+  currency,
   incomeValid,
   savingsValid,
   savingsPreview,
@@ -33,6 +52,7 @@ export function WelcomeStep({
   onNameChange,
   onIncomeChange,
   onSavingsChange,
+  onCurrencyChange,
   onSkip,
   onContinue,
 }: WelcomeStepProps) {
@@ -75,6 +95,27 @@ export function WelcomeStep({
         ingresos reales registrados en cada período.
       </p>
 
+      <div className="mt-4 flex flex-col gap-1.5">
+        <label htmlFor="onboarding-currency" className="text-sm font-medium text-ink">
+          Moneda
+        </label>
+        <select
+          id="onboarding-currency"
+          value={currency}
+          onChange={(e) => onCurrencyChange(e.target.value)}
+          className="min-h-11 rounded-xl border border-line bg-white px-3.5 text-sm text-ink transition-colors focus:border-brand-500"
+        >
+          {ONBOARDING_CURRENCIES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted">
+          Todos tus montos se mostrarán en esta moneda.
+        </p>
+      </div>
+
       <div className="mt-4">
         <Input
           label="Meta de ahorro mensual (opcional)"
@@ -91,7 +132,7 @@ export function WelcomeStep({
         <p className="mt-1.5 text-xs text-muted">
           Porcentaje de tus ingresos que quieres apartar.
           {savingsPreview !== null && (
-            <span className="font-medium text-positive"> ≈ {formatMoney(savingsPreview)}/mes.</span>
+            <span className="font-medium text-positive"> ≈ {formatMoney(savingsPreview, currency)}/mes.</span>
           )}
         </p>
       </div>

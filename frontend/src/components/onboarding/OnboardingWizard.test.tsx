@@ -43,11 +43,26 @@ describe("OnboardingWizard", () => {
         display_name: undefined,
         monthly_income: undefined,
         savings_goal_percentage: undefined,
+        currency: "COP",
       },
       "tok",
     );
     expect(budgetMock).not.toHaveBeenCalled();
     expect(recurringMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the currency chosen in the onboarding picker", async () => {
+    const onDone = vi.fn();
+    render(<OnboardingWizard onDone={onDone} />);
+
+    await userEvent.selectOptions(
+      screen.getByLabelText("Moneda"),
+      "USD",
+    );
+    await userEvent.click(screen.getByText("Omitir"));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onboardingMock.mock.calls[0][0]).toMatchObject({ currency: "USD" });
   });
 
   it("submits income and category caps on finish", async () => {
@@ -78,7 +93,12 @@ describe("OnboardingWizard", () => {
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(onboardingMock).toHaveBeenCalledWith(
-      { display_name: "Néstor", monthly_income: 30000, savings_goal_percentage: 20 },
+      {
+        display_name: "Néstor",
+        monthly_income: 30000,
+        savings_goal_percentage: 20,
+        currency: "COP",
+      },
       "tok",
     );
     expect(budgetMock).toHaveBeenCalledTimes(1);

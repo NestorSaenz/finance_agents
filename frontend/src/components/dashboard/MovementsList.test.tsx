@@ -78,7 +78,7 @@ describe("MovementsList", () => {
     expect(screen.getByText("Aporte a Viaje a Japón")).toBeInTheDocument();
     // Shown as a negative outflow (leaves the pocket like cash); the amount row
     // carries the "negative" tone. Assert on the value substring, not the glyph.
-    const amount = screen.getByText(/150,000/);
+    const amount = screen.getByText(/150[.,]000/);
     expect(amount.className).toContain("text-negative");
   });
 
@@ -99,7 +99,7 @@ describe("MovementsList", () => {
     );
     // A withdrawal returns money to disponible → shown as a positive inflow.
     expect(screen.getByText("Retiro de Fondo de emergencia")).toBeInTheDocument();
-    const amount = screen.getByText(/100,000/);
+    const amount = screen.getByText(/100[.,]000/);
     expect(amount.className).toContain("text-positive");
     expect(amount.textContent).toContain("+");
   });

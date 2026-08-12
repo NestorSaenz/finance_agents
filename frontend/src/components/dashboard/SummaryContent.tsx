@@ -1,6 +1,6 @@
 "use client";
 
-import { formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
 import type {
   BudgetStatusList,
   CardPaymentsList,
@@ -57,6 +57,7 @@ export function SummaryContent({
   recurring,
   period,
 }: SummaryContentProps) {
+  const money = useMoney();
   const historicalCards = isPastMonth(period);
   const activeGoals = goals.filter(
     (g) => g.status === "active" || g.status === "completed",
@@ -113,7 +114,7 @@ export function SummaryContent({
             balance >= 0 ? "text-positive" : "text-negative"
           }`}
         >
-          {formatMoney(balance)}
+          {money(balance)}
         </p>
       </div>
 
@@ -125,15 +126,15 @@ export function SummaryContent({
           <dl className="mt-2 flex flex-col gap-1 text-sm">
             <div className="flex items-center justify-between">
               <dt className="text-muted">Ingresos</dt>
-              <dd className="tabular-nums text-positive">{formatMoney(income)}</dd>
+              <dd className="tabular-nums text-positive">{money(income)}</dd>
             </div>
             <div className="flex items-center justify-between">
               <dt className="text-muted">Efectivo</dt>
-              <dd className="tabular-nums text-negative">−{formatMoney(cashExpenses)}</dd>
+              <dd className="tabular-nums text-negative">−{money(cashExpenses)}</dd>
             </div>
             <div className="flex items-center justify-between">
               <dt className="text-muted">Pagos a tarjetas</dt>
-              <dd className="tabular-nums text-negative">−{formatMoney(cardPayments)}</dd>
+              <dd className="tabular-nums text-negative">−{money(cardPayments)}</dd>
             </div>
             <div className="flex items-center justify-between">
               {/* Net contributions: positive = money into goals (outflow); negative
@@ -145,7 +146,7 @@ export function SummaryContent({
                 className={`tabular-nums ${goalContribs >= 0 ? "text-negative" : "text-positive"}`}
               >
                 {goalContribs >= 0 ? "−" : "+"}
-                {formatMoney(Math.abs(goalContribs))}
+                {money(Math.abs(goalContribs))}
               </dd>
             </div>
             <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
@@ -155,7 +156,7 @@ export function SummaryContent({
                   cashAvailable >= 0 ? "text-positive" : "text-negative"
                 }`}
               >
-                {formatMoney(cashAvailable)}
+                {money(cashAvailable)}
               </dd>
             </div>
           </dl>
@@ -175,7 +176,7 @@ export function SummaryContent({
             accumulatedSurplus >= 0 ? "text-positive" : "text-negative"
           }`}
         >
-          {formatMoney(accumulatedSurplus)}
+          {money(accumulatedSurplus)}
         </p>
         <p className="mt-2 text-xs text-muted">
           Tu plata libre acumulada, mes a mes. Baja cuando gastas o aportas a metas.
@@ -190,7 +191,7 @@ export function SummaryContent({
           income={income}
           note={
             usesBaseFallback
-              ? `Usando tu ingreso base ${formatMoney(referenceIncome)}. Registra o actualiza el de este mes para ajustarlo.`
+              ? `Usando tu ingreso base ${money(referenceIncome)}. Registra o actualiza el de este mes para ajustarlo.`
               : undefined
           }
         />
@@ -247,6 +248,7 @@ export function SummaryContent({
 
 /** Read-only "Recurrentes" card: fixed monthly incomes/expenses (managed via chat). */
 function RecurringCard({ recurring }: { recurring: Recurring[] }) {
+  const money = useMoney();
   if (recurring.length === 0) return null; // empty → render nothing, no empty box
 
   const incomes = recurring.filter((r) => r.transaction_type === "income");
@@ -277,7 +279,7 @@ function RecurringCard({ recurring }: { recurring: Recurring[] }) {
             netMonthly >= 0 ? "text-positive" : "text-negative"
           }`}
         >
-          {formatMoney(netMonthly)}
+          {money(netMonthly)}
         </span>
       </div>
 
@@ -299,6 +301,7 @@ function RecurringGroup({
   sign: "+" | "−";
   tone: "positive" | "negative";
 }) {
+  const money = useMoney();
   const amountColor = tone === "positive" ? "text-positive" : "text-negative";
   return (
     <div>
@@ -323,7 +326,7 @@ function RecurringGroup({
               className={`shrink-0 tabular-nums ${r.active ? amountColor : "text-muted"}`}
             >
               {sign}
-              {formatMoney(r.amount)}
+              {money(r.amount)}
             </span>
           </li>
         ))}
@@ -341,6 +344,7 @@ function IncomeGauge({
   income: number;
   note?: string;
 }) {
+  const money = useMoney();
   const pct = income > 0 ? (spent / income) * 100 : 0;
   const over = pct >= 100;
   const near = pct >= 80;
@@ -362,8 +366,8 @@ function IncomeGauge({
         />
       </div>
       <p className="mt-2 text-sm text-ink">
-        <span className="font-semibold">{formatMoney(spent)}</span>
-        <span className="text-muted"> de {formatMoney(income)}</span>
+        <span className="font-semibold">{money(spent)}</span>
+        <span className="text-muted"> de {money(income)}</span>
       </p>
       {note && <p className="mt-1 text-xs text-muted">{note}</p>}
     </div>
@@ -398,6 +402,7 @@ function StatCard({
   value: string | number;
   tone: "positive" | "negative";
 }) {
+  const money = useMoney();
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-muted">{label}</p>
@@ -406,7 +411,7 @@ function StatCard({
           tone === "positive" ? "text-positive" : "text-negative"
         }`}
       >
-        {formatMoney(value)}
+        {money(value)}
       </p>
     </div>
   );

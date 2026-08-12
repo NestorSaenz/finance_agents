@@ -194,12 +194,18 @@ export interface UserProfile {
   monthly_income: string | null;
   savings_goal_percentage: string | null;
   onboarding_completed: boolean;
+  /** ISO-4217 currency code the user's amounts are formatted in (defaults to "COP"). */
+  currency: string;
+  /** IANA timezone name (e.g. "America/Bogota"). */
+  timezone: string | null;
 }
 
 export interface OnboardingPayload {
   display_name?: string;
   monthly_income?: number;
   savings_goal_percentage?: number;
+  /** ISO-4217 currency code chosen during onboarding. */
+  currency?: string;
 }
 
 export interface BudgetCreatePayload {

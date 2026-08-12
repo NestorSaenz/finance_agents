@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { categoryLabel, formatDayMonth, formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
+import { categoryLabel, formatDayMonth } from "@/lib/format";
 import type {
   CardPaymentsList,
   CreditCardStatusList,
@@ -89,6 +90,7 @@ export function MovementsList({
   payments,
   contributions,
 }: MovementsListProps) {
+  const money = useMoney();
   const [filter, setFilter] = useState<MovementFilter>(ALL);
 
   const cardNames = useMemo(
@@ -191,7 +193,7 @@ export function MovementsList({
       {filter !== ALL && (
         <p className="text-xs text-muted">
           {visible.length} movimiento(s) · {filter === CASH ? "salidas" : "gastado"}{" "}
-          <span className="font-semibold text-ink">{formatMoney(filteredOutflow)}</span>
+          <span className="font-semibold text-ink">{money(filteredOutflow)}</span>
         </p>
       )}
 
@@ -269,6 +271,7 @@ function SummaryRow({
   amount: string | number;
   isInflow?: boolean;
 }) {
+  const money = useMoney();
   return (
     <li className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3">
       <div className="min-w-0">
@@ -286,7 +289,7 @@ function SummaryRow({
         }`}
       >
         {isInflow ? "+" : "−"}
-        {formatMoney(amount)}
+        {money(amount)}
       </p>
     </li>
   );
@@ -299,6 +302,7 @@ function MovementRow({
   tx: Transaction;
   cardNames: Map<string, string>;
 }) {
+  const money = useMoney();
   const isIncome = tx.transaction_type === "income";
   const impact = impactMonth(tx);
   const badge = methodBadge(tx, cardNames);
@@ -328,7 +332,7 @@ function MovementRow({
         }`}
       >
         {isIncome ? "+" : "−"}
-        {formatMoney(tx.amount)}
+        {money(tx.amount)}
       </p>
     </li>
   );

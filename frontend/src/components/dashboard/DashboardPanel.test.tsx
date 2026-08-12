@@ -124,6 +124,19 @@ describe("DashboardPanel", () => {
     expect(budgetMock).toHaveBeenCalledWith("tok");
   });
 
+  it("formats amounts in the profile currency (USD → two decimals)", async () => {
+    summaryMock.mockResolvedValue(summary());
+    // A USD profile must render the balance (income 100000 − expenses 40000 =
+    // 60000) with the two-decimal minor unit, unlike the zero-decimal COP default.
+    profileMock.mockResolvedValue({ ...PROFILE, currency: "USD" });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+
+    // "60.000,00" (es locale) — the ",00" cents only appear for a non-zero-decimal
+    // currency; the default COP would render "60.000" with no cents.
+    expect(await screen.findByText(/60[.,]000[.,]00/)).toBeInTheDocument();
+  });
+
   it("shows the accumulated surplus, painting a negative value red", async () => {
     summaryMock.mockResolvedValue(summary());
     excedenteMock.mockResolvedValue({ accumulated_surplus: "-5000" });
@@ -273,7 +286,7 @@ describe("DashboardPanel", () => {
     // Net fijo = active income (1,000,000) − active expense (400,000) = 600,000;
     // the paused Netflix is excluded from the total.
     expect(screen.getByText("Neto fijo mensual")).toBeInTheDocument();
-    expect(screen.getByText(/600,000/)).toBeInTheDocument();
+    expect(screen.getByText(/600[.,]000/)).toBeInTheDocument();
     expect(recurringMock).toHaveBeenCalledWith("tok");
   });
 

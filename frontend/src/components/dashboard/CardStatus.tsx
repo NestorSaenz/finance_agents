@@ -1,6 +1,7 @@
 "use client";
 
-import { formatDayMonth, formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
+import { formatDayMonth } from "@/lib/format";
 import type { CreditCardStatusList } from "@/lib/types";
 
 /** Colour the debt bar by how much of the limit is used. */
@@ -18,6 +19,7 @@ export function CardStatus({
   /** Viewing a past month: figures are reconstructed at that month-end. */
   historical?: boolean;
 }) {
+  const money = useMoney();
   if (data.cards.length === 0) return null;
 
   return (
@@ -42,17 +44,17 @@ export function CardStatus({
             </div>
 
             <p className="mt-2 text-sm text-ink">
-              <span className="font-semibold">{formatMoney(c.balance)}</span>
-              <span className="text-muted"> de deuda / {formatMoney(c.card.credit_limit)}</span>
+              <span className="font-semibold">{money(c.balance)}</span>
+              <span className="text-muted"> de deuda / {money(c.card.credit_limit)}</span>
             </p>
 
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
               <dt className="text-muted">Disponible</dt>
               <dd className="text-right font-medium text-positive">
-                {formatMoney(c.available)}
+                {money(c.available)}
               </dd>
               <dt className="text-muted">Gastado en el mes</dt>
-              <dd className="text-right text-ink">{formatMoney(c.spent_cycle)}</dd>
+              <dd className="text-right text-ink">{money(c.spent_cycle)}</dd>
               <dt className="text-muted">{historical ? "Fecha de pago" : "Próximo pago"}</dt>
               <dd className="text-right text-ink">{formatDayMonth(c.next_payment_date)}</dd>
             </dl>

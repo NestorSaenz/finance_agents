@@ -5,6 +5,7 @@ import { RefreshCw, X } from "lucide-react";
 
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { CurrencyProvider } from "@/context/CurrencyContext";
 import type {
   BudgetStatusList,
   CardPaymentsList,
@@ -147,7 +148,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   }, [open, load, refreshKey]);
 
   return (
-    <>
+    <CurrencyProvider currency={profile?.currency ?? "COP"}>
       {/* Backdrop (mobile / tablet) */}
       <div
         className={`fixed inset-0 z-20 bg-ink/40 transition-opacity lg:hidden ${
@@ -289,6 +290,6 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
           ) : null}
         </div>
       </aside>
-    </>
+    </CurrencyProvider>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { categoryLabel, formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
+import { categoryLabel } from "@/lib/format";
 import type { CategorySpending } from "@/lib/types";
 
 /** Spending per category as lightweight CSS bars (no chart library).
@@ -9,6 +10,7 @@ import type { CategorySpending } from "@/lib/types";
  * label shows the amount and its share of total expenses.
  */
 export function CategorySpendingBars({ data }: { data: CategorySpending[] }) {
+  const money = useMoney();
   if (data.length === 0) return null;
 
   const top = data.slice(0, 8);
@@ -23,7 +25,7 @@ export function CategorySpendingBars({ data }: { data: CategorySpending[] }) {
             <div className="mb-1 flex items-baseline justify-between text-sm">
               <span className="text-ink">{categoryLabel(c.category)}</span>
               <span className="text-muted">
-                {formatMoney(amount)}{" "}
+                {money(amount)}{" "}
                 <span className="text-xs">({c.percentage.toFixed(0)}%)</span>
               </span>
             </div>

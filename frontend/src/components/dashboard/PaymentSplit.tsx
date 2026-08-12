@@ -1,6 +1,6 @@
 "use client";
 
-import { formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
 
 interface PaymentSplitProps {
   credit: number;
@@ -10,6 +10,7 @@ interface PaymentSplitProps {
 
 /** Credit vs cash (vs unspecified) distribution of expenses as a split bar. */
 export function PaymentSplit({ credit, cash, totalExpenses }: PaymentSplitProps) {
+  const money = useMoney();
   const unspecified = Math.max(totalExpenses - credit - cash, 0);
   const total = credit + cash + unspecified;
   if (total <= 0) return null;
@@ -32,7 +33,7 @@ export function PaymentSplit({ credit, cash, totalExpenses }: PaymentSplitProps)
           <div
             key={s.label}
             style={{ width: `${pct(s.value)}%`, backgroundColor: s.color }}
-            title={`${s.label}: ${formatMoney(s.value)}`}
+            title={`${s.label}: ${money(s.value)}`}
           />
         ))}
       </div>
@@ -46,7 +47,7 @@ export function PaymentSplit({ credit, cash, totalExpenses }: PaymentSplitProps)
               aria-hidden
             />
             <span className="text-muted">{s.label}</span>
-            <span className="ml-auto font-medium text-ink">{formatMoney(s.value)}</span>
+            <span className="ml-auto font-medium text-ink">{money(s.value)}</span>
             <span className="w-10 text-right text-xs text-muted">
               {pct(s.value).toFixed(0)}%
             </span>

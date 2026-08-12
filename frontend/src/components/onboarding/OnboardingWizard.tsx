@@ -59,6 +59,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
   const [name, setName] = useState("");
   const [income, setIncome] = useState("");
   const [savings, setSavings] = useState("");
+  const [currency, setCurrency] = useState("COP");
   // Insertion-ordered selection + the amount typed for each selected category.
   const [selected, setSelected] = useState<string[]>([]);
   const [caps, setCaps] = useState<Record<string, string>>({});
@@ -149,6 +150,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
           display_name: displayName,
           monthly_income: monthlyIncome,
           savings_goal_percentage: savingsGoal,
+          currency,
         },
         token,
       );
@@ -217,6 +219,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
             name={name}
             income={income}
             savings={savings}
+            currency={currency}
             incomeValid={incomeValid}
             savingsValid={savingsValid}
             savingsPreview={savingsPreview}
@@ -224,6 +227,7 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
             onNameChange={setName}
             onIncomeChange={setIncome}
             onSavingsChange={setSavings}
+            onCurrencyChange={setCurrency}
             onSkip={() => void finish(false)}
             onContinue={() => setStep(2)}
           />

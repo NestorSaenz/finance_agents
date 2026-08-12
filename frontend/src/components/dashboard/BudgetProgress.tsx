@@ -1,6 +1,7 @@
 "use client";
 
-import { categoryLabel, formatMoney } from "@/lib/format";
+import { useMoney } from "@/context/CurrencyContext";
+import { categoryLabel } from "@/lib/format";
 import type { BudgetStatusList } from "@/lib/types";
 
 /** Colour a progress bar by how close spending is to the limit. */
@@ -22,6 +23,7 @@ function Bar({ pct, className }: { pct: number; className: string }) {
 }
 
 export function BudgetProgress({ data }: { data: BudgetStatusList }) {
+  const money = useMoney();
   if (data.statuses.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-line bg-surface p-4 text-center text-sm text-muted">
@@ -46,8 +48,8 @@ export function BudgetProgress({ data }: { data: BudgetStatusList }) {
               <div className="mb-1 flex items-baseline justify-between text-sm">
                 <span className="text-ink">{label}</span>
                 <span className={tone.text}>
-                  {formatMoney(s.spent)}{" "}
-                  <span className="text-muted">/ {formatMoney(s.budget.amount)}</span>
+                  {money(s.spent)}{" "}
+                  <span className="text-muted">/ {money(s.budget.amount)}</span>
                 </span>
               </div>
               <Bar pct={pct} className={tone.bar} />
