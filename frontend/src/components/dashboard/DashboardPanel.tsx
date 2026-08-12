@@ -10,6 +10,7 @@ import type {
   CardPaymentsList,
   CreditCardStatusList,
   Goal,
+  GoalContributionsList,
   Recurring,
   SpendingSummary,
   SummaryPeriod,
@@ -67,6 +68,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [goalContributed, setGoalContributed] = useState(0);
   const [cards, setCards] = useState<CreditCardStatusList | null>(null);
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
+  const [contributions, setContributions] =
+    useState<GoalContributionsList | null>(null);
   const [surplus, setSurplus] = useState(0);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loading, setLoading] = useState(false);
@@ -88,6 +91,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         goalsData,
         cardsData,
         paymentsData,
+        contributionsData,
         surplusData,
         recurringData,
       ] = await Promise.all([
@@ -98,6 +102,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.goals(period, token),
         api.cardsStatus(period, token),
         api.cardPayments(period, token),
+        api.goalContributions(period, token),
         api.excedente(period, token),
         // Recurrentes are the same regardless of the selected period.
         api.recurring(token),
@@ -110,6 +115,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setGoalContributed(Number(goalsData.total_contributed ?? 0));
       setCards(cardsData);
       setPayments(paymentsData);
+      setContributions(contributionsData);
       setSurplus(Number(surplusData.accumulated_surplus ?? 0));
       setRecurring(recurringData.recurring);
     } catch (err) {
@@ -126,6 +132,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setGoalContributed(0);
       setCards(null);
       setPayments(null);
+      setContributions(null);
       setSurplus(0);
       setRecurring([]);
     } finally {
@@ -260,7 +267,12 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               </button>
             </div>
           ) : view === "movimientos" ? (
-            <MovementsList transactions={movements} cards={cards} payments={payments} />
+            <MovementsList
+              transactions={movements}
+              cards={cards}
+              payments={payments}
+              contributions={contributions}
+            />
           ) : summary ? (
             <SummaryContent
               summary={summary}

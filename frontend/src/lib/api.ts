@@ -10,6 +10,7 @@ import type {
   ChatResponse,
   CreditCardCreatePayload,
   CreditCardStatusList,
+  GoalContributionsList,
   GoalList,
   LoginPayload,
   OnboardingPayload,
@@ -129,6 +130,12 @@ export const api = {
     token: string | null,
   ): Promise<CardPaymentsList> =>
     request(`/cards/payments?period=${encodeURIComponent(period)}`, { token }),
+
+  goalContributions: (
+    period: string,
+    token: string | null,
+  ): Promise<GoalContributionsList> =>
+    request(`/goals/contributions?period=${encodeURIComponent(period)}`, { token }),
 
   excedente: (
     period: string,

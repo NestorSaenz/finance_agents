@@ -10,6 +10,8 @@ from app.src.auth.dependencies import CurrentUserId
 from app.src.goals.dependencies import GoalServiceDep
 from app.src.goals.dto import (
     GoalContributeRequest,
+    GoalContributionItem,
+    GoalContributionsResponse,
     GoalCreateRequest,
     GoalListResponse,
     GoalProgressResponse,
@@ -68,6 +70,28 @@ async def list_goals(
         page=page,
         page_size=page_size,
         total_contributed=total_contributed,
+    )
+
+
+@router.get("/contributions", response_model=GoalContributionsResponse)
+async def list_goal_contributions(
+    service: GoalServiceDep,
+    user_id: CurrentUserId,
+    period: str = Query(
+        default="este_mes",
+        description="Reporting period: 'este_mes', 'mes_pasado', 'todo' or a month 'YYYY-MM'",
+    ),
+) -> GoalContributionsResponse:
+    """List the goal contributions (aportes) made in the period (as events).
+
+    Declared BEFORE ``/{goal_id}`` so the literal ``/contributions`` path isn't
+    swallowed by the goal-id path parameter.
+    """
+    start, end = resolve_period(period)
+    contributions = await service.list_contributions_in_period(user_id, start, end)
+    return GoalContributionsResponse(
+        contributions=[GoalContributionItem.from_domain(c) for c in contributions],
+        total=sum((c.amount for c in contributions), Decimal("0")),
     )
 
 

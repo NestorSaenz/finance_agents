@@ -6,6 +6,7 @@ import { categoryLabel, formatDayMonth, formatMoney } from "@/lib/format";
 import type {
   CardPaymentsList,
   CreditCardStatusList,
+  GoalContributionsList,
   Transaction,
 } from "@/lib/types";
 
@@ -13,6 +14,7 @@ interface MovementsListProps {
   transactions: Transaction[];
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
+  contributions: GoalContributionsList | null;
 }
 
 /** "todas", "efectivo", or a specific card id. */
@@ -21,16 +23,19 @@ type MovementFilter = string;
 const ALL: MovementFilter = "todas";
 const CASH: MovementFilter = "efectivo";
 
-/** A row in the list: either a logged transaction or a card payment (money paid
- *  toward a card, which leaves the pocket like cash). */
+/** A row in the list: a logged transaction, a card payment (money paid toward a
+ *  card), or a goal contribution (aporte a meta) — the latter two leave the
+ *  pocket like cash. */
 type Movement =
   | { kind: "tx"; date: string; tx: Transaction }
-  | { kind: "payment"; date: string; id: string; cardName: string; amount: string };
+  | { kind: "payment"; date: string; id: string; cardName: string; amount: string }
+  | { kind: "contribution"; date: string; id: string; goalName: string; amount: string };
 
-/** Cash outflow: an explicitly-'efectivo' transaction, OR any card payment
- *  (paying a card is money out of pocket, so it counts under "Efectivo"). */
+/** Cash outflow: an explicitly-'efectivo' transaction, a card payment, OR a goal
+ *  contribution (all three are money out of pocket, so they count under "Efectivo"). */
 function isCashMovement(m: Movement): boolean {
-  return m.kind === "payment" || m.tx.payment_method === "efectivo";
+  if (m.kind === "payment" || m.kind === "contribution") return true;
+  return m.tx.payment_method === "efectivo";
 }
 
 function matchesFilter(m: Movement, filter: MovementFilter): boolean {
@@ -42,7 +47,7 @@ function matchesFilter(m: Movement, filter: MovementFilter): boolean {
 
 /** Amount that left the pocket for this movement (0 for income). */
 function outflow(m: Movement): number {
-  if (m.kind === "payment") return Number(m.amount);
+  if (m.kind === "payment" || m.kind === "contribution") return Number(m.amount);
   return m.tx.transaction_type === "expense" ? Number(m.tx.amount) : 0;
 }
 
@@ -71,10 +76,16 @@ function methodBadge(
 
 /**
  * Chronological detail of every movement in the selected period — logged
- * transactions plus card payments — with a filter by source (all / cash / each
- * card). Card payments appear under "Efectivo" since paying a card is money out.
+ * transactions, card payments, and goal contributions — with a filter by source
+ * (all / cash / each card). Card payments and goal contributions appear under
+ * "Efectivo" since both are money out of pocket.
  */
-export function MovementsList({ transactions, cards, payments }: MovementsListProps) {
+export function MovementsList({
+  transactions,
+  cards,
+  payments,
+  contributions,
+}: MovementsListProps) {
   const [filter, setFilter] = useState<MovementFilter>(ALL);
 
   const cardNames = useMemo(
@@ -95,10 +106,17 @@ export function MovementsList({ transactions, cards, payments }: MovementsListPr
       cardName: p.card_name,
       amount: p.amount,
     }));
-    return [...txs, ...pays].sort((a, b) =>
+    const contribs: Movement[] = (contributions?.contributions ?? []).map((c, i) => ({
+      kind: "contribution",
+      date: c.contribution_date,
+      id: `contrib-${i}-${c.contribution_date}`,
+      goalName: c.goal_name,
+      amount: c.amount,
+    }));
+    return [...txs, ...pays, ...contribs].sort((a, b) =>
       a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
     );
-  }, [transactions, payments]);
+  }, [transactions, payments, contributions]);
 
   // Chips: only offer sources that actually appear in this period's movements.
   const chips = useMemo(() => {
@@ -180,34 +198,69 @@ export function MovementsList({ transactions, cards, payments }: MovementsListPr
         </div>
       ) : (
         <ul className="flex flex-col gap-2">
-          {visible.map((m) =>
-            m.kind === "payment" ? (
-              <li
-                key={m.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-ink">
-                    Pago a {m.cardName}
-                  </p>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-                    <span>Pago de tarjeta · {formatDayMonth(m.date)}</span>
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
-                      💳 Pago
-                    </span>
-                  </p>
-                </div>
-                <p className="shrink-0 text-sm font-semibold tabular-nums text-negative">
-                  −{formatMoney(m.amount)}
-                </p>
-              </li>
-            ) : (
-              <MovementRow key={m.tx.id} tx={m.tx} cardNames={cardNames} />
-            ),
-          )}
+          {visible.map((m) => {
+            if (m.kind === "payment") {
+              return (
+                <OutflowRow
+                  key={m.id}
+                  title={`Pago a ${m.cardName}`}
+                  meta={`Pago de tarjeta · ${formatDayMonth(m.date)}`}
+                  pillIcon="💳"
+                  pillLabel="Pago"
+                  amount={m.amount}
+                />
+              );
+            }
+            if (m.kind === "contribution") {
+              return (
+                <OutflowRow
+                  key={m.id}
+                  title={`Aporte a ${m.goalName}`}
+                  meta={`Aporte a meta · ${formatDayMonth(m.date)}`}
+                  pillIcon="🎯"
+                  pillLabel="Meta"
+                  amount={m.amount}
+                />
+              );
+            }
+            return <MovementRow key={m.tx.id} tx={m.tx} cardNames={cardNames} />;
+          })}
         </ul>
       )}
     </div>
+  );
+}
+
+/** A cash-outflow row shared by card payments and goal contributions: a title,
+ *  a meta line with a distinct pill, and the amount shown as a negative outflow. */
+function OutflowRow({
+  title,
+  meta,
+  pillIcon,
+  pillLabel,
+  amount,
+}: {
+  title: string;
+  meta: string;
+  pillIcon: string;
+  pillLabel: string;
+  amount: string;
+}) {
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-ink">{title}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+          <span>{meta}</span>
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+            {pillIcon} {pillLabel}
+          </span>
+        </p>
+      </div>
+      <p className="shrink-0 text-sm font-semibold tabular-nums text-negative">
+        −{formatMoney(amount)}
+      </p>
+    </li>
   );
 }
 

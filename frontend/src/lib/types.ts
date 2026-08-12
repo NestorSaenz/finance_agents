@@ -133,6 +133,17 @@ export interface CardPaymentsList {
   total: string;
 }
 
+export interface GoalContributionItem {
+  goal_name: string;
+  amount: string;
+  contribution_date: string;
+}
+
+export interface GoalContributionsList {
+  contributions: GoalContributionItem[];
+  total: string;
+}
+
 export interface Transaction {
   id: string;
   amount: string;

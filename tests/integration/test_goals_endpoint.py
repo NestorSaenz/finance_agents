@@ -12,7 +12,13 @@ from app.main import app
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
 from app.src.goals.dependencies import get_goal_service
 from app.src.goals.interfaces import GoalServiceABC
-from app.src.goals.models import Goal, GoalContribution, GoalCreate, GoalProgress
+from app.src.goals.models import (
+    Goal,
+    GoalContribution,
+    GoalContributionView,
+    GoalCreate,
+    GoalProgress,
+)
 
 BASE_URL = "/api/v1/goals"
 
@@ -70,6 +76,22 @@ class StubGoalService(GoalServiceABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
         return Decimal("1500")
+
+    async def list_contributions_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContributionView]:
+        return [
+            GoalContributionView(
+                goal_name="Viaje a Japón",
+                amount=Decimal("5000"),
+                contribution_date=date(2026, 6, 15),
+            ),
+            GoalContributionView(
+                goal_name="Meta",
+                amount=Decimal("2000"),
+                contribution_date=date(2026, 6, 10),
+            ),
+        ]
 
     async def update_goal(
         self,
@@ -152,6 +174,14 @@ class TestCrud:
         response = client.get(f"{BASE_URL}?period=2026-06")
         assert response.status_code == 200
         assert response.json()["total_contributed"] == "1500"
+
+    def test_list_contributions_returns_names_and_total(self, client: TestClient) -> None:
+        response = client.get(f"{BASE_URL}/contributions?period=2026-06")
+        assert response.status_code == 200
+        body = response.json()
+        # The literal /contributions path is NOT captured by /{goal_id}.
+        assert [c["goal_name"] for c in body["contributions"]] == ["Viaje a Japón", "Meta"]
+        assert body["total"] == "7000"  # 5000 + 2000
 
     def test_missing_goal_returns_404(self) -> None:
         gen = _client(StubGoalService(found=False))

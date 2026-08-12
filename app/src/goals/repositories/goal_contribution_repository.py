@@ -88,6 +88,22 @@ class GoalContributionRepository(GoalContributionRepositoryABC):
             start=Decimal("0"),
         )
 
+    async def list_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContribution]:
+        config = QueryConfig(
+            filters={"user_id": user_id},
+            order_by="contribution_date",
+            order_ascending=False,
+        )
+        result = await self._db.select(GOAL_CONTRIBUTIONS_TABLE, config)
+        contributions = [_row_to_contribution(row) for row in result.data]
+        # Inclusive [start, end] window applied in Python (PostgREST equality
+        # filters can't express ranges), mirroring ``CardPaymentRepository``.
+        return [
+            c for c in contributions if period_start <= c.contribution_date <= period_end
+        ]
+
     async def list_for_goal(
         self, user_id: UserId, goal_id: GoalId
     ) -> list[GoalContribution]:

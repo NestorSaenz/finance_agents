@@ -12,6 +12,7 @@ const {
   goalsMock,
   cardsMock,
   paymentsMock,
+  contributionsMock,
   excedenteMock,
   recurringMock,
   ApiError,
@@ -32,6 +33,7 @@ const {
     goalsMock: vi.fn(),
     cardsMock: vi.fn(),
     paymentsMock: vi.fn(),
+    contributionsMock: vi.fn(),
     excedenteMock: vi.fn(),
     recurringMock: vi.fn(),
     ApiError: ApiErrorMock,
@@ -47,6 +49,7 @@ vi.mock("@/lib/api", () => ({
     goals: (...args: unknown[]) => goalsMock(...args),
     cardsStatus: (...args: unknown[]) => cardsMock(...args),
     cardPayments: (...args: unknown[]) => paymentsMock(...args),
+    goalContributions: (...args: unknown[]) => contributionsMock(...args),
     excedente: (...args: unknown[]) => excedenteMock(...args),
     recurring: (...args: unknown[]) => recurringMock(...args),
   },
@@ -97,6 +100,7 @@ beforeEach(() => {
   goalsMock.mockReset().mockResolvedValue({ goals: [], total: 0, total_contributed: "0" });
   cardsMock.mockReset().mockResolvedValue(EMPTY_CARDS);
   paymentsMock.mockReset().mockResolvedValue({ payments: [], total: "0" });
+  contributionsMock.mockReset().mockResolvedValue({ contributions: [], total: "0" });
   excedenteMock.mockReset().mockResolvedValue({ accumulated_surplus: "0" });
   recurringMock.mockReset().mockResolvedValue({ recurring: [], total: 0 });
 });
@@ -361,6 +365,28 @@ describe("DashboardPanel", () => {
     // A credit charge paid a later month shows its impact-month tag.
     expect(screen.getByText(/impacta/)).toBeInTheDocument();
     expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok");
+  });
+
+  it("shows a goal contribution among the Movimientos", async () => {
+    summaryMock.mockResolvedValue(summary());
+    contributionsMock.mockResolvedValue({
+      contributions: [
+        {
+          goal_name: "Viaje a Japón",
+          amount: "150000",
+          contribution_date: "2026-08-05",
+        },
+      ],
+      total: "150000",
+    });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText("Balance");
+
+    await userEvent.click(screen.getByRole("button", { name: "Movimientos" }));
+
+    expect(await screen.findByText("Aporte a Viaje a Japón")).toBeInTheDocument();
+    expect(contributionsMock).toHaveBeenCalledWith("este_mes", "tok");
   });
 
   it("refetches the summary when the refresh button is clicked", async () => {

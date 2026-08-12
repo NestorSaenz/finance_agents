@@ -61,6 +61,18 @@ class GoalContribution(BaseModel):
     created_at: datetime
 
 
+class GoalContributionView(BaseModel):
+    """A goal contribution enriched with the goal's name (for display).
+
+    Mirrors ``CardPaymentView`` so an aporte can surface among the dashboard's
+    movements, exactly as a card payment does.
+    """
+
+    goal_name: str
+    amount: Decimal
+    contribution_date: date
+
+
 class GoalProgress(BaseModel):
     """A goal evaluated against its target and timeline."""
 

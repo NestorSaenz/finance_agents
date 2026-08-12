@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import type { CardPaymentsList, Transaction } from "@/lib/types";
+import type {
+  CardPaymentsList,
+  GoalContributionsList,
+  Transaction,
+} from "@/lib/types";
 
 import { MovementsList } from "./MovementsList";
 
@@ -27,17 +31,68 @@ const payments: CardPaymentsList = {
   total: "4599784",
 };
 
+const contributions: GoalContributionsList = {
+  contributions: [
+    { goal_name: "Viaje a Japón", amount: "150000", contribution_date: "2026-06-05" },
+  ],
+  total: "150000",
+};
+
 describe("MovementsList", () => {
   it("lists card payments as movements", () => {
-    render(<MovementsList transactions={[tx()]} cards={null} payments={payments} />);
+    render(
+      <MovementsList
+        transactions={[tx()]}
+        cards={null}
+        payments={payments}
+        contributions={null}
+      />,
+    );
     expect(screen.getByText("Pago a Nu")).toBeInTheDocument();
     expect(screen.getByText("Consulta médica")).toBeInTheDocument();
   });
 
   it("keeps card payments under the Efectivo filter", async () => {
-    render(<MovementsList transactions={[tx()]} cards={null} payments={payments} />);
+    render(
+      <MovementsList
+        transactions={[tx()]}
+        cards={null}
+        payments={payments}
+        contributions={null}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: /Efectivo/i }));
     // Paying a card is money out of pocket → still shown under Efectivo.
     expect(screen.getByText("Pago a Nu")).toBeInTheDocument();
+  });
+
+  it("lists a goal contribution as an 'Aporte a <meta>' outflow", () => {
+    render(
+      <MovementsList
+        transactions={[tx()]}
+        cards={null}
+        payments={null}
+        contributions={contributions}
+      />,
+    );
+    expect(screen.getByText("Aporte a Viaje a Japón")).toBeInTheDocument();
+    // Shown as a negative outflow (leaves the pocket like cash); the amount row
+    // carries the "negative" tone. Assert on the value substring, not the glyph.
+    const amount = screen.getByText(/150,000/);
+    expect(amount.className).toContain("text-negative");
+  });
+
+  it("keeps goal contributions under the Efectivo filter", async () => {
+    render(
+      <MovementsList
+        transactions={[tx()]}
+        cards={null}
+        payments={null}
+        contributions={contributions}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Efectivo/i }));
+    // A goal contribution is money out of pocket → still shown under Efectivo.
+    expect(screen.getByText("Aporte a Viaje a Japón")).toBeInTheDocument();
   });
 });

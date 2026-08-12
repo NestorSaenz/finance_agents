@@ -18,7 +18,13 @@ from app.shared.types import (
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.budgets.models import Budget, BudgetCreate, BudgetStatus
 from app.src.goals.interfaces import GoalServiceABC
-from app.src.goals.models import Goal, GoalContribution, GoalCreate, GoalProgress
+from app.src.goals.models import (
+    Goal,
+    GoalContribution,
+    GoalContributionView,
+    GoalCreate,
+    GoalProgress,
+)
 
 NOW = datetime(2026, 7, 1, 10, 0, 0)
 
@@ -149,6 +155,11 @@ class FakeGoalService(GoalServiceABC):
         self, user_id: str, period_start: date, period_end: date
     ) -> Decimal:
         return Decimal("0")
+
+    async def list_contributions_in_period(
+        self, user_id: str, period_start: date, period_end: date
+    ) -> list[GoalContributionView]:
+        return []
 
     async def remove_contribution(
         self,

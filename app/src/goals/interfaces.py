@@ -7,7 +7,13 @@ from typing import Any
 
 from app.shared.types import GoalId, UserId
 
-from .models import Goal, GoalContribution, GoalCreate, GoalProgress
+from .models import (
+    Goal,
+    GoalContribution,
+    GoalContributionView,
+    GoalCreate,
+    GoalProgress,
+)
 
 
 class GoalRepositoryABC(ABC):
@@ -73,6 +79,12 @@ class GoalContributionRepositoryABC(ABC):
         """
 
     @abstractmethod
+    async def list_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContribution]:
+        """Return the user's contributions within the date range, newest first."""
+
+    @abstractmethod
     async def list_for_goal(
         self, user_id: UserId, goal_id: GoalId
     ) -> list[GoalContribution]:
@@ -127,6 +139,16 @@ class GoalServiceABC(ABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
         """Return the total contributed to all goals within ``[period_start, period_end]``."""
+
+    @abstractmethod
+    async def list_contributions_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContributionView]:
+        """Return the user's goal contributions in the period, with goal names.
+
+        Contributions are newest first; a contribution whose goal was deleted
+        falls back to the name "Meta". Mirrors ``list_payments`` for cards.
+        """
 
     @abstractmethod
     async def get_progress(

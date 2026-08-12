@@ -13,7 +13,13 @@ from ..interfaces import (
     GoalRepositoryABC,
     GoalServiceABC,
 )
-from ..models import Goal, GoalContribution, GoalCreate, GoalProgress
+from ..models import (
+    Goal,
+    GoalContribution,
+    GoalContributionView,
+    GoalCreate,
+    GoalProgress,
+)
 
 logger = get_logger(__name__)
 
@@ -88,6 +94,27 @@ class GoalService(GoalServiceABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
         return await self._contributions.sum_in_period(user_id, period_start, period_end)
+
+    async def list_contributions_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContributionView]:
+        # Mirror ``CreditCardService.list_payments``: pull the dated contributions
+        # (already newest-first) and resolve each goal's name. A contribution whose
+        # goal was deleted falls back to "Meta".
+        contributions = await self._contributions.list_in_period(
+            user_id, period_start, period_end
+        )
+        total = await self._repository.count(user_id)
+        goals = await self._repository.list_page(user_id, limit=max(total, 1), offset=0)
+        names = {g.id: g.name for g in goals}
+        return [
+            GoalContributionView(
+                goal_name=names.get(c.goal_id, "Meta"),
+                amount=c.amount,
+                contribution_date=c.contribution_date,
+            )
+            for c in contributions
+        ]
 
     async def update_goal(
         self,

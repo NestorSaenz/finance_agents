@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.shared.types import CurrencyType, GoalStatus, GoalType
 
 from .constants import DEFAULT_PRIORITY, MAX_PAGE_SIZE
-from .models import Goal, GoalProgress
+from .models import Goal, GoalContributionView, GoalProgress
 
 
 class GoalCreateRequest(BaseModel):
@@ -97,6 +97,29 @@ class GoalProgressResponse(BaseModel):
             required_monthly_contribution=progress.required_monthly_contribution,
             on_track=progress.on_track,
         )
+
+
+class GoalContributionItem(BaseModel):
+    """Response body for a single goal contribution (as a dashboard event)."""
+
+    goal_name: str
+    amount: Decimal
+    contribution_date: date
+
+    @classmethod
+    def from_domain(cls, contribution: GoalContributionView) -> "GoalContributionItem":
+        return cls(
+            goal_name=contribution.goal_name,
+            amount=contribution.amount,
+            contribution_date=contribution.contribution_date,
+        )
+
+
+class GoalContributionsResponse(BaseModel):
+    """Response body listing goal contributions in a period."""
+
+    contributions: list[GoalContributionItem] = Field(default_factory=list)
+    total: Decimal
 
 
 class GoalListResponse(BaseModel):

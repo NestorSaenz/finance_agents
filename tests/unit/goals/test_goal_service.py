@@ -77,6 +77,7 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
         sums: dict[str, Decimal] | None = None,
         contributions: list[tuple[Decimal, date]] | None = None,
         for_goal: list[GoalContribution] | None = None,
+        in_period: list[GoalContribution] | None = None,
     ) -> None:
         self.created: list[tuple[str, str, Decimal, date]] = []
         self.deleted: list[str] = []
@@ -85,6 +86,8 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
         self._contributions = contributions or []
         # Seeded rows returned verbatim by ``list_for_goal``.
         self._for_goal = for_goal or []
+        # Seeded rows returned verbatim by ``list_in_period`` (already newest-first).
+        self._in_period = in_period or []
 
     async def create(
         self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
@@ -107,6 +110,13 @@ class FakeGoalContributionRepository(GoalContributionRepositoryABC):
             (amount for amount, day in self._contributions if start <= day <= end),
             start=Decimal("0"),
         )
+
+    async def list_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContribution]:
+        return [
+            c for c in self._in_period if period_start <= c.contribution_date <= period_end
+        ]
 
     async def list_for_goal(
         self, user_id: UserId, goal_id: GoalId
@@ -293,6 +303,53 @@ class TestContributedInPeriod:
         )
 
         assert total == Decimal("0")
+
+
+class TestListContributionsInPeriod:
+    async def test_maps_goal_name_and_falls_back_for_deleted_goal(self) -> None:
+        # Two contributions: one to the existing goal-1, one to a goal that was
+        # since deleted (goal-gone) -> the latter falls back to "Meta".
+        repo = FakeGoalRepository(goal=_goal())  # goal-1 named "Viaje a Japón"
+        seeded = [
+            _contribution("c2", Decimal("300"), date(2026, 6, 20), goal_id="goal-1"),
+            _contribution("c1", Decimal("200"), date(2026, 6, 10), goal_id="goal-gone"),
+        ]
+        contribs = FakeGoalContributionRepository(in_period=seeded)
+        service = _service(repo, contribs)
+
+        views = await service.list_contributions_in_period(
+            "u1", date(2026, 6, 1), date(2026, 6, 30)
+        )
+
+        assert [v.goal_name for v in views] == ["Viaje a Japón", "Meta"]
+        assert [v.amount for v in views] == [Decimal("300"), Decimal("200")]
+        # Newest-first order is preserved from the repository.
+        assert views[0].contribution_date == date(2026, 6, 20)
+
+    async def test_filters_by_period_window(self) -> None:
+        repo = FakeGoalRepository(goal=_goal())
+        seeded = [
+            _contribution("c_jul", Decimal("400"), date(2026, 7, 5), goal_id="goal-1"),
+            _contribution("c_jun", Decimal("300"), date(2026, 6, 15), goal_id="goal-1"),
+            _contribution("c_may", Decimal("200"), date(2026, 5, 31), goal_id="goal-1"),
+        ]
+        contribs = FakeGoalContributionRepository(in_period=seeded)
+        service = _service(repo, contribs)
+
+        views = await service.list_contributions_in_period(
+            "u1", date(2026, 6, 1), date(2026, 6, 30)
+        )
+
+        assert [v.amount for v in views] == [Decimal("300")]  # only June
+
+    async def test_returns_empty_when_no_contributions(self) -> None:
+        service = _service(FakeGoalRepository(goal=_goal()))
+
+        views = await service.list_contributions_in_period(
+            "u1", date(2026, 6, 1), date(2026, 6, 30)
+        )
+
+        assert views == []
 
 
 class TestListContributions:
