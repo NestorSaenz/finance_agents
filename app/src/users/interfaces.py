@@ -31,3 +31,10 @@ class UserProfileServiceABC(ABC):
         self, user_id: UserId, data: UserProfileUpdate
     ) -> UserProfile:
         """Apply onboarding fields to the user's profile and return it."""
+
+    @abstractmethod
+    async def set_currency(self, user_id: UserId, code: str) -> UserProfile:
+        """Validate ``code`` as ISO-4217 and persist it as the display currency.
+
+        Raises ``InvalidCurrencyError`` when the (normalized) code is unknown.
+        """

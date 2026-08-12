@@ -76,6 +76,9 @@ class FakeProfileService(UserProfileServiceABC):
     ) -> UserProfile:
         return UserProfile(user_id=user_id)
 
+    async def set_currency(self, user_id: str, code: str) -> UserProfile:
+        return UserProfile(user_id=user_id, currency=code.strip().upper())
+
 
 INGESTION_REPLY = "Leí esto de tu imagen:\n- Supermercado: $200,000 (gasto)\n\n¿Los registro tal cual?"
 

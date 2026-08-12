@@ -267,14 +267,20 @@ async def _build_user_context(
     try:
         profile = await profiles.get_profile(user_id)
         name = (profile.display_name or "").strip()
+        currency = (profile.currency or "").strip()
     except Exception as e:  # noqa: BLE001 - profile is best-effort context.
-        logger.warning("Could not load profile name", error=str(e))
+        logger.warning("Could not load profile", error=str(e))
         name = ""
+        currency = ""
 
-    if not name:
-        return facts
-    greeting = f"El usuario se llama {name}."
-    return f"{greeting}\n{facts}" if facts else greeting
+    parts: list[str] = []
+    if name:
+        parts.append(f"El usuario se llama {name}.")
+    if facts:
+        parts.append(facts)
+    if currency:
+        parts.append(f"Moneda del usuario: {currency}.")
+    return "\n".join(parts)
 
 
 async def _load_context(

@@ -1,8 +1,11 @@
 """User-profile use cases (business logic)."""
 
+from app.core.config import settings
+from app.core.exceptions import InvalidCurrencyError
 from app.core.logging import get_logger
 from app.shared.types import UserId
 
+from ..constants import ISO_4217_CODES
 from ..interfaces import UserProfileRepositoryABC, UserProfileServiceABC
 from ..models import UserProfile, UserProfileUpdate
 
@@ -17,13 +20,27 @@ class UserProfileService(UserProfileServiceABC):
 
     async def get_profile(self, user_id: UserId) -> UserProfile:
         profile = await self._repository.get(user_id)
-        if profile is not None:
-            return profile
         # First access: report an empty, not-yet-onboarded profile without
         # writing a row (kept lazy; the row is created on the first update).
-        return UserProfile(user_id=user_id)
+        if profile is None:
+            profile = UserProfile(user_id=user_id)
+        # Every consumer always gets a display currency: fall back to the app
+        # default when none is stored (the stored column stays nullable).
+        if profile.currency is None:
+            profile.currency = settings.DEFAULT_CURRENCY
+        return profile
 
     async def update_profile(
         self, user_id: UserId, data: UserProfileUpdate
     ) -> UserProfile:
         return await self._repository.upsert(user_id, data)
+
+    async def set_currency(self, user_id: UserId, code: str) -> UserProfile:
+        normalized = code.strip().upper()
+        if normalized not in ISO_4217_CODES:
+            raise InvalidCurrencyError(normalized)
+        profile = await self._repository.upsert(
+            user_id, UserProfileUpdate(currency=normalized)
+        )
+        logger.info("User currency set", user_id=user_id, currency=normalized)
+        return profile

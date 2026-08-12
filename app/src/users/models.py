@@ -3,7 +3,9 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .constants import ISO_4217_CODES
 
 
 class UserProfile(BaseModel):
@@ -18,6 +20,11 @@ class UserProfile(BaseModel):
     # variable income, unlike a fixed amount.
     savings_goal_percentage: Decimal | None = None
     onboarding_completed: bool = False
+    # ISO-4217 code for how the user's amounts are labeled. Display only (no
+    # conversion). Stored column is nullable; readers default it via the service.
+    currency: str | None = None
+    # IANA timezone (store-only for now; a later cut wires scheduling to it).
+    timezone: str | None = None
     updated_at: datetime | None = None
 
 
@@ -28,3 +35,19 @@ class UserProfileUpdate(BaseModel):
     monthly_income: Decimal | None = Field(default=None, gt=0)
     savings_goal_percentage: Decimal | None = Field(default=None, ge=0, le=100)
     onboarding_completed: bool | None = None
+    # Self-guarding: normalize + validate the ISO-4217 code here too, so no caller
+    # (present or future) can ever persist a garbage currency that would mislabel
+    # every amount. The service/DTO validate earlier for friendlier errors.
+    currency: str | None = Field(default=None)
+    # Store-only for now; no endpoint sets it yet (a later cut wires it).
+    timezone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("currency")
+    @classmethod
+    def _validate_currency(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        code = value.strip().upper()
+        if code not in ISO_4217_CODES:
+            raise ValueError(f"Unknown currency code: {value!r}")
+        return code

@@ -134,6 +134,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.agents.tools.category_tools import CategoryToolkit
     from app.agents.tools.composite_toolkit import CompositeToolkit
     from app.agents.tools.goal_tools import GoalToolkit
+    from app.agents.tools.profile_tools import ProfileToolkit
     from app.agents.tools.recurring_tools import RecurringToolkit
     from app.agents.tools.transaction_tools import TransactionToolkit
     from app.shared.dependencies import (
@@ -179,12 +180,13 @@ def get_compiled_graph() -> "CompiledStateGraph":
         CardPaymentRepository(db),
         TransactionCardSpendingProvider(db),
     )
+    user_profile_service = UserProfileService(UserProfileRepository(db))
     analysis_service = AnalysisService(
         transaction_service,
         budget_service,
         goal_service,
         card_service,
-        UserProfileService(UserProfileRepository(db)),
+        user_profile_service,
     )
     recurring_service = RecurringService(
         RecurringRepository(db), transaction_service, card_service
@@ -198,6 +200,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
             AnalysisToolkit(analysis_service),
             CategoryToolkit(transaction_service, budget_service),
             RecurringToolkit(recurring_service, cards=card_service),
+            ProfileToolkit(user_profile_service),
         ]
     )
 

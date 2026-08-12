@@ -35,8 +35,12 @@ class StubProfileService(UserProfileServiceABC):
             user_id=user_id,
             monthly_income=data.monthly_income,
             savings_goal_percentage=data.savings_goal_percentage,
+            currency=data.currency,
             onboarding_completed=bool(data.onboarding_completed),
         )
+
+    async def set_currency(self, user_id: UserId, code: str) -> UserProfile:
+        return UserProfile(user_id=user_id, currency=code.strip().upper())
 
 
 def _client(service: UserProfileServiceABC) -> Iterator[TestClient]:
@@ -116,6 +120,34 @@ class TestOnboarding:
         try:
             response = client.post(
                 f"{BASE_URL}/me/onboarding", json={"monthly_income": -5}
+            )
+            assert response.status_code == 422
+        finally:
+            next(gen, None)
+
+    def test_stores_valid_currency_normalized(
+        self, service: StubProfileService
+    ) -> None:
+        gen = _client(service)
+        client = next(gen)
+        try:
+            response = client.post(
+                f"{BASE_URL}/me/onboarding", json={"currency": "gtq"}
+            )
+            assert response.status_code == 200
+            body = response.json()
+            # Normalized to upper-case and echoed back.
+            assert body["currency"] == "GTQ"
+            assert service.updates[0][1].currency == "GTQ"
+        finally:
+            next(gen, None)
+
+    def test_rejects_unknown_currency(self, service: StubProfileService) -> None:
+        gen = _client(service)
+        client = next(gen)
+        try:
+            response = client.post(
+                f"{BASE_URL}/me/onboarding", json={"currency": "XYZ"}
             )
             assert response.status_code == 422
         finally:

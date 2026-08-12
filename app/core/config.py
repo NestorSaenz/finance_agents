@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # How many recent conversation messages to feed the LLM as context.
     CHAT_HISTORY_LIMIT: int = 10
 
+    # Default display currency (ISO-4217) applied when a user has not set one.
+    # Display/labeling only — amounts are never converted. Defaults to the app's
+    # primary market (Colombia).
+    DEFAULT_CURRENCY: str = "COP"
+
     # Shared secret guarding POST /recurring/run (the daily materialization job).
     # A Cloud Scheduler job must send it in the X-Recurring-Secret header. Empty
     # (the default) fails the endpoint closed, so it can never run unprotected.

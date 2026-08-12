@@ -2,8 +2,9 @@
 
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from .constants import ISO_4217_CODES
 from .models import UserProfile
 
 
@@ -23,6 +24,22 @@ class OnboardingRequest(BaseModel):
     savings_goal_percentage: Decimal | None = Field(
         default=None, ge=0, le=100, description="Target % of income to save monthly"
     )
+    currency: str | None = Field(
+        default=None,
+        max_length=3,
+        description="ISO-4217 display currency code (e.g. COP, USD); labeling only",
+    )
+
+    @field_validator("currency")
+    @classmethod
+    def _validate_currency(cls, value: str | None) -> str | None:
+        """Normalize and validate against the canonical ISO-4217 set (else 422)."""
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if normalized not in ISO_4217_CODES:
+            raise ValueError(f"Unsupported currency code: {value!r}")
+        return normalized
 
 
 class UserProfileResponse(BaseModel):
@@ -32,6 +49,8 @@ class UserProfileResponse(BaseModel):
     monthly_income: Decimal | None
     savings_goal_percentage: Decimal | None
     onboarding_completed: bool
+    currency: str | None
+    timezone: str | None
 
     @classmethod
     def from_domain(cls, profile: UserProfile) -> "UserProfileResponse":
@@ -40,4 +59,6 @@ class UserProfileResponse(BaseModel):
             monthly_income=profile.monthly_income,
             savings_goal_percentage=profile.savings_goal_percentage,
             onboarding_completed=profile.onboarding_completed,
+            currency=profile.currency,
+            timezone=profile.timezone,
         )

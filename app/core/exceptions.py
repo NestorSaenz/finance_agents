@@ -345,6 +345,20 @@ class UserProfileIncompleteError(DomainError):
         )
 
 
+class InvalidCurrencyError(DomainError):
+    """Raised when a proposed currency is not a recognized ISO-4217 code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(
+            message=(
+                f"Moneda no reconocida: '{code}'. Usa un código ISO-4217 válido "
+                "(por ejemplo COP, MXN, USD, EUR, GTQ)."
+            ),
+            code="INVALID_CURRENCY",
+            details={"currency": code},
+        )
+
+
 class UnauthorizedAccessError(ApplicationError):
     """Raised when user tries to access resources they don't own."""
 
@@ -553,6 +567,7 @@ __all__ = [
     # User
     "UserNotFoundError",
     "UserProfileIncompleteError",
+    "InvalidCurrencyError",
     "UnauthorizedAccessError",
     # Rate Limiting
     "RateLimitExceededError",

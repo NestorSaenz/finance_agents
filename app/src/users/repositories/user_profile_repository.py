@@ -41,6 +41,10 @@ class UserProfileRepository(UserProfileRepositoryABC):
             row["savings_goal_percentage"] = decimal_to_db(data.savings_goal_percentage)
         if data.onboarding_completed is not None:
             row["onboarding_completed"] = data.onboarding_completed
+        if data.currency is not None:
+            row["currency"] = data.currency
+        if data.timezone is not None:
+            row["timezone"] = data.timezone
 
         result = await self._db.upsert(USER_PROFILES_TABLE, row, on_conflict="user_id")
         if not result.data:
@@ -62,5 +66,7 @@ def _row_to_profile(row: dict[str, Any]) -> UserProfile:
         monthly_income=parse_optional_decimal(row.get("monthly_income")),
         savings_goal_percentage=parse_optional_decimal(row.get("savings_goal_percentage")),
         onboarding_completed=bool(row.get("onboarding_completed", False)),
+        currency=row.get("currency"),
+        timezone=row.get("timezone"),
         updated_at=parse_datetime(row.get("updated_at")) if row.get("updated_at") else None,
     )
