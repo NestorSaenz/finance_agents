@@ -158,9 +158,14 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         aria-hidden
       />
 
+      {/* Below lg: a fixed drawer sliding over the chat (with the backdrop above).
+          lg+: an in-flow column that shrinks the chat when open and collapses to
+          zero width when closed — so the chat and the panel never overlap. */}
       <aside
-        className={`fixed inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-line bg-canvas shadow-xl transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
+        className={`fixed inset-y-0 right-0 z-30 flex w-full max-w-md flex-col overflow-hidden border-l border-line bg-canvas shadow-xl transition-[transform,width,opacity,visibility] duration-300 lg:static lg:z-auto lg:translate-x-0 lg:shrink-0 lg:shadow-none ${
+          open
+            ? "visible translate-x-0 lg:w-[28rem] lg:opacity-100"
+            : "invisible translate-x-full lg:w-0 lg:border-l-0 lg:opacity-0"
         }`}
         aria-label="Resumen financiero"
         aria-hidden={!open}

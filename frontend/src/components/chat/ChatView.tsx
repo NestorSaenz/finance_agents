@@ -159,7 +159,7 @@ export const ChatView = forwardRef<ChatViewHandle, ChatViewProps>(function ChatV
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {isEmpty ? (
         <EmptyState onPick={setInput} />
       ) : (

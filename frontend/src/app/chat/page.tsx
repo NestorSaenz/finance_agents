@@ -55,15 +55,19 @@ export default function ChatPage() {
         onNewChat={() => chatRef.current?.reset()}
         onOpenDashboard={() => setDashboardOpen(true)}
       />
-      <ChatView
-        ref={chatRef}
-        onDataChanged={() => setDashboardRefreshKey((k) => k + 1)}
-      />
-      <DashboardPanel
-        open={dashboardOpen}
-        onClose={() => setDashboardOpen(false)}
-        refreshKey={dashboardRefreshKey}
-      />
+      {/* Chat + panel share the row: on lg+ the open panel is a real column that
+          shrinks the chat (no overlap); below lg it's a drawer over the chat. */}
+      <div className="flex min-h-0 flex-1">
+        <ChatView
+          ref={chatRef}
+          onDataChanged={() => setDashboardRefreshKey((k) => k + 1)}
+        />
+        <DashboardPanel
+          open={dashboardOpen}
+          onClose={() => setDashboardOpen(false)}
+          refreshKey={dashboardRefreshKey}
+        />
+      </div>
       {showOnboarding && (
         <OnboardingWizard onDone={() => setShowOnboarding(false)} />
       )}
