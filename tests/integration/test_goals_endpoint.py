@@ -94,6 +94,13 @@ class StubGoalService(GoalServiceABC):
             raise GoalNotFoundError(goal_id)
         return _goal()
 
+    async def set_paused(
+        self, goal_id: GoalId, user_id: UserId, paused: bool
+    ) -> Goal:
+        if not self.found:
+            raise GoalNotFoundError(goal_id)
+        return _goal(status=GoalStatus.PAUSED if paused else GoalStatus.ACTIVE)
+
     async def contributed_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:

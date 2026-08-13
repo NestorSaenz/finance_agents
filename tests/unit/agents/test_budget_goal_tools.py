@@ -234,6 +234,11 @@ class FakeGoalService(GoalServiceABC):
         self.deleted.append((goal_id, user_id))
         return _goal(id=goal_id)
 
+    async def set_paused(self, goal_id: str, user_id: str, paused: bool) -> Goal:
+        self.paused: tuple[str, str, bool] = (goal_id, user_id, paused)
+        status = GoalStatus.PAUSED if paused else GoalStatus.ACTIVE
+        return _goal(id=goal_id, status=status)
+
     async def get_goal(self, goal_id: str, user_id: str) -> Goal:
         return _goal()
 
@@ -450,6 +455,30 @@ class TestGoalToolkit:
             "delete_goal", {"goal_name": "Moto"}, "u1"
         )
         assert not service.deleted
+        assert "no encontré" in result.lower()
+
+    async def test_pause_goal_resolves_and_pauses(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g7", name="Viaje a Japón")])
+        result = await GoalToolkit(service).dispatch(
+            "pause_goal", {"goal_name": "japón"}, "u1"
+        )
+        assert service.paused == ("g7", "u1", True)
+        assert "pausé" in result.lower()
+
+    async def test_resume_goal_resolves_and_resumes(self) -> None:
+        service = FakeGoalService(goals=[_goal(id="g7", name="Viaje a Japón")])
+        result = await GoalToolkit(service).dispatch(
+            "resume_goal", {"goal_name": "japón"}, "u1"
+        )
+        assert service.paused == ("g7", "u1", False)
+        assert "reactivé" in result.lower()
+
+    async def test_pause_unknown_goal_returns_message(self) -> None:
+        service = FakeGoalService(goals=[_goal(name="Casa")])
+        result = await GoalToolkit(service).dispatch(
+            "pause_goal", {"goal_name": "Moto"}, "u1"
+        )
+        assert not hasattr(service, "paused")
         assert "no encontré" in result.lower()
 
     async def test_remove_contribution_removes_by_amount(self) -> None:

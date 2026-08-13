@@ -244,6 +244,31 @@ class GoalService(GoalServiceABC):
         # which masked drift) and re-derive completion.
         return await self._recompute_cache(goal, user_id)
 
+    async def set_paused(
+        self, goal_id: GoalId, user_id: UserId, paused: bool
+    ) -> Goal:
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        if paused:
+            new_status = GoalStatus.PAUSED
+        elif goal.status == GoalStatus.PAUSED:
+            # Resume: re-derive active vs completed from the saved amount, so a
+            # goal that hit its target while paused comes back as COMPLETED.
+            new_status = (
+                GoalStatus.COMPLETED
+                if goal.current_amount >= goal.target_amount
+                else GoalStatus.ACTIVE
+            )
+        else:
+            # Resuming a goal that isn't paused is a no-op; never reactivate a
+            # terminal status (e.g. a cancelled goal) by re-deriving it.
+            return goal
+        logger.info(
+            "Goal pause toggled", goal_id=goal_id, user_id=user_id, paused=paused
+        )
+        return await self._repository.update(
+            goal_id, user_id, {"status": new_status.value}
+        )
+
     async def get_progress(
         self, goal_id: GoalId, user_id: UserId, as_of: date | None = None
     ) -> GoalProgress:

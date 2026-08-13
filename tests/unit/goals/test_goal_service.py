@@ -748,3 +748,52 @@ class TestProgress:
         assert progress.months_remaining is None
         assert progress.required_monthly_contribution is None
         assert progress.on_track is True
+
+
+class TestSetPaused:
+    async def test_pause_sets_status_paused(self) -> None:
+        repo = FakeGoalRepository(goal=_goal(status=GoalStatus.ACTIVE))
+        service = _service(repo)
+
+        result = await service.set_paused("goal-1", "u1", True)
+
+        assert result.status == GoalStatus.PAUSED
+        assert repo.updated_data == {"status": "paused"}
+
+    async def test_resume_active_when_below_target(self) -> None:
+        repo = FakeGoalRepository(
+            goal=_goal(status=GoalStatus.PAUSED, current=Decimal("25000"))
+        )
+        service = _service(repo)
+
+        result = await service.set_paused("goal-1", "u1", False)
+
+        assert result.status == GoalStatus.ACTIVE
+
+    async def test_resume_completed_when_target_reached(self) -> None:
+        # A goal that hit its target while paused comes back COMPLETED, not ACTIVE.
+        repo = FakeGoalRepository(
+            goal=_goal(status=GoalStatus.PAUSED, current=Decimal("100000"))
+        )
+        service = _service(repo)
+
+        result = await service.set_paused("goal-1", "u1", False)
+
+        assert result.status == GoalStatus.COMPLETED
+
+    async def test_resume_non_paused_is_noop(self) -> None:
+        # Resuming a goal that isn't paused must not rewrite its status (guards a
+        # future cancelled goal from being resurrected to active).
+        repo = FakeGoalRepository(goal=_goal(status=GoalStatus.ACTIVE))
+        service = _service(repo)
+
+        result = await service.set_paused("goal-1", "u1", False)
+
+        assert result.status == GoalStatus.ACTIVE
+        assert repo.updated_data == {}  # no write happened
+
+    async def test_pause_missing_goal_raises(self) -> None:
+        service = _service(FakeGoalRepository(goal=None))
+
+        with pytest.raises(GoalNotFoundError):
+            await service.set_paused("missing", "u1", True)

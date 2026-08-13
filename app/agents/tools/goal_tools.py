@@ -18,7 +18,7 @@ from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.text_match import names_match, normalize
-from app.shared.types import GoalType, UserId
+from app.shared.types import GoalStatus, GoalType, UserId
 from app.src.goals.interfaces import GoalServiceABC
 from app.src.goals.models import Goal, GoalCreate, GoalProgress
 
@@ -32,6 +32,8 @@ SET_GOAL_AMOUNT_TOOL = "set_goal_amount"
 REMOVE_CONTRIBUTION_TOOL = "remove_goal_contribution"
 UPDATE_GOAL_TOOL = "update_goal"
 DELETE_GOAL_TOOL = "delete_goal"
+PAUSE_GOAL_TOOL = "pause_goal"
+RESUME_GOAL_TOOL = "resume_goal"
 
 GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
@@ -301,6 +303,58 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": PAUSE_GOAL_TOOL,
+            "description": (
+                "Pausa una meta existente (la 'aparca'): deja de estar activa pero NO "
+                "se borra ni se pierde lo ahorrado. Úsala cuando el usuario quiere "
+                "pausar/suspender/congelar una meta ('pausa mi meta X', 'dejo de "
+                "ahorrar para X por ahora'). Reactívala luego con resume_goal. NO la "
+                "elimina (eso es delete_goal)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre de la meta"},
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": RESUME_GOAL_TOOL,
+            "description": (
+                "Reactiva/reanuda una meta que estaba pausada ('reactiva mi meta X', "
+                "'vuelvo a ahorrar para X'). Vuelve a estar activa (o completada si ya "
+                "alcanzó su objetivo)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string", "description": "Nombre de la meta"},
+                    "goal_target_amount": {
+                        "type": "number",
+                        "description": (
+                            "Monto objetivo de la meta; úsalo SOLO para desambiguar si "
+                            "hay varias metas con el mismo nombre"
+                        ),
+                    },
+                },
+                "required": ["goal_name"],
+            },
+        },
+    },
 ]
 
 
@@ -331,6 +385,10 @@ class GoalToolkit:
             return await self._update(arguments, user_id)
         if name == DELETE_GOAL_TOOL:
             return await self._delete(arguments, user_id)
+        if name == PAUSE_GOAL_TOOL:
+            return await self._set_paused(arguments, user_id, paused=True)
+        if name == RESUME_GOAL_TOOL:
+            return await self._set_paused(arguments, user_id, paused=False)
         raise ValueError(f"Unknown goal tool: {name}")
 
     async def _create(self, args: dict[str, Any], user_id: UserId) -> str:
@@ -551,6 +609,30 @@ class GoalToolkit:
         await self._service.delete_goal(goal.id, user_id)
         logger.info("Tool deleted goal", goal_id=goal.id, user_id=user_id)
         return f"🗑️ Eliminé la meta '{goal.name}'."
+
+    async def _set_paused(
+        self, args: dict[str, Any], user_id: UserId, *, paused: bool
+    ) -> str:
+        name = str(args.get("goal_name", "")).strip()
+        matches = await self._resolve_goals(name, user_id)
+        if not matches:
+            return f"No encontré una meta llamada '{name}'. ¿Puedes indicar el nombre exacto?"
+        goal = self._pick_goal(matches, _opt_decimal(args.get("goal_target_amount")))
+        if goal is None:
+            return _ambiguous_message(name, matches, "pausar" if paused else "reactivar")
+
+        updated = await self._service.set_paused(goal.id, user_id, paused)
+        if paused:
+            return (
+                f"⏸️ Pausé tu meta «{updated.name}». Lo ahorrado (${updated.current_amount}) "
+                "sigue ahí; reactívala cuando quieras."
+            )
+        done = updated.status == GoalStatus.COMPLETED
+        tail = " Ya está completada 🎉." if done else ""
+        return (
+            f"▶️ Reactivé tu meta «{updated.name}». Llevas ${updated.current_amount} "
+            f"de ${updated.target_amount}.{tail}"
+        )
 
     async def _resolve_goals(self, name: str, user_id: UserId) -> list[Goal]:
         """Return ALL goals matching ``name`` at the best tier, or [].

@@ -238,3 +238,15 @@ class GoalServiceABC(ABC):
         matches the most recent is removed. Returns ``None`` when no contribution
         matches (the goal itself must exist, else ``GoalNotFoundError``).
         """
+
+    @abstractmethod
+    async def set_paused(
+        self, goal_id: GoalId, user_id: UserId, paused: bool
+    ) -> Goal:
+        """Pause or resume a goal, returning it (or raise ``GoalNotFoundError``).
+
+        Pausing sets the status to PAUSED (contributions keep working but the goal
+        reads as parked). Resuming re-derives ACTIVE/COMPLETED from the saved
+        amount vs the target. Idempotent: pausing a paused goal (or resuming an
+        active one) is a harmless no-op.
+        """
