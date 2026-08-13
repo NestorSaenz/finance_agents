@@ -4,10 +4,14 @@ import { useMoney } from "@/context/CurrencyContext";
 import { categoryLabel } from "@/lib/format";
 import type { BudgetStatusList } from "@/lib/types";
 
-/** Colour a progress bar by how close spending is to the limit. */
+/** Colour a progress bar by spending vs the limit.
+ *
+ * Only being OVER the tope (> 100%) turns it red; at or under the tope it stays
+ * the normal tone. A fixed expense that sits exactly at its cap every month
+ * (e.g. a recurring one) shouldn't scream red when nothing was actually exceeded.
+ */
 function toneFor(pct: number): { bar: string; text: string } {
-  if (pct >= 100) return { bar: "bg-negative", text: "text-negative" };
-  if (pct >= 80) return { bar: "bg-amber-500", text: "text-amber-600" };
+  if (pct > 100) return { bar: "bg-negative", text: "text-negative" };
   return { bar: "bg-brand-600", text: "text-muted" };
 }
 

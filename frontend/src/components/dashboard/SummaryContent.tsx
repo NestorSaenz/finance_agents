@@ -346,10 +346,12 @@ function IncomeGauge({
 }) {
   const money = useMoney();
   const pct = income > 0 ? (spent / income) * 100 : 0;
-  const over = pct >= 100;
-  const near = pct >= 80;
-  const barColor = over ? "bg-negative" : near ? "bg-amber-500" : "bg-brand-600";
-  const pctColor = over ? "text-negative" : near ? "text-amber-600" : "text-muted";
+  // Only red once you actually spend MORE than you earn (> 100%); at or under it
+  // stays neutral, so fixed/recurring expenses sitting near 100% don't read as an
+  // alarm when nothing was exceeded.
+  const over = pct > 100;
+  const barColor = over ? "bg-negative" : "bg-brand-600";
+  const pctColor = over ? "text-negative" : "text-muted";
 
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
