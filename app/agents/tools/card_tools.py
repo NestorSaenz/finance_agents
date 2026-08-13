@@ -23,6 +23,7 @@ logger = get_logger(__name__)
 CREATE_CARD_TOOL = "create_card"
 QUERY_CARDS_TOOL = "query_cards"
 PAY_CARD_TOOL = "pay_card"
+REMOVE_CARD_PAYMENT_TOOL = "remove_card_payment"
 UPDATE_CARD_TOOL = "update_card"
 DELETE_CARD_TOOL = "delete_card"
 
@@ -81,6 +82,42 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["card_name", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": REMOVE_CARD_PAYMENT_TOOL,
+            "description": (
+                "Borra un pago/abono mal registrado de una tarjeta (por su monto y, si "
+                "hace falta, su fecha y/o la tarjeta). Es lo contrario de pay_card. NO "
+                "elimina la tarjeta (eso es delete_card). Úsala SOLO tras confirmar con "
+                "el usuario."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "Monto del pago a borrar, mayor a 0",
+                    },
+                    "card_name": {
+                        "type": "string",
+                        "description": (
+                            "Nombre de la tarjeta; úsalo para desambiguar si hay pagos "
+                            "del mismo monto en varias tarjetas (opcional)"
+                        ),
+                    },
+                    "payment_date": {
+                        "type": "string",
+                        "description": (
+                            "Fecha del pago YYYY-MM-DD; úsala SOLO para desambiguar si "
+                            "hay varios pagos del mismo monto"
+                        ),
+                    },
+                },
+                "required": ["amount"],
             },
         },
     },
@@ -153,6 +190,8 @@ class CardToolkit:
             return await self._query(user_id)
         if name == PAY_CARD_TOOL:
             return await self._pay(arguments, user_id)
+        if name == REMOVE_CARD_PAYMENT_TOOL:
+            return await self._remove_payment(arguments, user_id)
         if name == UPDATE_CARD_TOOL:
             return await self._update(arguments, user_id)
         if name == DELETE_CARD_TOOL:
@@ -215,6 +254,38 @@ class CardToolkit:
         )
         when = "" if payment_date == today else f" ({payment_date})"
         return f"✅ Registré tu pago de ${amount} a '{card.name}'{when}."
+
+    async def _remove_payment(self, args: dict[str, Any], user_id: UserId) -> str:
+        try:
+            amount = _to_decimal(args.get("amount"))
+        except ValueError:
+            return "No pude borrar el pago: el monto no es válido."
+        if amount <= 0:
+            return "El monto del pago a borrar debe ser mayor a 0."
+
+        # Optional card filter: resolve the name so the message is precise and the
+        # match is scoped to that card.
+        name = str(args.get("card_name", "")).strip()
+        card_id: str | None = None
+        card_label = ""
+        if name:
+            card = await self._service.resolve_by_name(name, user_id)
+            if card is None:
+                return f"No encontré una tarjeta llamada '{name}'. ¿Cuál es el nombre exacto?"
+            card_id = card.id
+            card_label = f" de «{card.name}»"
+
+        payment_date = _opt_date(args.get("payment_date"))
+        removed = await self._service.remove_payment(
+            user_id, amount, payment_date=payment_date, card_id=card_id
+        )
+        if removed is None:
+            when = f" del {payment_date}" if payment_date else ""
+            return (
+                f"No encontré un pago de ${amount}{when}{card_label}. "
+                "Revisa el monto (y la fecha) del pago que quieres borrar."
+            )
+        return f"🗑️ Borré el pago de ${removed.amount}{card_label} ({removed.payment_date})."
 
     async def _update(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("card_name", "")).strip()

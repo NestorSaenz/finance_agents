@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
+from app.shared.text_match import names_match, normalize
 from app.shared.types import BudgetId, UserId, normalize_category
 
 from ..interfaces import BudgetRepositoryABC, BudgetServiceABC, BudgetSpendingABC
@@ -83,22 +84,31 @@ class BudgetService(BudgetServiceABC):
         return deleted
 
     async def resolve_budget(self, reference: str, user_id: UserId) -> Budget | None:
-        """Find a budget by exact name, then category, then fuzzy name.
+        """Find a budget by exact name, then category, then substring, then fuzzy.
 
         The LLM references a budget by what the user says ("alimentación"), never
-        by id; among ambiguous matches the first active budget wins.
+        by id; among ambiguous matches the first active budget wins. All tiers are
+        accent-insensitive, and the final tier is inflection-tolerant (shared
+        ``names_match``) so "presupuestos" still resolves "presupuesto".
         """
-        target = reference.lower().strip()
+        target = normalize(reference)
         if not target:
             return None
         budgets = await self._repository.list_active(user_id)
         return (
-            next((b for b in budgets if b.name.lower() == target), None)
-            or next((b for b in budgets if b.category and b.category == target), None)
+            next((b for b in budgets if normalize(b.name) == target), None)
             or next(
-                (b for b in budgets if target in b.name.lower() or b.name.lower() in target),
+                (b for b in budgets if b.category and normalize(b.category) == target), None
+            )
+            or next(
+                (
+                    b
+                    for b in budgets
+                    if target in (bn := normalize(b.name)) or (len(bn) >= 4 and bn in target)
+                ),
                 None,
             )
+            or next((b for b in budgets if names_match(reference, b.name)), None)
         )
 
     async def recategorize(self, user_id: UserId, old: str, new: str) -> int:

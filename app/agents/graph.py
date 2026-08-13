@@ -134,6 +134,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.agents.tools.category_tools import CategoryToolkit
     from app.agents.tools.composite_toolkit import CompositeToolkit
     from app.agents.tools.goal_tools import GoalToolkit
+    from app.agents.tools.movement_tools import MovementToolkit
     from app.agents.tools.profile_tools import ProfileToolkit
     from app.agents.tools.recurring_tools import RecurringToolkit
     from app.agents.tools.transaction_tools import TransactionToolkit
@@ -145,6 +146,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
         get_vector_store,
     )
     from app.src.analysis.services.analysis_service import AnalysisService
+    from app.src.analysis.services.movement_finder import MovementFinder
     from app.src.budgets.repositories.budget_repository import BudgetRepository
     from app.src.budgets.services.budget_service import BudgetService
     from app.src.budgets.services.spending_provider import TransactionSpendingProvider
@@ -191,6 +193,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     recurring_service = RecurringService(
         RecurringRepository(db), transaction_service, card_service, user_profile_service
     )
+    movement_finder = MovementFinder(transaction_service, card_service, goal_service)
     toolkit = CompositeToolkit(
         [
             TransactionToolkit(transaction_service, cards=card_service, budgets=budget_service),
@@ -201,6 +204,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
             CategoryToolkit(transaction_service, budget_service),
             RecurringToolkit(recurring_service, cards=card_service),
             ProfileToolkit(user_profile_service),
+            MovementToolkit(movement_finder),
         ]
     )
 

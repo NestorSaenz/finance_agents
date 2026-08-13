@@ -90,6 +90,25 @@ class StubCardService(CreditCardServiceABC):
     async def resolve_by_name(self, name: str, user_id: UserId) -> CreditCard | None:
         return _card()
 
+    async def remove_payment(
+        self,
+        user_id: UserId,
+        amount: Decimal,
+        *,
+        payment_date: date | None = None,
+        card_id: CardId | None = None,
+    ) -> CardPayment | None:
+        if not self.found:
+            return None
+        return CardPayment(
+            id="pay-1",
+            user_id=user_id,
+            card_id=card_id or "card-1",
+            amount=amount,
+            payment_date=payment_date or date(2026, 7, 3),
+            created_at=datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
     async def update_card(
         self,
         card_id: CardId,

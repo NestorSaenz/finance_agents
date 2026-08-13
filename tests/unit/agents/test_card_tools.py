@@ -95,6 +95,28 @@ class FakeCardService(CreditCardServiceABC):
     ) -> list[CardPaymentView]:
         return []
 
+    async def remove_payment(
+        self,
+        user_id: UserId,
+        amount: Decimal,
+        *,
+        payment_date: date | None = None,
+        card_id: CardId | None = None,
+    ) -> CardPayment | None:
+        self.removed_payment: tuple[Decimal, date | None, CardId | None] = (
+            amount,
+            payment_date,
+            card_id,
+        )
+        return CardPayment(
+            id="pay-1",
+            user_id=user_id,
+            card_id=card_id or "card-1",
+            amount=amount,
+            payment_date=payment_date or date(2026, 7, 1),
+            created_at=datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
     async def update_card(
         self,
         card_id: CardId,
@@ -213,6 +235,43 @@ async def test_update_unknown_card_returns_message() -> None:
         "update_card", {"card_name": "Amex", "new_credit_limit": 100}, "u1"
     )
     assert not hasattr(service, "updated")
+    assert "no encontré" in result.lower()
+
+
+async def test_remove_card_payment_resolves_and_deletes() -> None:
+    service = FakeCardService()
+    result = await CardToolkit(service).dispatch(
+        "remove_card_payment", {"card_name": "visa", "amount": 300000}, "u1"
+    )
+    assert service.removed_payment == (Decimal("300000"), None, "card-1")
+    assert "borré" in result.lower()
+    assert "300000" in result
+
+
+async def test_remove_card_payment_no_card_filter() -> None:
+    # Without a card name it removes by amount across cards (card_id None).
+    service = FakeCardService()
+    await CardToolkit(service).dispatch(
+        "remove_card_payment", {"amount": 500000, "payment_date": "2026-07-01"}, "u1"
+    )
+    assert service.removed_payment == (Decimal("500000"), date(2026, 7, 1), None)
+
+
+async def test_remove_card_payment_invalid_amount() -> None:
+    service = FakeCardService()
+    result = await CardToolkit(service).dispatch(
+        "remove_card_payment", {"amount": 0}, "u1"
+    )
+    assert not hasattr(service, "removed_payment")
+    assert "mayor a 0" in result.lower()
+
+
+async def test_remove_card_payment_unknown_card() -> None:
+    service = FakeCardService(cards=[_card(name="Mastercard")])
+    result = await CardToolkit(service).dispatch(
+        "remove_card_payment", {"card_name": "Amex", "amount": 100}, "u1"
+    )
+    assert not hasattr(service, "removed_payment")
     assert "no encontré" in result.lower()
 
 

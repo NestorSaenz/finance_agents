@@ -91,10 +91,13 @@ class FakePaymentRepo(CardPaymentRepositoryABC):
         self,
         total: Decimal = Decimal("0"),
         dated: list[tuple[date, Decimal]] | None = None,
+        payments: list[CardPayment] | None = None,
     ) -> None:
         self.total = total
         self.dated = dated  # (payment_date, amount) pairs to honor `as_of`
         self.created: list[tuple[str, Decimal]] = []
+        self.payments = payments or []  # full rows for list_in_period / delete
+        self.deleted: list[str] = []
 
     async def create(
         self, payment: CardPaymentCreate, card_id: CardId, user_id: UserId
@@ -127,7 +130,12 @@ class FakePaymentRepo(CardPaymentRepositoryABC):
     async def list_in_period(
         self, user_id: UserId, period_start: date, period_end: date
     ) -> list[CardPayment]:
-        return []
+        return [
+            p for p in self.payments if period_start <= p.payment_date <= period_end
+        ]
+
+    async def delete(self, payment_id: str, user_id: UserId) -> None:
+        self.deleted.append(payment_id)
 
 
 class FakeSpending(CreditCardSpendingABC):
@@ -366,3 +374,55 @@ async def test_delete_card_unknown_raises() -> None:
 
     with pytest.raises(CardNotFoundError):
         await service.delete_card("missing", "u1")
+
+
+def _payment(pid: str, amount: str, on: date, card_id: str = "card-1") -> CardPayment:
+    return CardPayment(
+        id=pid,
+        user_id="u1",
+        card_id=card_id,
+        amount=Decimal(amount),
+        payment_date=on,
+        created_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_remove_payment_matches_and_deletes() -> None:
+    payments = FakePaymentRepo(payments=[_payment("p1", "300000", date(2026, 7, 1))])
+    service = CreditCardService(FakeCardRepo(), payments, FakeSpending(Decimal("0"), Decimal("0")))
+
+    removed = await service.remove_payment("u1", Decimal("300000"))
+
+    assert removed is not None
+    assert removed.id == "p1"
+    assert payments.deleted == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_remove_payment_scopes_by_card_and_date() -> None:
+    payments = FakePaymentRepo(
+        payments=[
+            _payment("p1", "500000", date(2026, 7, 1), card_id="card-1"),
+            _payment("p2", "500000", date(2026, 7, 1), card_id="card-2"),
+        ]
+    )
+    service = CreditCardService(FakeCardRepo(), payments, FakeSpending(Decimal("0"), Decimal("0")))
+
+    removed = await service.remove_payment(
+        "u1", Decimal("500000"), payment_date=date(2026, 7, 1), card_id="card-2"
+    )
+
+    assert removed is not None and removed.id == "p2"
+    assert payments.deleted == ["p2"]
+
+
+@pytest.mark.asyncio
+async def test_remove_payment_no_match_returns_none() -> None:
+    payments = FakePaymentRepo(payments=[_payment("p1", "300000", date(2026, 7, 1))])
+    service = CreditCardService(FakeCardRepo(), payments, FakeSpending(Decimal("0"), Decimal("0")))
+
+    removed = await service.remove_payment("u1", Decimal("999999"))
+
+    assert removed is None
+    assert payments.deleted == []

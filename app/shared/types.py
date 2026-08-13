@@ -103,6 +103,22 @@ class RiskTolerance(str, Enum):
     AGGRESSIVE = "aggressive"
 
 
+class MovementKind(str, Enum):
+    """Kind of a unified movement across the transaction/card/goal ledgers.
+
+    A movement the user sees in the dashboard's list can live in three tables:
+    a transaction (income/expense), a card payment, or a goal contribution
+    (a positive aporte or a negative retiro). This tags which one a found
+    candidate is, so the agent routes deletion to the right tool.
+    """
+
+    EXPENSE = "expense"
+    INCOME = "income"
+    CARD_PAYMENT = "card_payment"
+    GOAL_CONTRIBUTION = "goal_contribution"
+    GOAL_WITHDRAWAL = "goal_withdrawal"
+
+
 # Type aliases for domain clarity
 Amount: TypeAlias = Decimal
 UserId: TypeAlias = str

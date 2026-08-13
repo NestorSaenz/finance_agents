@@ -82,6 +82,10 @@ class CardPaymentRepositoryABC(ABC):
     ) -> list[CardPayment]:
         """Return the user's card payments within the date range, newest first."""
 
+    @abstractmethod
+    async def delete(self, payment_id: str, user_id: UserId) -> None:
+        """Delete a single card payment (scoped by ``user_id``)."""
+
 
 class CreditCardSpendingABC(ABC):
     """Contract for computing how much was charged to a card."""
@@ -145,6 +149,23 @@ class CreditCardServiceABC(ABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> list[CardPaymentView]:
         """Return the user's card payments in the period, with card names."""
+
+    @abstractmethod
+    async def remove_payment(
+        self,
+        user_id: UserId,
+        amount: Decimal,
+        *,
+        payment_date: date | None = None,
+        card_id: CardId | None = None,
+    ) -> CardPayment | None:
+        """Delete a card payment matched by amount (and optional date/card).
+
+        Mirrors ``GoalService.remove_contribution``: matches on ``amount`` and,
+        when given, ``payment_date`` and ``card_id``; on several matches the most
+        recent is removed. Returns the deleted payment, or ``None`` when nothing
+        matches. This is the chat-side undo of ``register_payment``.
+        """
 
     @abstractmethod
     async def resolve_by_name(self, name: str, user_id: UserId) -> CreditCard | None:

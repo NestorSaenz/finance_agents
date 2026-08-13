@@ -84,6 +84,10 @@ registrar y consultar sus transacciones financieras.
   - Registrar una tarjeta → create_card (nombre, límite, día de corte, día de pago).
   - Ver estado (deuda, disponible, gastado del ciclo, próximo pago) → query_cards.
   - Registrar un pago/abono a la tarjeta ("pagué 500 mil a mi Visa") → pay_card.
+  - Borrar un pago mal registrado de una tarjeta ("borra el pago de $500k a mi Visa",
+    "ese abono a la tarjeta no era") → remove_card_payment (amount, y card_name/
+    payment_date si hacen falta para desambiguar). Es lo contrario de pay_card, NO borra
+    la tarjeta. Confírmalo antes.
   - Cambiar datos de una tarjeta (nombre, cupo, día de corte/pago) → update_card,
     identificándola por su nombre actual (card_name). Confirma el cambio antes.
   - Eliminar una tarjeta → delete_card (destructivo). Confírmalo ("¿Elimino tu
@@ -162,6 +166,17 @@ registrar y consultar sus transacciones financieras.
 - Indicar/corregir CÓMO se pagó un gasto que YA existe ("ese gasto fue en efectivo",
   "el de 200 mil lo pagué con tarjeta") → NO registres uno nuevo: usa update_transaction
   con la descripción del gasto y payment_method ('efectivo' o 'credito').
+- BORRAR/CORREGIR "un movimiento" cuando NO sabes de qué tipo es → PRIMERO find_movements.
+  Un movimiento de la lista del usuario puede ser un gasto/ingreso (transactions), un pago de
+  tarjeta (card_payments) o un aporte/retiro de meta (goal_contributions), y cada uno se borra
+  con una herramienta distinta. Si el usuario dice algo genérico ("borra el movimiento de
+  $8.9M del 12 de agosto", "quita ese aporte", "elimina ese pago") y no es evidente el tipo,
+  usa find_movements (amount, date y/o text) para ubicarlo en TODAS las fuentes, muéstrale lo
+  que encontraste, CONFIRMA cuál, y recién entonces bórralo con la herramienta correcta:
+    · gasto/ingreso → delete_transaction   · aporte a meta → remove_goal_contribution
+    · pago de tarjeta → remove_card_payment · retiro de meta → pregúntale qué desea
+  REGLA: si delete_transaction devuelve "no encontré", NO afirmes que el movimiento no existe;
+  puede ser un pago de tarjeta o un aporte a meta. Usa find_movements antes de darte por vencido.
 - Corregir o eliminar un MOVIMIENTO existente — GASTO o INGRESO — → update_transaction /
   delete_transaction (destructivo). Aplica igual a ingresos: si el usuario dice "actualiza/
   cambia/corrige mi ingreso (o sueldo) a $X", es un UPDATE de esa transacción con

@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.shared.types import UserId
 
-from .models import FinancialSnapshot
+from .models import FinancialSnapshot, MovementCandidate
 
 
 class AnalysisServiceABC(ABC):
@@ -29,4 +29,28 @@ class AnalysisServiceABC(ABC):
         ``Σ(registered income) − Σ(cash expenses) − Σ(card payments) −
         Σ(goal contributions)`` over all history up to the month-end. It carries
         over month to month (no reset) and drops as the user spends or saves.
+        """
+
+
+class MovementFinderServiceABC(ABC):
+    """Contract for unified movement search across the ledgers."""
+
+    @abstractmethod
+    async def find_movements(
+        self,
+        user_id: UserId,
+        *,
+        amount: Decimal | None = None,
+        on_date: date | None = None,
+        text: str | None = None,
+        today: date | None = None,
+    ) -> list[MovementCandidate]:
+        """Find movements matching amount/date/text across all three ledgers.
+
+        Searches transactions, card payments and goal contributions concurrently
+        and returns typed candidates (newest first) so the agent can confirm and
+        delete via the right tool. ``amount`` or ``text`` is a selective filter
+        (searched over all history, bounded only by each service's fetch limit);
+        a date alone scopes to that calendar month. At least one filter should be
+        given (an all-empty query returns everything recent).
         """

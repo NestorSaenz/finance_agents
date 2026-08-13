@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.shared.types import Category
+from app.shared.types import Category, MovementKind
 
 
 class CategoryLine(BaseModel):
@@ -43,6 +43,23 @@ class CardLine(BaseModel):
     limit: Decimal
     available: Decimal
     next_payment_date: date
+
+
+class MovementCandidate(BaseModel):
+    """A single movement found across the transaction/card/goal ledgers.
+
+    Unifies the three sources the dashboard's movements list shows, so the agent
+    can locate a movement to delete/edit regardless of which ledger holds it and
+    route to the right tool by ``kind``. ``amount`` is always the positive
+    magnitude shown to the user; the sign lives in ``kind`` (a retiro vs an
+    aporte). ``label`` is the human name: a transaction's description, a card's
+    name, or a goal's name.
+    """
+
+    kind: MovementKind
+    label: str
+    amount: Decimal
+    date: date
 
 
 class FinancialSnapshot(BaseModel):

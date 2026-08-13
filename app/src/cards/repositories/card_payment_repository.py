@@ -97,6 +97,12 @@ class CardPaymentRepository(CardPaymentRepositoryABC):
         # Date range applied in Python (PostgREST equality filters can't do ranges).
         return [p for p in payments if period_start <= p.payment_date <= period_end]
 
+    async def delete(self, payment_id: str, user_id: UserId) -> None:
+        await self._db.delete(
+            CARD_PAYMENTS_TABLE, {"id": payment_id, "user_id": user_id}
+        )
+        logger.info("Card payment deleted", payment_id=payment_id, user_id=user_id)
+
 
 def _row_to_payment(row: dict[str, Any]) -> CardPayment:
     return CardPayment(

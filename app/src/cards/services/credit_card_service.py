@@ -7,6 +7,7 @@ from typing import Final
 
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
+from app.shared.text_match import normalize
 from app.shared.types import CardId, UserId
 
 from ..cycle import compute_cycle, next_payment_date
@@ -30,6 +31,11 @@ logger = get_logger(__name__)
 # Minimum name similarity (0-1) to resolve a card by a fuzzy/typo'd name. High
 # enough that distinct cards don't collide, low enough to catch "rapid"->"rappid".
 _FUZZY_MATCH_CUTOFF: Final[float] = 0.8
+
+# All-history window for matching a payment to remove (PostgREST can't range
+# filter here, so we fetch and match in Python; personal volumes are small).
+_EPOCH: Final[date] = date(1970, 1, 1)
+_FAR_FUTURE: Final[date] = date(2999, 12, 31)
 
 
 class CreditCardService(CreditCardServiceABC):
@@ -102,6 +108,34 @@ class CreditCardService(CreditCardServiceABC):
             for p in payments
         ]
 
+    async def remove_payment(
+        self,
+        user_id: UserId,
+        amount: Decimal,
+        *,
+        payment_date: date | None = None,
+        card_id: CardId | None = None,
+    ) -> CardPayment | None:
+        # One fetch of the user's payments (newest first), matched in Python —
+        # mirroring GoalService.remove_contribution. The window spans all history
+        # so an older mistaken payment is still found; volumes are small.
+        payments = await self._payments.list_in_period(user_id, _EPOCH, _FAR_FUTURE)
+        match = next(
+            (
+                p
+                for p in payments
+                if p.amount == amount
+                and (card_id is None or p.card_id == card_id)
+                and (payment_date is None or p.payment_date == payment_date)
+            ),
+            None,
+        )
+        if match is None:
+            return None
+        await self._payments.delete(match.id, user_id)
+        logger.info("Card payment removed", card_id=match.card_id, user_id=user_id)
+        return match
+
     async def update_card(
         self,
         card_id: CardId,
@@ -132,22 +166,23 @@ class CreditCardService(CreditCardServiceABC):
         return card
 
     async def resolve_by_name(self, name: str, user_id: UserId) -> CreditCard | None:
-        target = name.lower().strip()
+        target = normalize(name)
         if not target:
             return None
         cards = await self._repository.list_active(user_id)
         for card in cards:
-            if card.name.lower() == target:
+            if normalize(card.name) == target:
                 return card
         for card in cards:
-            cname = card.name.lower()
+            cname = normalize(card.name)
             if target in cname or cname in target:
                 return card
         # Typo-tolerant fallback: pick the closest name if it's clearly close
         # (e.g. "rapid" -> "rappid"). High cutoff so distinct cards don't collide.
+        # Compared on accent-stripped names so "nú"/"nu" don't diverge.
         best, best_ratio = None, 0.0
         for card in cards:
-            ratio = SequenceMatcher(None, target, card.name.lower()).ratio()
+            ratio = SequenceMatcher(None, target, normalize(card.name)).ratio()
             if ratio > best_ratio:
                 best, best_ratio = card, ratio
         return best if best_ratio >= _FUZZY_MATCH_CUTOFF else None

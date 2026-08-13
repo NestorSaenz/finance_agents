@@ -377,6 +377,18 @@ class TestGoalToolkit:
         assert goal_id == "g5"
         assert amount == Decimal("10000")
 
+    async def test_contribute_resolves_singular_plural(self) -> None:
+        # The reported bug: "emergencias" must resolve "Fondo de emergencia".
+        service = FakeGoalService(goals=[_goal(id="g7", name="Fondo de emergencia")])
+        await GoalToolkit(service).dispatch(
+            "contribute_to_goal",
+            {"goal_name": "emergencias", "amount": 5000},
+            "u1",
+        )
+        goal_id, _user, amount, _when = service.contributions[0]
+        assert goal_id == "g7"
+        assert amount == Decimal("5000")
+
     async def test_contribute_unknown_goal_returns_message(self) -> None:
         service = FakeGoalService(goals=[_goal(name="Casa")])
         result = await GoalToolkit(service).dispatch(

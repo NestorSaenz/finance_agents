@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
+from app.shared.text_match import names_match, normalize
 from app.shared.types import GoalType, UserId
 from app.src.goals.interfaces import GoalServiceABC
 from app.src.goals.models import Goal, GoalCreate, GoalProgress
@@ -554,34 +555,29 @@ class GoalToolkit:
     async def _resolve_goals(self, name: str, user_id: UserId) -> list[Goal]:
         """Return ALL goals matching ``name`` at the best tier, or [].
 
-        Tries exact match, then substring, then significant-word overlap so
-        "vacaciones de la playa" still resolves to "vacaciones playa" (filler
-        words like de/la/para are ignored). Returning every match (not just the
-        first) lets the caller disambiguate when several share a name.
+        Tries exact match, then substring, then accent- and inflection-tolerant
+        word matching (shared ``names_match``) so "vacaciones de la playa" still
+        resolves to "vacaciones playa" and, crucially, "emergencias" resolves to
+        "Fondo de emergencia" (singular/plural). All tiers are accent-insensitive.
+        Returning every match (not just the first) lets the caller disambiguate
+        when several share a name.
         """
         if not name:
             return []
         goals, _ = await self._service.list_goals(user_id, page=1, page_size=50)
-        target = name.lower().strip()
+        target = normalize(name)
 
-        exact = [g for g in goals if g.name.lower() == target]
+        exact = [g for g in goals if normalize(g.name) == target]
         if exact:
             return exact
         substr = [
-            g for g in goals if target in g.name.lower() or g.name.lower() in target
+            g
+            for g in goals
+            if target in (gn := normalize(g.name)) or (len(gn) >= 4 and gn in target)
         ]
         if substr:
             return substr
-
-        target_words = _significant_words(target)
-        if not target_words:
-            return []
-        return [
-            g
-            for g in goals
-            if (gw := _significant_words(g.name.lower()))
-            and (target_words <= gw or gw <= target_words)
-        ]
+        return [g for g in goals if names_match(name, g.name)]
 
     def _pick_goal(
         self, matches: list[Goal], target_amount: Decimal | None
@@ -592,16 +588,6 @@ class GoalToolkit:
             if filtered:
                 matches = filtered
         return matches[0] if len(matches) == 1 else None
-
-
-_FILLER_WORDS = frozenset(
-    {"de", "la", "el", "los", "las", "para", "un", "una", "del", "al", "mi", "mis"}
-)
-
-
-def _significant_words(text: str) -> frozenset[str]:
-    """Return the meaningful words of ``text`` (filler words removed)."""
-    return frozenset(w for w in text.split() if w and w not in _FILLER_WORDS)
 
 
 def _format_progress(progress: GoalProgress) -> str:
