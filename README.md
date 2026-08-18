@@ -1,4 +1,10 @@
 # Safi
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-multiagente-1C3C3C)
+![Vertex AI](https://img.shields.io/badge/Vertex%20AI-Gemini-4285F4?logo=googlecloud&logoColor=white)
+![Cloud Run](https://img.shields.io/badge/Deploy-Cloud%20Run-4285F4?logo=googlecloud&logoColor=white)
+![mypy](https://img.shields.io/badge/mypy-strict-2A6DB2)
 
 **Asistente conversacional multiagente para la gestión de finanzas personales, basado en IA Generativa.**
 
