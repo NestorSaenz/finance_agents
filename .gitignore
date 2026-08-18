@@ -99,6 +99,14 @@ service-account.json
 # GCP / Vertex service-account keys
 gcp-key.json
 gcp-*.json
+
+# OAuth / Google credentials (solo local, NUNCA commitear)
+client_secret*.json
+*_credentials.json
+web_credentials.json
+desktop_credentials.json
+token*.json
+
 *-sa.json
 application_default_credentials.json
 
