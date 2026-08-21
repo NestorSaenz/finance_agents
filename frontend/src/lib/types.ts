@@ -123,6 +123,7 @@ export interface CreditCardStatusList {
 }
 
 export interface CardPaymentItem {
+  card_id: string;
   card_name: string;
   amount: string;
   payment_date: string;

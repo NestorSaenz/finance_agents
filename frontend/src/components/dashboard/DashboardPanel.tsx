@@ -289,6 +289,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               accumulatedSurplus={surplus}
               cards={cards}
               payments={payments}
+              transactions={movements}
               recurring={recurring}
               period={period}
             />

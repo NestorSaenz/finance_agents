@@ -56,8 +56,13 @@ class CardPayment(BaseModel):
 
 
 class CardPaymentView(BaseModel):
-    """A card payment enriched with the card's name (for display)."""
+    """A card payment enriched with the card's id and name (for display).
 
+    ``card_id`` lets a consumer associate the payment with a specific card even
+    when two cards share a name (names are not unique).
+    """
+
+    card_id: str
     card_name: str
     amount: Decimal
     payment_date: date

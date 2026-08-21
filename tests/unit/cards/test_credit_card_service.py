@@ -388,6 +388,20 @@ def _payment(pid: str, amount: str, on: date, card_id: str = "card-1") -> CardPa
 
 
 @pytest.mark.asyncio
+async def test_list_payments_carries_card_id_and_name() -> None:
+    # The view must expose card_id (for precise per-card association) plus the name.
+    payments = FakePaymentRepo(payments=[_payment("p1", "100000", date(2026, 7, 3))])
+    service = CreditCardService(FakeCardRepo(), payments, FakeSpending(Decimal("0"), Decimal("0")))
+
+    views = await service.list_payments("u1", date(2026, 7, 1), date(2026, 7, 31))
+
+    assert len(views) == 1
+    assert views[0].card_id == "card-1"
+    assert views[0].card_name == "Visa BBVA"
+    assert views[0].amount == Decimal("100000")
+
+
+@pytest.mark.asyncio
 async def test_remove_payment_matches_and_deletes() -> None:
     payments = FakePaymentRepo(payments=[_payment("p1", "300000", date(2026, 7, 1))])
     service = CreditCardService(FakeCardRepo(), payments, FakeSpending(Decimal("0"), Decimal("0")))

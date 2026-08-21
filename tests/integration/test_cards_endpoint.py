@@ -133,6 +133,7 @@ class StubCardService(CreditCardServiceABC):
     ) -> list[CardPaymentView]:
         return [
             CardPaymentView(
+                card_id="card-1",
                 card_name="Visa BBVA",
                 amount=Decimal("100000"),
                 payment_date=date(2026, 7, 3),

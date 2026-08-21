@@ -145,7 +145,10 @@ async def test_text_filter_matches_across_sources() -> None:
         txs=[_tx("Mercado", "300", date(2026, 8, 5))],
         payments=[
             CardPaymentView(
-                card_name="Nu", amount=Decimal("400"), payment_date=date(2026, 8, 6)
+                card_id="c-nu",
+                card_name="Nu",
+                amount=Decimal("400"),
+                payment_date=date(2026, 8, 6),
             )
         ],
     )

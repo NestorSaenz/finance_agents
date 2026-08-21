@@ -101,6 +101,7 @@ class CreditCardService(CreditCardServiceABC):
         names = {c.id: c.name for c in cards}
         return [
             CardPaymentView(
+                card_id=p.card_id,
                 card_name=names.get(p.card_id, "Tarjeta"),
                 amount=p.amount,
                 payment_date=p.payment_date,

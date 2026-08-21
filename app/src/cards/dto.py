@@ -82,6 +82,7 @@ class CreditCardStatusListResponse(BaseModel):
 class CardPaymentResponse(BaseModel):
     """Response body for a single card payment (as an event)."""
 
+    card_id: str
     card_name: str
     amount: Decimal
     payment_date: date
@@ -89,6 +90,7 @@ class CardPaymentResponse(BaseModel):
     @classmethod
     def from_domain(cls, payment: CardPaymentView) -> "CardPaymentResponse":
         return cls(
+            card_id=payment.card_id,
             card_name=payment.card_name,
             amount=payment.amount,
             payment_date=payment.payment_date,

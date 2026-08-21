@@ -8,6 +8,7 @@ import type {
   Goal,
   Recurring,
   SpendingSummary,
+  Transaction,
   UserProfile,
 } from "@/lib/types";
 
@@ -29,6 +30,8 @@ interface SummaryContentProps {
   accumulatedSurplus: number;
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
+  /** This period's transactions — used to list each card's charges on expand. */
+  transactions: Transaction[];
   /** Recurring templates (period-independent); read-only, managed via chat. */
   recurring: Recurring[];
   /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
@@ -54,6 +57,7 @@ export function SummaryContent({
   accumulatedSurplus,
   cards,
   payments,
+  transactions,
   recurring,
   period,
 }: SummaryContentProps) {
@@ -261,7 +265,13 @@ export function SummaryContent({
               : "Estado a hoy."
           }
         >
-          <CardStatus data={cards} historical={historicalCards} />
+          <CardStatus
+            data={cards}
+            historical={historicalCards}
+            transactions={transactions}
+            payments={payments?.payments ?? []}
+            period={period}
+          />
         </Section>
       )}
 
