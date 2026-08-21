@@ -125,7 +125,7 @@ const CAPABILITIES = [
   "Memoria de lo tuyo",
   "Panel: resumen y movimientos",
   "Excedente acumulado",
-  "Disponible real (flujo de caja)",
+  "Tu caja real del mes (flujo de caja)",
 ];
 
 export default function GuiaPage() {
@@ -378,12 +378,12 @@ export default function GuiaPage() {
           <Chapter
             kicker="Y cuando prefieras verlo"
             title="Un panel que dice la verdad"
-            say="Todo lo que hablas se ve, ordenado. Con tu disponible real y tu excedente que se acumula mes a mes."
+            say="Todo lo que hablas se ve, ordenado. Con tu caja real del mes (separando lo que gastas de lo que ahorras) y tu excedente que se acumula."
           >
             <div
               className="rounded-xl border border-line bg-surface p-4 shadow-card"
               role="img"
-              aria-label="Vista del panel de resumen de Safi: flujo de caja del mes con un disponible real de $6.470.466"
+              aria-label="Vista del panel de resumen de Safi: flujo de caja del mes con una caja final de $6.470.466"
             >
               <p className="text-xs font-medium uppercase tracking-wide text-muted">
                 Flujo de caja · este mes
@@ -404,12 +404,16 @@ export default function GuiaPage() {
                   <dt className="text-muted">Pagos a tarjetas</dt>
                   <dd className="tabular-nums text-negative">−$2.610.576</dd>
                 </div>
+                <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
+                  <dt className="font-medium text-ink">Te sobró</dt>
+                  <dd className="font-semibold tabular-nums text-positive">$7.570.466</dd>
+                </div>
                 <div className="flex items-center justify-between">
-                  <dt className="text-muted">Aportes a metas</dt>
-                  <dd className="tabular-nums text-negative">−$1.100.000</dd>
+                  <dt className="text-muted">Guardado en metas</dt>
+                  <dd className="tabular-nums text-brand-600">−$1.100.000</dd>
                 </div>
                 <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
-                  <dt className="font-medium text-ink">Disponible real</dt>
+                  <dt className="font-medium text-ink">Caja final del mes</dt>
                   <dd className="font-semibold tabular-nums text-positive">$6.470.466</dd>
                 </div>
               </dl>

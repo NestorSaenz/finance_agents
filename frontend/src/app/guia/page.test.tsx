@@ -30,13 +30,15 @@ describe("GuiaPage", () => {
 
     expect(screen.getByText("Metas: aportar, retirar, ajustar")).toBeInTheDocument();
     expect(screen.getByText("Movimientos fijos (recurrentes)")).toBeInTheDocument();
-    expect(screen.getByText("Disponible real (flujo de caja)")).toBeInTheDocument();
+    expect(screen.getByText("Tu caja real del mes (flujo de caja)")).toBeInTheDocument();
   });
 
   it("renders the dashboard peek with the real available amount", () => {
     render(<GuiaPage />);
 
-    expect(screen.getByText("Disponible real")).toBeInTheDocument();
+    // The cash-flow peek now separates spending from saving.
+    expect(screen.getByText("Te sobró")).toBeInTheDocument();
+    expect(screen.getByText("Caja final del mes")).toBeInTheDocument();
     expect(screen.getByText("Flujo de caja · este mes")).toBeInTheDocument();
   });
 

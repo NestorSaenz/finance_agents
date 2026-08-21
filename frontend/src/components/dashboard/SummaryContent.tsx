@@ -96,9 +96,22 @@ export function SummaryContent({
   const cardPayments = Number(payments?.total ?? 0);
   // Money set aside to savings goals this month also leaves the disposable pool.
   const goalContribs = goalContributions;
-  const cashAvailable = income - cashExpenses - cardPayments - goalContribs;
+  // Two steps, so saving never reads as a loss: first what's left after money
+  // that TRULY left the pocket (cash + card payments), then the final position
+  // after choosing to move some into goals.
+  const afterSpending = income - cashExpenses - cardPayments;
+  const cashAvailable = afterSpending - goalContribs;
   const hasCashFlow =
     income > 0 || cashExpenses > 0 || cardPayments > 0 || goalContribs !== 0;
+  // Explain the bottom line in words — saving is not spending.
+  const cashFlowNote =
+    goalContribs > 0
+      ? cashAvailable >= 0
+        ? `Te sobró incluso después de guardar ${money(goalContribs)} en metas. Aportar a metas es ahorro, no gasto.`
+        : `Aportar a metas es ahorro, no gasto: este mes guardaste ${money(Math.abs(cashAvailable))} más de lo que te quedó disponible.`
+      : goalContribs < 0
+        ? `Incluye ${money(Math.abs(goalContribs))} que retiraste de tus metas y volvió a tu bolsillo.`
+        : "Lo que te queda tras el efectivo y los pagos a tarjetas del mes.";
 
   return (
     <div className="flex flex-col gap-5">
@@ -115,6 +128,10 @@ export function SummaryContent({
           }`}
         >
           {money(balance)}
+        </p>
+        <p className="mt-2 text-xs text-muted">
+          Ingresos menos gastos del mes. Los cargos a crédito cuentan completos,
+          aunque aún no los pagues — por eso puede diferir de tu caja real de abajo.
         </p>
       </div>
 
@@ -136,34 +153,57 @@ export function SummaryContent({
               <dt className="text-muted">Pagos a tarjetas</dt>
               <dd className="tabular-nums text-negative">−{money(cardPayments)}</dd>
             </div>
-            <div className="flex items-center justify-between">
-              {/* Net contributions: positive = money into goals (outflow); negative
-                  = net withdrawals returning to your pocket (inflow). */}
-              <dt className="text-muted">
-                {goalContribs >= 0 ? "Aportes a metas" : "Retiros de metas"}
+
+            {/* Subtotal after money that ACTUALLY left the pocket. When there are
+                no goal movements this is already the bottom line. */}
+            <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
+              <dt className="font-medium text-ink">
+                {goalContribs !== 0
+                  ? afterSpending >= 0
+                    ? "Te sobró"
+                    : "Te faltó"
+                  : "Disponible del mes"}
               </dt>
               <dd
-                className={`tabular-nums ${goalContribs >= 0 ? "text-negative" : "text-positive"}`}
-              >
-                {goalContribs >= 0 ? "−" : "+"}
-                {money(Math.abs(goalContribs))}
-              </dd>
-            </div>
-            <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
-              <dt className="font-medium text-ink">Disponible real</dt>
-              <dd
                 className={`font-semibold tabular-nums ${
-                  cashAvailable >= 0 ? "text-positive" : "text-negative"
+                  afterSpending >= 0 ? "text-positive" : "text-negative"
                 }`}
               >
-                {money(cashAvailable)}
+                {money(afterSpending)}
               </dd>
             </div>
+
+            {/* Saving is NOT spending: goal money apart in a neutral tone, then
+                the final cash position after choosing to save. */}
+            {goalContribs !== 0 && (
+              <>
+                <div className="flex items-center justify-between">
+                  <dt className="text-muted">
+                    {goalContribs >= 0 ? "Guardado en metas" : "Retirado de metas"}
+                  </dt>
+                  <dd
+                    className={`tabular-nums ${
+                      goalContribs >= 0 ? "text-brand-600" : "text-positive"
+                    }`}
+                  >
+                    {goalContribs >= 0 ? "−" : "+"}
+                    {money(Math.abs(goalContribs))}
+                  </dd>
+                </div>
+                <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
+                  <dt className="font-medium text-ink">Caja final del mes</dt>
+                  <dd
+                    className={`font-semibold tabular-nums ${
+                      cashAvailable >= 0 ? "text-positive" : "text-amber-600"
+                    }`}
+                  >
+                    {money(cashAvailable)}
+                  </dd>
+                </div>
+              </>
+            )}
           </dl>
-          <p className="mt-2 text-xs text-muted">
-            Lo que te queda tras el efectivo, los pagos a tarjetas y los aportes a
-            metas del mes.
-          </p>
+          <p className="mt-2 text-xs text-muted">{cashFlowNote}</p>
         </div>
       )}
 
