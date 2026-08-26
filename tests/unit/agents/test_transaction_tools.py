@@ -676,6 +676,22 @@ class TestQuery:
 
         assert "no se encontraron" in result.lower()
 
+    async def test_category_filter_is_resolved_to_stored_spelling(self) -> None:
+        # The reported bug: a query for "Alimentación" must resolve to the stored
+        # canonical "alimentacion" before filtering (accent-insensitive), not push
+        # the accented spelling that matches nothing.
+        service = FakeTransactionService()
+        service.resolved_category = "alimentacion"
+        toolkit = TransactionToolkit(service)
+
+        await toolkit.dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"category": "Alimentación"}, user_id="u1"
+        )
+
+        assert service.resolve_calls  # the typed category went through the resolver
+        _uid, kwargs = service.list_calls[-1]
+        assert kwargs["category"] == "alimentacion"
+
     async def test_filters_by_period_and_payment_method(self) -> None:
         # "transporte en efectivo en junio" must return ONLY June cash rows, all of
         # them (the bug: the agent could not filter by month or payment method).

@@ -672,7 +672,7 @@ class TransactionToolkit:
             page=1,
             page_size=ANALYZE_FETCH_LIMIT,
             transaction_type=_to_type(args.get("transaction_type")),
-            category=_to_category(args.get("category")),
+            category=await self._resolve_category_filter(args.get("category"), user_id),
             card_id=card_id,
         )
         period = str(args.get("period", "")).strip().lower()
@@ -735,6 +735,21 @@ class TransactionToolkit:
         header = f"{len(items)} transacción(es) por ${total_amount:,.0f} en total{capped}:"
         return header + "\n" + "\n".join(lines)
 
+    async def _resolve_category_filter(
+        self, value: Any, user_id: UserId
+    ) -> str | None:
+        """Resolve a user-typed category filter to the stored spelling.
+
+        Snaps to an existing category accent- and typo-insensitively (reusing the
+        same resolver as registration), so a query/delete for "Alimentación"
+        matches transactions stored under the canonical "alimentacion". Returns
+        None when no category was given.
+        """
+        category = _to_category(value)
+        if category is None:
+            return None
+        return await self._service.resolve_category(category, user_id)
+
     async def _card_name_map(self, user_id: UserId) -> dict[str, str]:
         """Map each of the user's card ids to its name (empty if no card service)."""
         if self._cards is None:
@@ -765,7 +780,7 @@ class TransactionToolkit:
             if card is None:
                 return f"No encontré una tarjeta que coincida con '{card_name}'."
 
-        category = _to_category(args.get("category"))
+        category = await self._resolve_category_filter(args.get("category"), user_id)
 
         # Resolve the time scope: a named/YYYY-MM period, or an explicit date range.
         period = str(args.get("period", "")).strip().lower()

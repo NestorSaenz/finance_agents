@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
 from app.shared.periods import resolve_period
-from app.shared.types import TransactionType, normalize_category
+from app.shared.types import TransactionType
 from app.src.auth.dependencies import CurrentUserId
 from app.src.transactions.dependencies import TransactionServiceDep
 from app.src.transactions.dto import (
@@ -62,7 +62,11 @@ async def list_transactions(
     ),
 ) -> TransactionListResponse:
     """List the current user's transactions with pagination and filters."""
-    normalized_category = normalize_category(category) if category else None
+    # Resolve to the stored spelling (accent/typo tolerant) so a free-text
+    # "Alimentación" matches the canonical "alimentacion", matching the chat tools.
+    normalized_category = (
+        await service.resolve_category(category, user_id) if category else None
+    )
     # A period returns the full movement list for that range (dashboard detail),
     # so pagination does not apply.
     if period is not None:

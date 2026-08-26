@@ -4,10 +4,15 @@ from app.agents.tools.category_tools import MANAGE_CATEGORY_TOOL, CategoryToolki
 
 
 class FakeTxService:
-    def __init__(self, count: int = 0) -> None:
+    def __init__(self, count: int = 0, resolve: dict[str, str] | None = None) -> None:
         self.count = count
         self.recategorized: list[tuple[str, str]] = []
         self.deleted: list[str] = []
+        # Simulates resolve_category snapping a typed name to a stored spelling.
+        self.resolve = resolve or {}
+
+    async def resolve_category(self, proposed: str, user_id: str) -> str:
+        return self.resolve.get(proposed, proposed)
 
     async def count_by_category(self, user_id: str, category: str) -> int:
         return self.count
@@ -63,6 +68,20 @@ class TestRename:
 
         assert tx.recategorized == []  # nothing changed
         assert "renombrar" in result.lower() or "nombre" in result.lower()
+
+    async def test_resolves_accented_category_to_stored_spelling(self) -> None:
+        # "Alimentación" (typed) must operate on the stored "alimentacion", not on
+        # the accented spelling that matches zero rows.
+        tx = FakeTxService(count=3, resolve={"alimentación": "alimentacion"})
+        bud = FakeBudgetService(topes=0)
+
+        await _toolkit(tx, bud).dispatch(
+            MANAGE_CATEGORY_TOOL,
+            {"action": "rename", "category": "Alimentación", "new_name": "comida"},
+            user_id="u1",
+        )
+
+        assert tx.recategorized == [("alimentacion", "comida")]
 
 
 class TestDelete:

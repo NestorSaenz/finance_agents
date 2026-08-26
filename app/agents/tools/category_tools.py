@@ -87,6 +87,9 @@ class CategoryToolkit:
         category = normalize_category(category_raw) if category_raw else ""
         if not category:
             return "¿Qué categoría quieres gestionar?"
+        # Snap the user-typed category to its stored spelling (accent/typo tolerant)
+        # so "Alimentación" operates on the canonical "alimentacion", not 0 rows.
+        category = await self._transactions.resolve_category(category, user_id)
         if action == "rename":
             return await self._rename(category, arguments, user_id)
         if action == "delete":
@@ -102,6 +105,9 @@ class CategoryToolkit:
         new_name = normalize_category(new_name_raw) if new_name_raw else ""
         if not new_name:
             return f"¿A qué nombre quieres renombrar la categoría '{category}'?"
+        # Resolve the destination too, so renaming INTO an existing category (a
+        # merge) matches its stored spelling accent-insensitively.
+        new_name = await self._transactions.resolve_category(new_name, user_id)
         if new_name == category:
             return "El nombre nuevo es igual al actual; no hay nada que cambiar."
         moved = await self._transactions.recategorize(user_id, category, new_name)
@@ -121,6 +127,8 @@ class CategoryToolkit:
     ) -> str:
         move_to_raw = str(args.get("move_to", "")).strip()
         move_to = normalize_category(move_to_raw) if move_to_raw else ""
+        if move_to:
+            move_to = await self._transactions.resolve_category(move_to, user_id)
         # Moving to the same category is a no-op; drop it so we don't fall through
         # to deleting the very movements the user meant to keep.
         if move_to == category:

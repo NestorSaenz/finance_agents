@@ -451,6 +451,12 @@ class TestMatchCategory:
     def test_no_existing_returns_proposed(self) -> None:
         assert _match_category("mercado", []) == "mercado"
 
+    def test_matches_accent_insensitively_reusing_stored_spelling(self) -> None:
+        # The reported bug: "Alimentación" (typed) must resolve to the stored
+        # canonical "alimentacion" (no accent), reusing that spelling.
+        assert _match_category("Alimentación", ["alimentacion", "gym"]) == "alimentacion"
+        assert _match_category("inversion", ["inversión"]) == "inversión"
+
 
 class TestResolveCategory:
     async def test_snaps_to_users_existing_category(self) -> None:

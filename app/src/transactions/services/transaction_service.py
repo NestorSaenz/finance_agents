@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from app.core.exceptions import TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
+from app.shared.text_match import normalize as _strip_accents
 from app.shared.types import (
     CardId,
     Category,
@@ -393,8 +394,13 @@ def _match_category(proposed: str, existing: list[str]) -> str:
     target = proposed.strip().lower()
     if not target:
         return proposed
+    # Exact tier is accent-insensitive so "Alimentación" resolves to a stored
+    # "alimentacion" (the canonical values have no accents) and reuses that
+    # spelling — otherwise the accent would only be caught by the fuzzy tier,
+    # which can miss on short words.
+    accentless = _strip_accents(target)
     for category in existing:
-        if category.lower() == target:
+        if _strip_accents(category) == accentless:
             return category
     best, best_ratio = "", 0.0
     for category in existing:
