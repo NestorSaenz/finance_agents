@@ -4,11 +4,11 @@ import calendar
 import unicodedata
 from datetime import date, datetime, timedelta
 
-from app.core.exceptions import RecurringNotFoundError
+from app.core.exceptions import IncomeCannotBeCreditError, RecurringNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today, local_date
 from app.shared.serialization import decimal_to_db
-from app.shared.types import Category, PaymentMethod, UserId
+from app.shared.types import Category, PaymentMethod, TransactionType, UserId
 from app.src.cards.cycle import compute_cycle, next_payment_date
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
@@ -63,7 +63,7 @@ class RecurringService(RecurringServiceABC):
     async def update_recurring(
         self, recurring_id: str, user_id: UserId, data: RecurringUpdate
     ) -> RecurringTransaction:
-        await self._get(recurring_id, user_id)  # existence/ownership check
+        current = await self._get(recurring_id, user_id)  # existence/ownership check
         patch: dict[str, object] = {}
         if data.amount is not None:
             patch["amount"] = decimal_to_db(data.amount)
@@ -74,17 +74,39 @@ class RecurringService(RecurringServiceABC):
             patch["type"] = data.transaction_type.value
         if data.category is not None:
             patch["category"] = data.category
+
+        # Track the RESULTING payment_method/card_id (not just the changed field)
+        # so the income+credito guard below validates the actual end state,
+        # mirroring the same precedence the patch itself applies below.
+        resulting_payment_method = current.payment_method
+        resulting_card_id = current.card_id
         if data.payment_method is not None:
             patch["payment_method"] = data.payment_method.value
+            resulting_payment_method = data.payment_method
             # Switching to cash can't keep a card link: clear it so the template
             # never carries a card_id it no longer pays with.
             if data.payment_method == PaymentMethod.EFECTIVO:
                 patch["card_id"] = None
+                resulting_card_id = None
         if data.card_id is not None:
             patch["card_id"] = data.card_id
+            resulting_card_id = data.card_id
         # Explicit unlink wins over any card_id above (clears the link outright).
         if data.clear_card:
             patch["card_id"] = None
+            resulting_card_id = None
+
+        # A credit-linked recurrente is definitionally an expense — reject the
+        # RESULTING state, not just an explicitly-set field, so a bare
+        # payment_method='credito' change on an already-income template (or vice
+        # versa) is caught too. Mirrors TransactionService.update_transaction.
+        resulting_type = data.transaction_type or current.transaction_type
+        if resulting_type == TransactionType.INCOME and (
+            resulting_payment_method == PaymentMethod.CREDITO
+            or resulting_card_id is not None
+        ):
+            raise IncomeCannotBeCreditError()
+
         if data.day_of_month is not None:
             patch["day_of_month"] = data.day_of_month
             # Changing the day reschedules the next occurrence off the new day.
@@ -94,7 +116,7 @@ class RecurringService(RecurringServiceABC):
         if data.active is not None:
             patch["active"] = data.active
         if not patch:
-            return await self._get(recurring_id, user_id)
+            return current
         return await self._repository.update(recurring_id, user_id, patch)
 
     async def delete_recurring(

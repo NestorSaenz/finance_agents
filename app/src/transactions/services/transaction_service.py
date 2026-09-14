@@ -6,7 +6,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from difflib import SequenceMatcher
 
-from app.core.exceptions import TransactionNotFoundError
+from app.core.exceptions import IncomeCannotBeCreditError, TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.serialization import decimal_to_db
 from app.shared.text_match import normalize as _strip_accents
@@ -269,8 +269,18 @@ class TransactionService(TransactionServiceABC):
         transaction_date: date | None = None,
         payment_method: PaymentMethod | None = None,
     ) -> Transaction:
-        # Ensure it exists and belongs to the user before touching it.
-        await self.get_transaction(transaction_id, user_id)
+        # Ensure it exists and belongs to the user before touching it; also use its
+        # CURRENT fields to validate the resulting state of a partial update (a
+        # bare payment_method='credito' change must still be rejected if the row's
+        # type is — or stays — income; a credit charge is definitionally an expense).
+        current = await self.get_transaction(transaction_id, user_id)
+        resulting_type = transaction_type or current.transaction_type
+        resulting_payment_method = payment_method or current.payment_method
+        if (
+            resulting_type == TransactionType.INCOME
+            and resulting_payment_method == PaymentMethod.CREDITO
+        ):
+            raise IncomeCannotBeCreditError()
 
         data: dict[str, object] = {}
         if amount is not None:
@@ -287,7 +297,7 @@ class TransactionService(TransactionServiceABC):
             data["payment_method"] = payment_method.value
 
         if not data:
-            return await self.get_transaction(transaction_id, user_id)
+            return current  # already the current row; no second fetch needed
 
         updated = await self._repository.update(transaction_id, user_id, data)
         logger.info("Transaction updated", transaction_id=transaction_id, user_id=user_id)

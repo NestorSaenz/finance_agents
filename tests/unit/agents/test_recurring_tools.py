@@ -12,6 +12,7 @@ from app.agents.tools.recurring_tools import (
     UPDATE_RECURRING_TOOL,
     RecurringToolkit,
 )
+from app.core.exceptions import IncomeCannotBeCreditError
 from app.shared.types import PaymentMethod, TransactionType, UserId
 from app.src.recurring.interfaces import RecurringServiceABC
 from app.src.recurring.models import (
@@ -61,6 +62,8 @@ class FakeRecurringService(RecurringServiceABC):
         self.listed: list[RecurringTransaction] = [existing] if existing else []
         # When set, find_matches returns these (drives the disambiguation test).
         self.matches: list[RecurringTransaction] | None = None
+        # When set, update_recurring simulates the income+credito guard rejecting.
+        self.raise_income_credit = False
 
     async def create_recurring(
         self, rec: RecurringCreate, user_id: UserId
@@ -80,6 +83,8 @@ class FakeRecurringService(RecurringServiceABC):
     async def update_recurring(
         self, recurring_id: str, user_id: UserId, data: RecurringUpdate
     ) -> RecurringTransaction:
+        if self.raise_income_credit:
+            raise IncomeCannotBeCreditError()
         self.updated.append((recurring_id, user_id, data))
         assert self._existing is not None
         patch = data.model_dump(exclude_none=True)
@@ -212,6 +217,47 @@ class TestCreate:
         assert service.created == []  # not created without a resolvable card
         assert "tarjeta" in result.lower()
 
+    async def test_create_income_never_links_a_card(self) -> None:
+        # A credit-linked recurrente is definitionally an expense — an income
+        # template must never resolve/link a card, even if the model passed
+        # card_name (mirrors transaction_tools._register's fix for the same bug).
+        service = FakeRecurringService()
+        cards = FakeCardService(cards=[_card("Visa BBVA")])
+
+        await RecurringToolkit(service, cards=cards).dispatch(
+            CREATE_RECURRING_TOOL,
+            {
+                "amount": 5000000,
+                "description": "Sueldo",
+                "transaction_type": "income",
+                "day_of_month": 30,
+                "card_name": "BBVA",
+            },
+            "u1",
+        )
+
+        rec, _uid = service.created[0]
+        assert rec.card_id is None
+        assert rec.payment_method is None
+
+    async def test_create_income_with_credito_is_rejected(self) -> None:
+        service = FakeRecurringService()
+
+        result = await RecurringToolkit(service).dispatch(
+            CREATE_RECURRING_TOOL,
+            {
+                "amount": 5000000,
+                "description": "Sueldo",
+                "transaction_type": "income",
+                "day_of_month": 30,
+                "payment_method": "credito",
+            },
+            "u1",
+        )
+
+        assert service.created == []
+        assert "no pude crear" in result.lower()
+
 
 class TestListUpdateDelete:
     async def test_list_dispatch(self) -> None:
@@ -239,6 +285,39 @@ class TestListUpdateDelete:
         assert rid == "rec-1"
         assert data.amount == Decimal("60000")
         assert "Actualicé" in result
+
+    async def test_update_rejects_setting_credito_on_income(self) -> None:
+        service = FakeRecurringService(existing=_rec())
+        service.raise_income_credit = True
+
+        result = await RecurringToolkit(service).dispatch(
+            UPDATE_RECURRING_TOOL,
+            {"description": "Netflix", "payment_method": "credito"},
+            "u1",
+        )
+
+        assert "ingreso" in result.lower()
+        assert "crédito" in result.lower() or "tarjeta" in result.lower()
+
+    async def test_update_income_never_links_a_card(self) -> None:
+        # The RESULTING type (new_type='income') must gate card resolution too,
+        # even though the template is currently an expense.
+        service = FakeRecurringService(existing=_rec())
+        cards = FakeCardService(cards=[_card("Visa BBVA")])
+
+        await RecurringToolkit(service, cards=cards).dispatch(
+            UPDATE_RECURRING_TOOL,
+            {
+                "description": "Netflix",
+                "new_type": "income",
+                "card_name": "BBVA",
+            },
+            "u1",
+        )
+
+        rid, _uid, data = service.updated[0]
+        assert rid == "rec-1"
+        assert data.card_id is None
 
     async def test_update_unknown_returns_not_found(self) -> None:
         service = FakeRecurringService(existing=_rec())

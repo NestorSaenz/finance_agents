@@ -213,6 +213,7 @@ def _row_to_transaction(row: dict[str, Any]) -> Transaction:
         # Older rows (pre-migration 010) have no budget_date -> use purchase date.
         budget_date=_parse_date(row.get("budget_date") or row.get("transaction_date")),
         source=row.get("source") or DEFAULT_SOURCE,
+        recurring_id=(str(row["recurring_id"]) if row.get("recurring_id") else None),
         created_at=_parse_datetime(row.get("created_at")),
     )
 

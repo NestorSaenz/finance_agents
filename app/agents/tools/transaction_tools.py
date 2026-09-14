@@ -23,7 +23,7 @@ from app.agents.nodes.analyst_utils import (
     detect_patterns,
     top_expenses,
 )
-from app.core.exceptions import TransactionNotFoundError
+from app.core.exceptions import IncomeCannotBeCreditError, TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.periods import period_label, resolve_period
@@ -165,6 +165,60 @@ def _resolve_delete_group(
     if tx_date is not None and not any(_cuota_count(t.description) for t in matched):
         matched = [t for t in matched if t.transaction_date == tx_date]
     return _pick_group(_installment_groups(matched), amount)
+
+
+def _budget_date_matches(transaction: Transaction, start: date, end: date) -> bool:
+    """True if ``transaction`` is a non-recurring expense whose budget/impact
+    date falls in ``[start, end]``.
+
+    Mirrors ``sum_expenses`` (migration 014) — the same rule the budget bars use
+    to attribute a credit charge to the month its statement is PAID, not the
+    month it was bought. Cash/debit rows never diverge from their purchase date
+    (their ``budget_date`` always equals it); only credit charges can.
+    """
+    if transaction.transaction_type != TransactionType.EXPENSE or transaction.recurring_id:
+        return False
+    impact = transaction.budget_date or transaction.transaction_date
+    return start <= impact <= end
+
+
+def _format_tx_line(transaction: Transaction, card_names: dict[str, str]) -> str:
+    """Render one transaction as a display line.
+
+    Shared by the main results list and the "impacta este mes" section, so a
+    credit charge bought another month but listed there still shows its real
+    purchase date and card, exactly like the main list does.
+    """
+    t = transaction
+    return (
+        f"- {t.description}: ${t.amount} ({t.category}, {t.transaction_date}"
+        + (f", {t.payment_method.value}" if t.payment_method else "")
+        + (
+            f", tarjeta {card_names[t.card_id]}"
+            if t.card_id is not None and t.card_id in card_names
+            else ""
+        )
+        + ")"
+    )
+
+
+def _only_purchase_note(only_purchase: list[Transaction], period: str) -> str:
+    """Note for rows LISTED this period whose payment falls in ANOTHER month.
+
+    They're already visible in the main results (their transaction_date is in
+    range), so a short note suffices — no need to relist them. The read-side
+    twin of the "Afectará tu presupuesto de <mes>" note ``_register`` already
+    appends on write. Empty when there's nothing to flag.
+    """
+    if not only_purchase:
+        return ""
+    total = sum((t.amount for t in only_purchase), Decimal("0"))
+    label = period_label(period)
+    return (
+        f"\n\nNota: {len(only_purchase)} de estas compras, por ${total:,.0f}, son a "
+        f"crédito con pago en OTRO mes, así que NO cuentan para el presupuesto de "
+        f"{label}."
+    )
 
 # Tool schemas in OpenAI function-calling format, consumed by
 # LLMInterface.generate_with_tools. Note: no `user_id` parameter is exposed.
@@ -481,7 +535,18 @@ class TransactionToolkit:
 
     async def _register(self, args: dict[str, Any], user_id: UserId) -> str:
         payment_method = _to_payment_method(args.get("payment_method"))
-        card, clarification = await self._resolve_card_id(args, payment_method, user_id)
+        is_expense = args.get("transaction_type", "expense") == "expense"
+        # A credit charge is definitionally an expense — never resolve/link a card
+        # for an income. Skipping this for income closes a real data bug: an
+        # income the model tagged 'credito' (or that auto-picked the user's only
+        # card) got card_id + a shifted budget_date, which excluded it from card
+        # and budget sums while it still counted as income — silently inflating
+        # the accumulated surplus.
+        card, clarification = (
+            await self._resolve_card_id(args, payment_method, user_id)
+            if is_expense
+            else (None, None)
+        )
         # Credit charge with an ambiguous card: ask which one instead of registering
         # it unlinked. Deterministic, so it never depends on the prompt remembering.
         if clarification is not None:
@@ -497,7 +562,6 @@ class TransactionToolkit:
         # follow-up "con tarjeta" registers a SECOND one (the duplicate we saw).
         # Installments are credit by definition, so they skip this.
         requested_cuotas = _to_int(args.get("cuotas"), default=1, minimum=1)
-        is_expense = args.get("transaction_type", "expense") == "expense"
         no_card_named = not str(args.get("card_name", "")).strip()
         if (
             is_expense
@@ -664,6 +728,7 @@ class TransactionToolkit:
         card_id, card_error = await self._resolve_query_card(args, user_id)
         if card_error is not None:
             return card_error
+        requested_type = _to_type(args.get("transaction_type"))
         # Fetch a wide page with the DB-side filters, then narrow by month and
         # payment method in Python (PostgREST can't range-filter dates here). The
         # whole set is returned so month questions aren't truncated to one page.
@@ -671,11 +736,13 @@ class TransactionToolkit:
             user_id,
             page=1,
             page_size=ANALYZE_FETCH_LIMIT,
-            transaction_type=_to_type(args.get("transaction_type")),
+            transaction_type=requested_type,
             category=await self._resolve_category_filter(args.get("category"), user_id),
             card_id=card_id,
         )
         period = str(args.get("period", "")).strip().lower()
+        purchase_note = ""
+        budget_section = ""
         if period:
             # Reject unrecognized months so we don't silently return the current
             # month (resolve_period's lenient fallback) and mislead the user.
@@ -685,7 +752,47 @@ class TransactionToolkit:
                     "'este_mes' / 'mes_pasado' / 'todo'."
                 )
             start, end = resolve_period(period, today=current_today())
-            items = [t for t in items if start <= t.transaction_date <= end]
+            by_purchase = [t for t in items if start <= t.transaction_date <= end]
+            # A credit charge's PURCHASE month (transaction_date) can differ from
+            # the month it actually hits the budget (budget_date, the statement's
+            # payment month) — the same split query_budgets/sum_expenses already
+            # use. Compare both from the SAME already-fetched rows (no extra
+            # query) so a period answer never silently disagrees with the budget
+            # bar for this category. Budgets never attribute income, so BOTH sides
+            # are scoped to expense rows only — otherwise an income row present in
+            # by_purchase but absent from by_budget (it can never match, budgets
+            # don't apply to it) would be wrongly reported as "a credit purchase
+            # that misses this month's budget" on an unfiltered/mixed-type query.
+            expense_by_purchase = [
+                t for t in by_purchase if t.transaction_type == TransactionType.EXPENSE
+            ]
+            by_budget = [t for t in items if _budget_date_matches(t, start, end)]
+            purchase_ids = {t.id for t in expense_by_purchase}
+            budget_ids = {t.id for t in by_budget}
+            only_purchase = [t for t in expense_by_purchase if t.id not in budget_ids]
+            only_budget = [t for t in by_budget if t.id not in purchase_ids]
+            purchase_note = _only_purchase_note(only_purchase, period)
+            if only_budget:
+                # These rows are OUTSIDE by_purchase (that's what makes them
+                # divergent), so they'd otherwise be invisible: actually LIST them
+                # (not just a summary) — "no encontré nada" isn't an answer when
+                # the user is asking to see what makes up this month's budget.
+                card_names_ob = (
+                    await self._card_name_map(user_id)
+                    if any(t.card_id for t in only_budget)
+                    else {}
+                )
+                ob_sorted = sorted(
+                    only_budget, key=lambda t: t.transaction_date, reverse=True
+                )
+                ob_total = sum((t.amount for t in only_budget), Decimal("0"))
+                budget_section = (
+                    f"\n\nAdemás, {len(only_budget)} compra(s) a crédito de otro mes "
+                    f"por ${ob_total:,.0f} SÍ afectan el presupuesto de "
+                    f"{period_label(period)} (se pagan este mes):\n"
+                    + "\n".join(_format_tx_line(t, card_names_ob) for t in ob_sorted)
+                )
+            items = by_purchase
         payment = _to_payment_method(args.get("payment_method"))
         if payment is PaymentMethod.EFECTIVO:
             # Cash = tagged 'efectivo', or untagged with no card linked.
@@ -704,7 +811,10 @@ class TransactionToolkit:
                 or (t.payment_method is None and t.card_id is not None)
             ]
         if not items:
-            return "No se encontraron transacciones con esos filtros."
+            return (
+                f"No se encontraron transacciones con esos filtros."
+                f"{purchase_note}{budget_section}"
+            )
 
         # Map card_id -> name so the reply names the card (a charge shows "crédito,
         # tarjeta Nu"), not just its payment method — otherwise the agent can't tell
@@ -715,17 +825,7 @@ class TransactionToolkit:
         # No ids: update/delete resolve the transaction by description/amount, so
         # the agent never has to copy a UUID (LLMs mangle them).
         shown = sorted(items, key=lambda t: t.transaction_date, reverse=True)
-        lines = [
-            f"- {t.description}: ${t.amount} ({t.category}, {t.transaction_date}"
-            + (f", {t.payment_method.value}" if t.payment_method else "")
-            + (
-                f", tarjeta {card_names[t.card_id]}"
-                if t.card_id is not None and t.card_id in card_names
-                else ""
-            )
-            + ")"
-            for t in shown[:QUERY_DISPLAY_LIMIT]
-        ]
+        lines = [_format_tx_line(t, card_names) for t in shown[:QUERY_DISPLAY_LIMIT]]
         total_amount = sum((t.amount for t in items), Decimal("0"))
         capped = (
             f" (muestro las {QUERY_DISPLAY_LIMIT} más recientes)"
@@ -733,7 +833,7 @@ class TransactionToolkit:
             else ""
         )
         header = f"{len(items)} transacción(es) por ${total_amount:,.0f} en total{capped}:"
-        return header + "\n" + "\n".join(lines)
+        return header + "\n" + "\n".join(lines) + purchase_note + budget_section
 
     async def _resolve_category_filter(
         self, value: Any, user_id: UserId
@@ -865,6 +965,11 @@ class TransactionToolkit:
             )
         except TransactionNotFoundError:
             return "No encontré esa transacción para actualizar."
+        except IncomeCannotBeCreditError:
+            return (
+                "Un ingreso no puede quedar 'a crédito' ni vinculado a una tarjeta "
+                "— eso es solo para gastos."
+            )
         method = f", {updated.payment_method.value}" if updated.payment_method else ""
         return (
             f"✏️ Actualicé: {updated.description} — ${updated.amount} "

@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.shared.types import Category, PaymentMethod, TransactionType
 
@@ -46,6 +46,24 @@ class RecurringCreate(BaseModel):
     day_of_month: int = Field(..., ge=1, le=31, description="Day of month (1-31)")
     next_run_date: date = Field(default_factory=_today)
     active: bool = True
+
+    @model_validator(mode="after")
+    def _income_cannot_be_credit(self) -> "RecurringCreate":
+        """A credit-linked recurrente is definitionally an expense.
+
+        Mirrors ``TransactionCreate``'s guard: without it, an income template
+        tagged 'credito' (or linked to a card) materializes every occurrence as
+        a transaction excluded from card/budget sums but still counted as
+        income — the same silent accumulated-surplus inflation bug, recurring.
+        """
+        if self.transaction_type == TransactionType.INCOME and (
+            self.payment_method == PaymentMethod.CREDITO or self.card_id is not None
+        ):
+            raise ValueError(
+                "A recurring income cannot use the 'credito' payment method or "
+                "be linked to a credit card"
+            )
+        return self
 
 
 class RecurringUpdate(BaseModel):

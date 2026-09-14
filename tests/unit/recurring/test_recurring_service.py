@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.exceptions import RecurringNotFoundError
+from app.core.exceptions import IncomeCannotBeCreditError, RecurringNotFoundError
 from app.shared.clock import bound_today
 from app.shared.types import Category, PaymentMethod, TransactionType, UserId
 from app.src.recurring.interfaces import RecurringRepositoryABC
@@ -86,6 +86,8 @@ def _apply(rec: RecurringTransaction, data: dict[str, object]) -> RecurringTrans
         update["description"] = data["description"]
     if "category" in data:
         update["category"] = data["category"]
+    if "type" in data:
+        update["transaction_type"] = TransactionType(str(data["type"]))
     if "payment_method" in data:
         update["payment_method"] = PaymentMethod(str(data["payment_method"]))
     if "card_id" in data:
@@ -662,6 +664,154 @@ class TestBadDataRejected:
     def test_update_day_out_of_range_rejected(self) -> None:
         with pytest.raises(ValidationError):
             RecurringUpdate(day_of_month=0)
+
+    def test_create_rejects_income_with_credito(self) -> None:
+        with pytest.raises(ValidationError):
+            _create_input(
+                15,
+                transaction_type=TransactionType.INCOME,
+                payment_method=PaymentMethod.CREDITO,
+            )
+
+    def test_create_rejects_income_with_card_id(self) -> None:
+        with pytest.raises(ValidationError):
+            _create_input(15, transaction_type=TransactionType.INCOME, card_id="card-1")
+
+    def test_create_allows_expense_with_credito_and_card(self) -> None:
+        rec = _create_input(
+            15,
+            transaction_type=TransactionType.EXPENSE,
+            payment_method=PaymentMethod.CREDITO,
+            card_id="card-1",
+        )
+        assert rec.payment_method == PaymentMethod.CREDITO
+
+
+class TestUpdateIncomeCannotBeCredit:
+    """A credit-linked recurrente is definitionally an expense — same guard as
+    TransactionService.update_transaction, validated against the RESULTING
+    state of a partial update, not just the changed field."""
+
+    async def test_rejects_setting_credito_on_an_income_template(self) -> None:
+        repo = FakeRecurringRepository(
+            [_rec(transaction_type=TransactionType.INCOME, card_id=None, payment_method=None)]
+        )
+        service = _service(repo)
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_recurring(
+                "rec-1", "u1", RecurringUpdate(payment_method=PaymentMethod.CREDITO)
+            )
+        assert repo.updates == []
+
+    async def test_rejects_changing_type_to_income_when_already_credito(self) -> None:
+        repo = FakeRecurringRepository(
+            [_rec(payment_method=PaymentMethod.CREDITO, card_id="card-1")]
+        )
+        service = _service(repo)
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_recurring(
+                "rec-1", "u1", RecurringUpdate(transaction_type=TransactionType.INCOME)
+            )
+        assert repo.updates == []
+
+    async def test_rejects_setting_card_id_on_an_income_template(self) -> None:
+        repo = FakeRecurringRepository([_rec(transaction_type=TransactionType.INCOME)])
+        service = _service(repo)
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_recurring(
+                "rec-1", "u1", RecurringUpdate(card_id="card-1")
+            )
+        assert repo.updates == []
+
+    async def test_allows_setting_credito_on_an_expense_template(self) -> None:
+        # Sanity: the guard must not block the legitimate case.
+        repo = FakeRecurringRepository([_rec(transaction_type=TransactionType.EXPENSE)])
+        service = _service(repo)
+
+        updated = await service.update_recurring(
+            "rec-1", "u1", RecurringUpdate(payment_method=PaymentMethod.CREDITO)
+        )
+
+        assert updated.payment_method == PaymentMethod.CREDITO
+
+    async def test_unrelated_update_on_valid_income_template_does_not_false_positive(
+        self,
+    ) -> None:
+        # An already-valid income template (efectivo, no card) updating an
+        # unrelated field must NOT trip the guard — the resulting state carries
+        # forward the CURRENT (safe) payment_method/card_id unchanged.
+        repo = FakeRecurringRepository(
+            [_rec(transaction_type=TransactionType.INCOME, payment_method=PaymentMethod.EFECTIVO)]
+        )
+        service = _service(repo)
+
+        updated = await service.update_recurring(
+            "rec-1", "u1", RecurringUpdate(amount=Decimal("1000"))
+        )
+        assert updated.amount == Decimal("1000")
+
+    async def test_changing_type_to_income_with_efectivo_succeeds(self) -> None:
+        # Converting an expense-credito template to income must pass when the
+        # SAME update also switches payment_method to efectivo (which auto-clears
+        # the card) — the guard checks the RESULTING state, not just whichever
+        # single field changed.
+        repo = FakeRecurringRepository(
+            [_rec(payment_method=PaymentMethod.CREDITO, card_id="card-1")]
+        )
+        service = _service(repo)
+
+        updated = await service.update_recurring(
+            "rec-1",
+            "u1",
+            RecurringUpdate(
+                transaction_type=TransactionType.INCOME,
+                payment_method=PaymentMethod.EFECTIVO,
+            ),
+        )
+
+        assert updated.transaction_type == TransactionType.INCOME
+        assert updated.payment_method == PaymentMethod.EFECTIVO
+        assert updated.card_id is None
+
+    async def test_clear_card_alone_does_not_fix_credito_payment_method(self) -> None:
+        # Clearing the card link alone doesn't fix an income template whose
+        # payment_method is STILL 'credito' — the method itself is disqualifying
+        # for income, independent of whether a card is linked.
+        repo = FakeRecurringRepository(
+            [
+                _rec(
+                    transaction_type=TransactionType.INCOME,
+                    payment_method=PaymentMethod.CREDITO,
+                    card_id="card-1",
+                )
+            ]
+        )
+        service = _service(repo)
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_recurring(
+                "rec-1", "u1", RecurringUpdate(clear_card=True)
+            )
+        assert repo.updates == []
+
+    async def test_switching_to_efectivo_clears_card_on_an_expense_template(self) -> None:
+        # payment_method=efectivo clears the card as a side effect (unrelated to
+        # the income guard, but shares the same resulting-state tracking) —
+        # confirms that tracking doesn't regress the existing clear-on-cash rule.
+        repo = FakeRecurringRepository(
+            [_rec(payment_method=PaymentMethod.CREDITO, card_id="card-1")]
+        )
+        service = _service(repo)
+
+        updated = await service.update_recurring(
+            "rec-1", "u1", RecurringUpdate(payment_method=PaymentMethod.EFECTIVO)
+        )
+
+        assert updated.payment_method == PaymentMethod.EFECTIVO
+        assert updated.card_id is None
 
 
 def _occurrence_tx(recurring_id: str, occurrence: date) -> TransactionCreate:

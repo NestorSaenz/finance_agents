@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.exceptions import IncomeCannotBeCreditError
 from app.core.logging import get_logger
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
 from app.src.cards.interfaces import CreditCardServiceABC
@@ -267,7 +268,24 @@ class RecurringToolkit:
 
     async def _create(self, args: dict[str, Any], user_id: UserId) -> str:
         payment_method = _to_payment_method(args.get("payment_method"))
-        card, clarification = await self._resolve_card(args, payment_method, user_id)
+        try:
+            transaction_type = TransactionType(args.get("transaction_type", "expense"))
+        except ValueError:
+            return (
+                "No pude crear el recurrente: revisa el monto (mayor a 0), el tipo y "
+                "el día del mes (1-31)."
+            )
+        is_expense = transaction_type == TransactionType.EXPENSE
+        # A credit-linked recurrente is definitionally an expense — never
+        # resolve/link a card for an income template (mirrors
+        # transaction_tools._register's fix for the same income+credito bug: an
+        # income tagged 'credito' is excluded from card/budget sums while still
+        # counting as income, inflating the accumulated surplus).
+        card, clarification = (
+            await self._resolve_card(args, payment_method, user_id)
+            if is_expense
+            else (None, None)
+        )
         if clarification is not None:
             return clarification
         # A recurrente linked to a card is on credit by definition.
@@ -279,7 +297,7 @@ class RecurringToolkit:
             rec = RecurringCreate(
                 amount=_to_decimal(args.get("amount")),
                 description=str(args.get("description", "")).strip(),
-                transaction_type=TransactionType(args.get("transaction_type", "expense")),
+                transaction_type=transaction_type,
                 category=category,
                 payment_method=payment_method,
                 card_id=card.id if card else None,
@@ -320,13 +338,20 @@ class RecurringToolkit:
         if rec is None:
             return _not_found(args)
 
+        new_type = _to_type(args.get("new_type"))
+        resulting_type = new_type or rec.transaction_type
+        is_expense = resulting_type == TransactionType.EXPENSE
+
         payment_method = _to_payment_method(args.get("payment_method"))
         unlink_card = bool(args.get("unlink_card"))
         # Credit (or a named card) must resolve to a real card — ask which one if
         # it's ambiguous, mirroring create — so we never link a card we can't find.
+        # Never resolve/link one when the RESULTING type is income (mirrors
+        # _create's gate): an income can't be credit-linked regardless of whether
+        # the type is changing now or was already income.
         card_id: str | None = None
         card_name = str(args.get("card_name", "")).strip()
-        if card_name or payment_method == PaymentMethod.CREDITO:
+        if is_expense and (card_name or payment_method == PaymentMethod.CREDITO):
             card, card_clarification = await self._resolve_card(
                 args, payment_method, user_id
             )
@@ -340,7 +365,7 @@ class RecurringToolkit:
             update = RecurringUpdate(
                 amount=_opt_decimal(args.get("new_amount")),
                 description=_opt_str(args.get("new_description")),
-                transaction_type=_to_type(args.get("new_type")),
+                transaction_type=new_type,
                 category=_to_category(args.get("new_category")),
                 payment_method=payment_method,
                 card_id=card_id,
@@ -357,7 +382,13 @@ class RecurringToolkit:
                 "categoría, método o tarjeta)"
             )
 
-        updated = await self._service.update_recurring(rec.id, user_id, update)
+        try:
+            updated = await self._service.update_recurring(rec.id, user_id, update)
+        except IncomeCannotBeCreditError:
+            return (
+                "Un recurrente de ingreso no puede quedar 'a crédito' ni vinculado "
+                "a una tarjeta — eso es solo para gastos."
+            )
         return (
             f"✏️ Actualicé el recurrente '{updated.description}' — ${updated.amount} "
             f"(cada día {updated.day_of_month}, próximo {updated.next_run_date})."

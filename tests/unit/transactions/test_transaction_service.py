@@ -4,8 +4,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.exceptions import TransactionNotFoundError
+from app.core.exceptions import IncomeCannotBeCreditError, TransactionNotFoundError
 from app.shared.types import CategoryType, CurrencyType, PaymentMethod, TransactionType
 from app.src.transactions.interfaces import (
     TransactionCategorizerABC,
@@ -234,6 +235,54 @@ def _stored_tx() -> Transaction:
     )
 
 
+class TestTransactionCreateValidation:
+    """A credit charge is definitionally an expense — an income can never be
+    'a crédito' or linked to a card (the bug behind an inflated accumulated
+    surplus: such a row is excluded from card/budget sums but still income)."""
+
+    def test_rejects_income_with_credito_payment_method(self) -> None:
+        with pytest.raises(ValidationError):
+            TransactionCreate(
+                amount=Decimal("100"),
+                description="reembolso",
+                transaction_type=TransactionType.INCOME,
+                transaction_date=date(2024, 12, 20),
+                payment_method=PaymentMethod.CREDITO,
+            )
+
+    def test_rejects_income_with_card_id(self) -> None:
+        with pytest.raises(ValidationError):
+            TransactionCreate(
+                amount=Decimal("100"),
+                description="reembolso",
+                transaction_type=TransactionType.INCOME,
+                transaction_date=date(2024, 12, 20),
+                card_id="card-1",
+            )
+
+    def test_allows_expense_with_credito_and_card(self) -> None:
+        tx = TransactionCreate(
+            amount=Decimal("100"),
+            description="compra",
+            transaction_type=TransactionType.EXPENSE,
+            transaction_date=date(2024, 12, 20),
+            payment_method=PaymentMethod.CREDITO,
+            card_id="card-1",
+        )
+        assert tx.payment_method == PaymentMethod.CREDITO
+        assert tx.card_id == "card-1"
+
+    def test_allows_income_with_efectivo(self) -> None:
+        tx = TransactionCreate(
+            amount=Decimal("100"),
+            description="sueldo",
+            transaction_type=TransactionType.INCOME,
+            transaction_date=date(2024, 12, 20),
+            payment_method=PaymentMethod.EFECTIVO,
+        )
+        assert tx.transaction_type == TransactionType.INCOME
+
+
 class TestUpdateTransaction:
     async def test_serializes_only_provided_fields(self) -> None:
         repo = FakeRepository(stored=_stored_tx())
@@ -261,6 +310,47 @@ class TestUpdateTransaction:
         with pytest.raises(TransactionNotFoundError):
             await service.update_transaction("missing", "u1", amount=Decimal("1"))
         assert repo.updated == []
+
+    async def test_rejects_setting_credito_payment_method_on_income(self) -> None:
+        # The row is already an income; a bare payment_method='credito' change
+        # must be rejected — a credit charge is definitionally an expense.
+        income = _stored_tx().model_copy(
+            update={"transaction_type": TransactionType.INCOME}
+        )
+        repo = FakeRepository(stored=income)
+        service = TransactionService(repo, FakeCategorizer())
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_transaction(
+                "tx-1", "u1", payment_method=PaymentMethod.CREDITO
+            )
+        assert repo.updated == []
+
+    async def test_rejects_changing_type_to_income_when_already_credito(self) -> None:
+        # The row is already tagged credito; flipping its type to income must
+        # be rejected too (the resulting state, not just the changed field).
+        credito_expense = _stored_tx().model_copy(
+            update={"payment_method": PaymentMethod.CREDITO}
+        )
+        repo = FakeRepository(stored=credito_expense)
+        service = TransactionService(repo, FakeCategorizer())
+
+        with pytest.raises(IncomeCannotBeCreditError):
+            await service.update_transaction(
+                "tx-1", "u1", transaction_type=TransactionType.INCOME
+            )
+        assert repo.updated == []
+
+    async def test_allows_setting_credito_on_an_expense(self) -> None:
+        # Sanity: the guard must not block the legitimate case (expense -> credito).
+        repo = FakeRepository(stored=_stored_tx())  # already EXPENSE
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction(
+            "tx-1", "u1", payment_method=PaymentMethod.CREDITO
+        )
+
+        assert repo.updated == [("tx-1", {"payment_method": "credito"})]
 
 
 class TestDeleteTransaction:

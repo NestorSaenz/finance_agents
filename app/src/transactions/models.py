@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.shared.types import Category, CurrencyType, PaymentMethod, TransactionType
 
@@ -36,6 +36,25 @@ class TransactionCreate(BaseModel):
     recurring_id: str | None = None
     occurrence_date: date | None = None
 
+    @model_validator(mode="after")
+    def _income_cannot_be_credit(self) -> "TransactionCreate":
+        """A credit charge is definitionally an expense — never an income.
+
+        Without this guard an income mistakenly tagged 'credito'/linked to a
+        card gets excluded from card and budget sums (both filter type='expense')
+        while still counting toward income, silently inflating figures like the
+        accumulated surplus. Enforced here so every caller (register, update,
+        installments, recurring materialization) is covered, not just the tool.
+        """
+        if self.transaction_type == TransactionType.INCOME and (
+            self.payment_method == PaymentMethod.CREDITO or self.card_id is not None
+        ):
+            raise ValueError(
+                "An income cannot use the 'credito' payment method or be "
+                "linked to a credit card"
+            )
+        return self
+
 
 class Transaction(BaseModel):
     """A persisted transaction in the domain."""
@@ -56,6 +75,9 @@ class Transaction(BaseModel):
     # payment date for credit). Drives which month's budget the charge affects.
     budget_date: date
     source: str
+    # Set only on a materialized recurring occurrence; excluded from budget sums
+    # (migration 014) since a budget watches variable spending, not fixed bills.
+    recurring_id: str | None = None
     created_at: datetime
 
 

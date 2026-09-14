@@ -104,6 +104,21 @@ class TestGetById:
         assert tx.id == "tx-1"
         assert tx.transaction_type == TransactionType.EXPENSE
 
+    async def test_maps_recurring_id_when_present(self) -> None:
+        repo = TransactionRepository(
+            FakeDatabase(rows=[make_transaction_row(recurring_id="rec-1")])
+        )
+        tx = await repo.get_by_id("tx-1", "u1")
+        assert tx is not None
+        assert tx.recurring_id == "rec-1"
+
+    async def test_recurring_id_defaults_to_none_when_absent(self) -> None:
+        # Older rows (pre-migration 013) have no recurring_id column value.
+        repo = TransactionRepository(FakeDatabase(rows=[make_transaction_row()]))
+        tx = await repo.get_by_id("tx-1", "u1")
+        assert tx is not None
+        assert tx.recurring_id is None
+
 
 class TestListAndCount:
     async def test_list_applies_pagination_and_filters(self) -> None:

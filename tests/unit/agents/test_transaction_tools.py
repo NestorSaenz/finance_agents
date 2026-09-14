@@ -15,7 +15,11 @@ from app.agents.tools.transaction_tools import (
     TransactionToolkit,
     _credit_budget_date,
 )
-from app.core.exceptions import BudgetNotFoundError, TransactionNotFoundError
+from app.core.exceptions import (
+    BudgetNotFoundError,
+    IncomeCannotBeCreditError,
+    TransactionNotFoundError,
+)
 from app.shared.types import (
     BudgetPeriod,
     CategoryType,
@@ -85,6 +89,8 @@ class FakeTransactionService(TransactionServiceABC):
         self.resolve_calls: list[tuple[str, str]] = []
         # When set, resolve_category returns this (simulates snapping to existing).
         self.resolved_category: str | None = None
+        # When set, update_transaction simulates the income+credito guard rejecting.
+        self.raise_income_credit = False
 
     async def create_transaction(self, transaction: TransactionCreate, user_id: str) -> Transaction:
         self.created.append((transaction, user_id))
@@ -153,6 +159,8 @@ class FakeTransactionService(TransactionServiceABC):
     async def update_transaction(self, transaction_id: str, user_id: str, **kwargs: object) -> Transaction:
         if self.not_found:
             raise TransactionNotFoundError(transaction_id)
+        if self.raise_income_credit:
+            raise IncomeCannotBeCreditError()
         self.updated.append((transaction_id, user_id, kwargs))
         return _transaction()
 
@@ -426,6 +434,48 @@ class TestRegister:
         created, _ = service.created[0]
         assert created.card_id == "card-1"
         assert created.payment_method == PaymentMethod.CREDITO
+
+    async def test_register_income_never_links_a_card(self) -> None:
+        # An income must never be resolved to a card, even if the model passed a
+        # card_name — a card charge is definitionally an expense. This is the fix
+        # for the "Garzon Av Guayana" data bug (an income that got card_id +
+        # payment_method='credito', excluding it from card/budget sums while
+        # still inflating income/accumulated surplus).
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service, cards=FakeCardService())
+
+        await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": 100000,
+                "description": "sueldo",
+                "transaction_type": "income",
+                "card_name": "visa",
+            },
+            user_id="u1",
+        )
+
+        created, _ = service.created[0]
+        assert created.card_id is None
+        assert created.payment_method is None
+
+    async def test_register_income_with_credito_payment_method_is_rejected(self) -> None:
+        service = FakeTransactionService()
+        toolkit = TransactionToolkit(service)
+
+        result = await toolkit.dispatch(
+            REGISTER_TRANSACTION_TOOL,
+            {
+                "amount": 100000,
+                "description": "reembolso",
+                "transaction_type": "income",
+                "payment_method": "credito",
+            },
+            user_id="u1",
+        )
+
+        assert not service.created
+        assert "no pude registrar" in result.lower()
 
     async def test_custom_category_is_preserved_not_flattened(self) -> None:
         # A category outside the canonical enum must survive as a normalized string.
@@ -766,6 +816,163 @@ class TestQuery:
         assert "cargo nu" not in result  # untagged but card-linked -> credit
 
 
+class TestBudgetDivergenceNote:
+    """The 'Venezuela' bug: a credit charge's purchase month can differ from the
+    month it hits the budget (its statement's payment month). These verify
+    query_transactions surfaces that divergence instead of silently disagreeing
+    with the budget bar for the same category/period."""
+
+    async def test_notes_credit_charges_that_impact_this_month(self) -> None:
+        # Bought in July, paid (budget_date) in September: invisible to a
+        # September purchase-date query, but it DOES count toward September's
+        # budget — the reported bug. Must not answer a flat "no encontré nada".
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "v1",
+                    "transaction_date": date(2026, 7, 28),
+                    "budget_date": date(2026, 9, 2),
+                    "amount": Decimal("238290"),
+                    "category": "venezuela",
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL,
+            {"category": "venezuela", "period": "2026-09"},
+            user_id="u1",
+        )
+
+        assert "no se encontraron" in result.lower()
+        assert "238,290" in result
+        assert "presupuesto" in result.lower()
+        # It must actually LIST the purchase (not just summarize it) — "no
+        # encontré nada" plus a bare count isn't an answer when the user asks to
+        # see their movements; they must see the real expense and its real date.
+        assert "pizza" in result  # _transaction()'s description
+        assert "2026-07-28" in result  # its REAL purchase date, not September
+
+    async def test_notes_purchases_whose_payment_falls_in_another_month(self) -> None:
+        # Mirror case: bought in July (matches a "julio" query), but its
+        # budget_date pushes it to September's budget instead — the July answer
+        # must say this row won't count toward July's tope (the counterexample
+        # that shows a "only warn on zero results" rule wouldn't catch this).
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "v2",
+                    "transaction_date": date(2026, 7, 27),
+                    "budget_date": date(2026, 9, 2),
+                    "amount": Decimal("493739"),
+                    "category": "venezuela",
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL,
+            {"category": "venezuela", "period": "2026-07"},
+            user_id="u1",
+        )
+
+        assert "493,739" in result  # listed: matches July's transaction_date
+        assert "otro mes" in result.lower()
+        assert "no cuentan" in result.lower()
+
+    async def test_no_note_when_purchase_and_budget_dates_agree(self) -> None:
+        # The common case (cash, or a credit charge paid the same month): no
+        # divergence, so no note should ever appear.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "cash1",
+                    "transaction_date": date(2026, 9, 5),
+                    "budget_date": date(2026, 9, 5),
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"period": "2026-09"}, user_id="u1"
+        )
+
+        assert "nota" not in result.lower()
+
+    async def test_no_note_for_income_only_queries(self) -> None:
+        # Budgets never attribute income; the note must never fire here even if
+        # the fetched row's dates would otherwise diverge.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction(transaction_type=TransactionType.INCOME).model_copy(
+                update={
+                    "id": "inc1",
+                    "transaction_date": date(2026, 7, 28),
+                    "budget_date": date(2026, 9, 2),
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL,
+            {"transaction_type": "income", "period": "2026-09"},
+            user_id="u1",
+        )
+
+        assert "no se encontraron" in result.lower()
+        assert "presupuesto" not in result.lower()
+
+    async def test_income_row_not_misclassified_on_unfiltered_mixed_query(self) -> None:
+        # An UNFILTERED query (no transaction_type) mixing income and expense: an
+        # income row whose dates would "diverge" (it's never budget-attributed at
+        # all) must NOT be reported as "a credit purchase that misses the budget"
+        # — a real bug found in review where the guard only checked an explicit
+        # transaction_type='income' filter, missing the mixed/no-filter case.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction(transaction_type=TransactionType.INCOME).model_copy(
+                update={
+                    "id": "inc1",
+                    "transaction_date": date(2026, 9, 5),
+                    "budget_date": date(2026, 10, 1),
+                    "amount": Decimal("5000000"),
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"period": "2026-09"}, user_id="u1"
+        )
+
+        assert "nota" not in result.lower()
+        assert "presupuesto" not in result.lower()
+
+    async def test_recurring_charge_excluded_from_budget_divergence(self) -> None:
+        # A recurring (fixed) expense doesn't count toward a budget (mig. 014);
+        # its payment-month divergence must not trigger the note either.
+        service = FakeTransactionService()
+        service.items = [
+            _transaction().model_copy(
+                update={
+                    "id": "rec1",
+                    "transaction_date": date(2026, 7, 28),
+                    "budget_date": date(2026, 9, 2),
+                    "recurring_id": "r-1",
+                }
+            ),
+        ]
+
+        result = await TransactionToolkit(service).dispatch(
+            QUERY_TRANSACTIONS_TOOL, {"period": "2026-09"}, user_id="u1"
+        )
+
+        assert "no se encontraron" in result.lower()
+        assert "presupuesto" not in result.lower()
+
+
 class TestAnalyze:
     async def test_aggregates_totals_and_by_category(self) -> None:
         service = FakeTransactionService()
@@ -959,6 +1166,21 @@ class TestUpdateDelete:
         assert fields["amount"] == Decimal("99")
         assert fields["category"] == CategoryType.VIAJES
         assert "actualic" in result.lower()
+
+    async def test_update_rejects_setting_credito_on_income(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_transaction(transaction_type=TransactionType.INCOME)]
+        service.raise_income_credit = True
+
+        result = await TransactionToolkit(service).dispatch(
+            UPDATE_TRANSACTION_TOOL,
+            {"description": "pizza", "payment_method": "credito"},
+            user_id="u1",
+        )
+
+        assert not service.updated
+        assert "ingreso" in result.lower()
+        assert "crédito" in result.lower() or "tarjeta" in result.lower()
 
     async def test_update_income_replaces_amount_not_registers(self) -> None:
         # "actualiza mi ingreso a 22M" must UPDATE the income transaction (like an

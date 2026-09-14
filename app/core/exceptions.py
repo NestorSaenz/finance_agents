@@ -107,6 +107,25 @@ class InvalidTransactionTypeError(DomainError):
         )
 
 
+class IncomeCannotBeCreditError(DomainError):
+    """Raised when an income would be tagged 'credito' or linked to a card.
+
+    A credit charge is definitionally an expense (money owed on a card); an
+    income can never be "on credit". Letting one through silently inflates
+    figures that exclude credit rows from other sums (e.g. accumulated
+    surplus) while still counting the row as income.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            message=(
+                "An income cannot use the 'credito' payment method or be "
+                "linked to a credit card"
+            ),
+            code="INCOME_CANNOT_BE_CREDIT",
+        )
+
+
 class TransactionNotFoundError(ApplicationError):
     """Raised when a transaction is not found."""
 
