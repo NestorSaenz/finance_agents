@@ -4,7 +4,7 @@ import asyncio
 from datetime import date
 from decimal import Decimal
 
-from app.shared.periods import ESTE_MES, resolve_period
+from app.shared.periods import ESTE_MES, recent_months, resolve_period
 from app.shared.types import UserId
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.cards.interfaces import CreditCardServiceABC
@@ -12,6 +12,7 @@ from app.src.goals.interfaces import GoalServiceABC
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.users.interfaces import UserProfileServiceABC
 
+from ..constants import MAX_TREND_MONTHS, MIN_TREND_MONTHS
 from ..interfaces import AnalysisServiceABC
 from ..models import (
     BudgetLine,
@@ -19,6 +20,7 @@ from ..models import (
     CategoryLine,
     FinancialSnapshot,
     GoalLine,
+    MonthlyTotals,
 )
 
 # Goals/cards are cumulative; a generous page keeps personal-finance volumes in one read.
@@ -102,6 +104,8 @@ class AnalysisService(AnalysisServiceABC):
             income_registered=income_registered,
             total_income=total_income,
             total_expenses=summary.total_expenses,
+            credit_expenses=summary.credit_expenses,
+            cash_expenses=summary.cash_expenses,
             disposable=disposable,
             savings_target_pct=pct,
             savings_target_amount=savings_target,
@@ -144,6 +148,41 @@ class AnalysisService(AnalysisServiceABC):
             card_debt_total=sum((c.balance for c in cards), Decimal("0")),
             card_available_total=sum((c.available for c in cards), Decimal("0")),
         )
+
+    async def monthly_trend(
+        self, user_id: UserId, months: int, today: date | None = None
+    ) -> list[MonthlyTotals]:
+        # One aggregation per month, reusing the SAME summary the single-period
+        # snapshot uses: the trend's "this month" is then identical to
+        # analyze_finances' "this month" by construction, instead of a second
+        # aggregation that could drift from it.
+        #
+        # Buckets by transaction_date (get_spending_summary's field): the question
+        # behind a trend is "when did I spend", so a credit purchase counts in the
+        # month it was made. Attributing by budget_date would move charges to their
+        # statement month and contradict every other spending figure the assistant
+        # reports for that month.
+        count = max(MIN_TREND_MONTHS, min(months, MAX_TREND_MONTHS))
+        keys = recent_months(count, today=today)
+        # The months are independent reads; gather them instead of paying one
+        # round-trip per month sequentially.
+        summaries = await asyncio.gather(
+            *(
+                self._transactions.get_spending_summary(
+                    user_id, period_start=start, period_end=end
+                )
+                for start, end in (resolve_period(key) for key in keys)
+            )
+        )
+        return [
+            MonthlyTotals(
+                month=key,
+                income=summary.total_income,
+                expenses=summary.total_expenses,
+                balance=summary.total_income - summary.total_expenses,
+            )
+            for key, summary in zip(keys, summaries, strict=True)
+        ]
 
     async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:
         # Free cash that carries over month to month: everything that ever came in

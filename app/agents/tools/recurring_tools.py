@@ -9,7 +9,7 @@ server-side) so the model never handles internal ids.
 """
 
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -34,6 +34,16 @@ UPDATE_RECURRING_TOOL = "update_recurring"
 DELETE_RECURRING_TOOL = "delete_recurring"
 PAUSE_RECURRING_TOOL = "pause_recurring"
 RESUME_RECURRING_TOOL = "resume_recurring"
+
+# Asked (deterministically) when a recurring expense has no payment method AND the
+# user has cards — mirrors transaction_tools.ASK_PAYMENT_METHOD_MESSAGE. Without
+# this, a pm-less+card-less template would materialize every occurrence untagged,
+# permanently excluding them from the cash/credit split (get_spending_summary only
+# counts explicitly-tagged 'efectivo') and silently inflating accumulated_surplus
+# every month, forever. Users with no cards skip this: it can only be cash.
+ASK_RECURRING_PAYMENT_METHOD_MESSAGE: Final[str] = (
+    "¿Este recurrente lo pagas en efectivo o con tarjeta de crédito?"
+)
 
 RECURRING_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
@@ -291,6 +301,17 @@ class RecurringToolkit:
         # A recurrente linked to a card is on credit by definition.
         if card is not None:
             payment_method = PaymentMethod.CREDITO
+
+        # Expense with no stated method and no card: don't guess. If the user has NO
+        # cards it can only be cash → efectivo (don't ask). If they DO have cards, ask
+        # instead of creating an untagged template (mirrors transaction_tools._register
+        # — see ASK_RECURRING_PAYMENT_METHOD_MESSAGE for why an untagged template is a
+        # real, recurring data problem, not just a cosmetic gap).
+        no_card_named = not str(args.get("card_name", "")).strip()
+        if is_expense and payment_method is None and card is None and no_card_named:
+            if self._cards is not None and await self._cards.list_cards(user_id):
+                return ASK_RECURRING_PAYMENT_METHOD_MESSAGE
+            payment_method = PaymentMethod.EFECTIVO
 
         category = _to_category(args.get("category"))
         try:

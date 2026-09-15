@@ -217,6 +217,67 @@ class TestCreate:
         assert service.created == []  # not created without a resolvable card
         assert "tarjeta" in result.lower()
 
+    async def test_expense_without_method_defaults_to_cash_when_no_cards(self) -> None:
+        # A user with no registered cards never gets asked "¿efectivo o crédito?" —
+        # the recurrente can only be cash, so it's created as efectivo straight away.
+        service = FakeRecurringService()
+        toolkit = RecurringToolkit(service, cards=FakeCardService(cards=[]))
+
+        result = await toolkit.dispatch(
+            CREATE_RECURRING_TOOL,
+            {
+                "amount": 100000,
+                "description": "Cole",
+                "transaction_type": "expense",
+                "day_of_month": 5,
+            },
+            "u1",
+        )
+
+        assert len(service.created) == 1  # created straight away, no question
+        assert service.created[0][0].payment_method == PaymentMethod.EFECTIVO
+        assert "Cole" in result
+
+    async def test_expense_without_method_asks_when_user_has_cards(self) -> None:
+        # With cards on file we ask instead of creating a pm-less template — an
+        # untagged+card-less recurrente would materialize untagged every month,
+        # silently inflating accumulated_surplus forever.
+        service = FakeRecurringService()
+        toolkit = RecurringToolkit(service, cards=FakeCardService())  # one card
+
+        result = await toolkit.dispatch(
+            CREATE_RECURRING_TOOL,
+            {
+                "amount": 100000,
+                "description": "Cole",
+                "transaction_type": "expense",
+                "day_of_month": 5,
+            },
+            "u1",
+        )
+
+        assert service.created == []  # nothing created until the method is known
+        assert "efectivo" in result.lower() and "crédito" in result.lower()
+
+    async def test_income_without_method_creates_directly(self) -> None:
+        # Income needs no payment method — it must never trigger the cash/credit ask.
+        service = FakeRecurringService()
+        toolkit = RecurringToolkit(service, cards=FakeCardService())  # has cards
+
+        await toolkit.dispatch(
+            CREATE_RECURRING_TOOL,
+            {
+                "amount": 5000000,
+                "description": "Sueldo",
+                "transaction_type": "income",
+                "day_of_month": 30,
+            },
+            "u1",
+        )
+
+        assert service.created[0][0].transaction_type == TransactionType.INCOME
+        assert service.created[0][0].payment_method is None
+
     async def test_create_income_never_links_a_card(self) -> None:
         # A credit-linked recurrente is definitionally an expense — an income
         # template must never resolve/link a card, even if the model passed

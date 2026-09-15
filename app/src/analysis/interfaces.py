@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.shared.types import UserId
 
-from .models import FinancialSnapshot, MovementCandidate
+from .models import FinancialSnapshot, MonthlyTotals, MovementCandidate
 
 
 class AnalysisServiceABC(ABC):
@@ -20,6 +20,18 @@ class AnalysisServiceABC(ABC):
 
         ``today`` anchors the period boundaries to the user's local day; ``None``
         keeps the service pure and falls back to UTC (its default reference).
+        """
+
+    @abstractmethod
+    async def monthly_trend(
+        self, user_id: UserId, months: int, today: date | None = None
+    ) -> list[MonthlyTotals]:
+        """Income/expenses per calendar month for the last ``months``, oldest first.
+
+        The window ends in ``today``'s month (``None`` → UTC) and ``months`` is
+        clamped to the module's trend bounds. Months are bucketed by
+        ``transaction_date`` — "when did I spend" — matching every other spending
+        figure the assistant reports for a month.
         """
 
     @abstractmethod

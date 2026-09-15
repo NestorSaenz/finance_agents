@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.shared.types import CategoryType, CurrencyType, UserId
+from app.src.analysis.constants import MAX_TREND_MONTHS, MIN_TREND_MONTHS
 from app.src.analysis.services.analysis_service import AnalysisService
 from app.src.budgets.models import Budget, BudgetStatus
 from app.src.cards.models import CreditCard, CreditCardStatus
@@ -195,3 +196,96 @@ async def test_accumulated_surplus_subtracts_cash_cards_and_goals() -> None:
     surplus = await _service().accumulated_surplus("u1", date(2026, 8, 31))
 
     assert surplus == Decimal("15000")
+
+
+class _PerMonthTransactions(FakeTransactions):
+    """Returns a different total per requested month and records the windows."""
+
+    def __init__(self) -> None:
+        self.windows: list[tuple[date, date]] = []
+        self._expenses = {
+            date(2026, 6, 1): Decimal("400000"),
+            date(2026, 7, 1): Decimal("500000"),
+        }
+
+    async def get_spending_summary(self, user_id, *, period_start, period_end):  # type: ignore[no-untyped-def]
+        self.windows.append((period_start, period_end))
+        return SpendingSummary(
+            total_income=Decimal("1000000"),
+            total_expenses=self._expenses.get(period_start, Decimal("0")),
+            by_category=[],
+        )
+
+
+def _trend_service(transactions: _PerMonthTransactions) -> AnalysisService:
+    return AnalysisService(
+        transactions,  # type: ignore[arg-type]
+        FakeBudgets(),  # type: ignore[arg-type]
+        FakeGoals(),  # type: ignore[arg-type]
+        FakeCards(),  # type: ignore[arg-type]
+        FakeProfiles(),  # type: ignore[arg-type]
+    )
+
+
+async def test_monthly_trend_returns_one_point_per_month_oldest_first() -> None:
+    transactions = _PerMonthTransactions()
+
+    trend = await _trend_service(transactions).monthly_trend(
+        "u1", 3, today=date(2026, 8, 4)
+    )
+
+    assert [m.month for m in trend] == ["2026-06", "2026-07", "2026-08"]
+    assert [m.expenses for m in trend] == [
+        Decimal("400000"),
+        Decimal("500000"),
+        Decimal("0"),
+    ]
+    assert trend[0].balance == Decimal("600000")  # 1,000,000 - 400,000
+
+
+async def test_monthly_trend_windows_are_whole_calendar_months() -> None:
+    # Each month is aggregated over its FULL calendar window (never capped at
+    # today), matching what a single-month query reports for that month.
+    transactions = _PerMonthTransactions()
+
+    await _trend_service(transactions).monthly_trend("u1", 2, today=date(2026, 8, 4))
+
+    assert sorted(transactions.windows) == [
+        (date(2026, 7, 1), date(2026, 7, 31)),
+        (date(2026, 8, 1), date(2026, 8, 31)),
+    ]
+
+
+async def test_monthly_trend_clamps_the_requested_window() -> None:
+    transactions = _PerMonthTransactions()
+    service = _trend_service(transactions)
+
+    assert len(await service.monthly_trend("u1", 99, today=date(2026, 8, 4))) == (
+        MAX_TREND_MONTHS
+    )
+    assert len(await service.monthly_trend("u1", 0, today=date(2026, 8, 4))) == (
+        MIN_TREND_MONTHS
+    )
+
+
+async def test_monthly_trend_with_no_transactions_returns_zeroed_months() -> None:
+    class _Empty(_PerMonthTransactions):
+        async def get_spending_summary(self, user_id, *, period_start, period_end):  # type: ignore[no-untyped-def]
+            return SpendingSummary(
+                total_income=Decimal("0"), total_expenses=Decimal("0"), by_category=[]
+            )
+
+    trend = await _trend_service(_Empty()).monthly_trend(
+        "u1", 3, today=date(2026, 8, 4)
+    )
+
+    assert len(trend) == 3
+    assert all(m.income == 0 and m.expenses == 0 and m.balance == 0 for m in trend)
+
+
+async def test_snapshot_carries_the_cash_credit_split() -> None:
+    snap = await _service().snapshot("u1", "este_mes")
+
+    # Surfaced from the summary so the tool can answer "cash vs card".
+    assert snap.cash_expenses == Decimal("5000")
+    assert snap.credit_expenses == Decimal("0")

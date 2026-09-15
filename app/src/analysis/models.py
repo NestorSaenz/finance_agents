@@ -74,6 +74,11 @@ class FinancialSnapshot(BaseModel):
     income_registered: Decimal  # income transactions logged in the period
     total_income: Decimal  # registered income, or income_base as fallback if none
     total_expenses: Decimal
+    # Split of total_expenses by payment method. They can sum to LESS than
+    # total_expenses: rows with no payment method recorded (legacy/imported)
+    # belong to neither bucket, so never present them as an exhaustive split.
+    credit_expenses: Decimal  # charged to a credit card
+    cash_expenses: Decimal  # cash, debit or transfer
     disposable: Decimal  # total_income - total_expenses
     savings_target_pct: Decimal | None
     savings_target_amount: Decimal | None  # total_income * pct
@@ -83,3 +88,12 @@ class FinancialSnapshot(BaseModel):
     cards: list[CardLine]
     card_debt_total: Decimal
     card_available_total: Decimal
+
+
+class MonthlyTotals(BaseModel):
+    """Income and expenses of a single calendar month (one point of a trend)."""
+
+    month: str  # "YYYY-MM"
+    income: Decimal
+    expenses: Decimal
+    balance: Decimal  # income - expenses

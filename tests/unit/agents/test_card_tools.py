@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.agents.tools.card_tools import CardToolkit
+from app.shared.clock import bound_today
 from app.shared.types import CardId, UserId
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import (
@@ -170,6 +171,76 @@ async def test_query_cards_shows_balance_and_available() -> None:
     result = await CardToolkit(FakeCardService()).dispatch("query_cards", {}, "u1")
     assert "Visa BBVA" in result
     assert "500000" in result and "4500000" in result
+    assert "gastado este ciclo" in result
+
+
+class RecordingCardService(FakeCardService):
+    """Records the period window the toolkit asks the service for."""
+
+    def __init__(self, cards: list[CreditCard] | None = None) -> None:
+        super().__init__(cards)
+        self.windows: list[tuple[date | None, date | None]] = []
+
+    async def get_all_status(
+        self,
+        user_id: UserId,
+        as_of: date | None = None,
+        *,
+        period_start: date | None = None,
+        period_end: date | None = None,
+    ) -> list[CreditCardStatus]:
+        self.windows.append((period_start, period_end))
+        return [_status(c) for c in self._cards]
+
+
+async def test_query_cards_without_period_asks_for_the_current_cycle() -> None:
+    service = RecordingCardService()
+    await CardToolkit(service).dispatch("query_cards", {}, "u1")
+    assert service.windows == [(None, None)]
+
+
+async def test_query_cards_with_a_month_scopes_the_spend_to_it() -> None:
+    service = RecordingCardService()
+
+    with bound_today(date(2026, 8, 4)):
+        result = await CardToolkit(service).dispatch(
+            "query_cards", {"period": "mes_pasado"}, "u1"
+        )
+
+    # The window is the whole previous calendar month, resolved server-side.
+    assert service.windows == [(date(2026, 7, 1), date(2026, 7, 31))]
+    assert "gastado en el mes pasado" in result
+    assert "cierre de ese periodo" in result
+
+
+async def test_query_cards_accepts_a_specific_month_and_all_history() -> None:
+    service = RecordingCardService()
+    await CardToolkit(service).dispatch("query_cards", {"period": "2026-06"}, "u1")
+    with bound_today(date(2026, 8, 4)):
+        await CardToolkit(service).dispatch("query_cards", {"period": "todo"}, "u1")
+
+    assert service.windows[0] == (date(2026, 6, 1), date(2026, 6, 30))
+    assert service.windows[1] == (date(1970, 1, 1), date(2026, 8, 31))
+
+
+async def test_query_cards_rejects_an_unknown_period() -> None:
+    service = RecordingCardService()
+
+    result = await CardToolkit(service).dispatch(
+        "query_cards", {"period": "junio"}, "u1"
+    )
+
+    # Never silently answers for the current month instead.
+    assert not service.windows
+    assert "de qué periodo" in result.lower()
+
+
+async def test_query_cards_with_no_cards_in_a_period() -> None:
+    service = RecordingCardService(cards=[])
+    result = await CardToolkit(service).dispatch(
+        "query_cards", {"period": "2026-06"}, "u1"
+    )
+    assert result == "No tienes tarjetas registradas."
 
 
 async def test_pay_card_resolves_by_name() -> None:

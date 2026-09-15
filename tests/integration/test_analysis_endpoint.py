@@ -11,7 +11,7 @@ from app.main import app
 from app.shared.types import UserId
 from app.src.analysis.dependencies import get_analysis_service
 from app.src.analysis.interfaces import AnalysisServiceABC
-from app.src.analysis.models import FinancialSnapshot
+from app.src.analysis.models import FinancialSnapshot, MonthlyTotals
 
 BASE_URL = "/api/v1/analysis"
 
@@ -24,6 +24,11 @@ class StubAnalysisService(AnalysisServiceABC):
     async def snapshot(
         self, user_id: UserId, period: str, today: date | None = None
     ) -> FinancialSnapshot:
+        raise NotImplementedError
+
+    async def monthly_trend(
+        self, user_id: UserId, months: int, today: date | None = None
+    ) -> list[MonthlyTotals]:
         raise NotImplementedError
 
     async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:

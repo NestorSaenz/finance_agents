@@ -2,7 +2,12 @@
 
 from datetime import date
 
-from app.shared.periods import period_label, resolve_period
+from app.shared.periods import (
+    is_valid_period,
+    period_label,
+    recent_months,
+    resolve_period,
+)
 
 REF = date(2026, 8, 4)
 
@@ -51,3 +56,40 @@ class TestPeriodLabel:
     def test_named_labels(self) -> None:
         assert period_label("todo") == "todo el histórico"
         assert period_label("este_mes") == "este mes"
+
+
+class TestIsValidPeriod:
+    def test_accepts_named_periods(self) -> None:
+        assert all(is_valid_period(p) for p in ("este_mes", "mes_pasado", "todo"))
+
+    def test_accepts_a_real_month(self) -> None:
+        assert is_valid_period("2026-06")
+
+    def test_rejects_unknown_or_malformed(self) -> None:
+        # These must be REJECTED by callers, not silently resolved to este_mes.
+        assert not any(
+            is_valid_period(p) for p in ("", "junio", "2026-13", "2026/06", "0000-02")
+        )
+
+
+class TestRecentMonths:
+    def test_returns_the_window_oldest_first_ending_this_month(self) -> None:
+        assert recent_months(3, today=REF) == ["2026-06", "2026-07", "2026-08"]
+
+    def test_crosses_the_year_boundary(self) -> None:
+        assert recent_months(3, today=date(2026, 2, 10)) == [
+            "2025-12",
+            "2026-01",
+            "2026-02",
+        ]
+
+    def test_single_month_is_the_current_one(self) -> None:
+        assert recent_months(1, today=REF) == ["2026-08"]
+
+    def test_every_key_resolves_to_that_calendar_month(self) -> None:
+        # The keys feed resolve_period unchanged, so a trend reuses exactly the
+        # same windows a single-month query uses.
+        assert resolve_period(recent_months(2, today=REF)[0]) == (
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+        )

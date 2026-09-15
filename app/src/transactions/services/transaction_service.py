@@ -353,12 +353,21 @@ class TransactionService(TransactionServiceABC):
             CategorySpending(category=cat, amount=amount)
             for cat, amount in sorted(by_category.items(), key=lambda kv: kv[1], reverse=True)
         ]
+        # An untagged expense is credit if it's linked to a card, else cash — the
+        # SAME rule transaction_tools.query_transactions uses to filter by payment
+        # method. Without this, an untagged+card-less row (e.g. a recurring
+        # template created before the ask-for-payment-method guard existed) counts
+        # toward neither bucket: accumulated_surplus only subtracts cash_expenses,
+        # so that money would silently never leave the "free cash" figure.
         credit = sum(
             (
                 t.amount
                 for t in in_period
                 if t.transaction_type == TransactionType.EXPENSE
-                and t.payment_method == PaymentMethod.CREDITO
+                and (
+                    t.payment_method == PaymentMethod.CREDITO
+                    or (t.payment_method is None and t.card_id is not None)
+                )
             ),
             Decimal("0"),
         )
@@ -367,7 +376,10 @@ class TransactionService(TransactionServiceABC):
                 t.amount
                 for t in in_period
                 if t.transaction_type == TransactionType.EXPENSE
-                and t.payment_method == PaymentMethod.EFECTIVO
+                and (
+                    t.payment_method == PaymentMethod.EFECTIVO
+                    or (t.payment_method is None and t.card_id is None)
+                )
             ),
             Decimal("0"),
         )

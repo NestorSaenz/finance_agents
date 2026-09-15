@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
+from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import UserId
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CardPaymentCreate, CreditCardCreate
@@ -53,11 +54,25 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": QUERY_CARDS_TOOL,
             "description": (
-                "Consulta las tarjetas del usuario: gastado en el ciclo, deuda actual, "
-                "crédito disponible y próxima fecha de pago. Úsala para '¿cómo van mis "
-                "tarjetas?' o '¿cuánto llevo en la tarjeta?'."
+                "Consulta las tarjetas del usuario: gastado, deuda, crédito disponible "
+                "y próxima fecha de pago. Sin 'period' informa el CICLO ACTUAL ('¿cómo "
+                "van mis tarjetas?', '¿cuánto llevo en la tarjeta?'). Con 'period' "
+                "informa lo gastado con cada tarjeta en ESE periodo ('¿cuánto gasté con "
+                "la Visa el mes pasado?', '¿con qué tarjeta gasto más históricamente?' "
+                "→ period='todo')."
             ),
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "description": (
+                            "Periodo a consultar: 'este_mes', 'mes_pasado', 'todo' o "
+                            "'YYYY-MM' (p. ej. '2026-06'). Omítelo para el ciclo actual."
+                        ),
+                    },
+                },
+            },
         },
     },
     {
@@ -187,7 +202,7 @@ class CardToolkit:
         if name == CREATE_CARD_TOOL:
             return await self._create(arguments, user_id)
         if name == QUERY_CARDS_TOOL:
-            return await self._query(user_id)
+            return await self._query(arguments, user_id)
         if name == PAY_CARD_TOOL:
             return await self._pay(arguments, user_id)
         if name == REMOVE_CARD_PAYMENT_TOOL:
@@ -219,19 +234,43 @@ class CardToolkit:
             f"corte día {created.cutoff_day}, pago día {created.payment_day}."
         )
 
-    async def _query(self, user_id: UserId) -> str:
+    async def _query(self, args: dict[str, Any], user_id: UserId) -> str:
         # Anchor the cycle/next-payment on the user's local day, not UTC, so a
         # near-midnight query doesn't report the next cycle a day early.
-        statuses = await self._service.get_all_status(user_id, as_of=current_today())
+        today = current_today()
+        period = str(args.get("period", "")).strip().lower()
+        # Reject an unrecognized period instead of silently answering for the
+        # current month (resolve_period's lenient fallback).
+        if period and not is_valid_period(period):
+            return (
+                "¿De qué periodo? Dímelo como '2026-06' (año-mes) o "
+                "'este_mes' / 'mes_pasado' / 'todo'."
+            )
+        # A period reconstructs each card AS OF that window's end: `spent_cycle`
+        # then carries the period's charges instead of the current cycle's. The
+        # charges are attributed by transaction_date (purchase date) — the same
+        # field the billing cycle and the dashboard's monthly card view use, so
+        # chat and dashboard never disagree about what a card spent in a month.
+        start, end = resolve_period(period, today=today) if period else (None, None)
+        statuses = await self._service.get_all_status(
+            user_id, as_of=today, period_start=start, period_end=end
+        )
         if not statuses:
             return "No tienes tarjetas registradas."
+        spent_label = f"gastado en {period_label(period)}" if period else "gastado este ciclo"
         lines = [
             f"- {s.card.name}: deuda ${s.balance} de ${s.card.credit_limit} "
-            f"(disponible ${s.available}); gastado este ciclo ${s.spent_cycle}; "
+            f"(disponible ${s.available}); {spent_label} ${s.spent_cycle}; "
             f"próximo pago {s.next_payment_date}"
             for s in statuses
         ]
-        return f"{len(statuses)} tarjeta(s):\n" + "\n".join(lines)
+        header = (
+            f"{len(statuses)} tarjeta(s) — gasto de {period_label(period)} "
+            "(la deuda y el disponible son los del cierre de ese periodo):"
+            if period
+            else f"{len(statuses)} tarjeta(s):"
+        )
+        return f"{header}\n" + "\n".join(lines)
 
     async def _pay(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("card_name", "")).strip()

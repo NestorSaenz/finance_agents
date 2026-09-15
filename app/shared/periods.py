@@ -66,6 +66,32 @@ def resolve_period(period: str, today: date | None = None) -> tuple[date, date]:
     return reference.replace(day=1), current_month_end
 
 
+def is_valid_period(period: str) -> bool:
+    """True if ``period`` is a named period or a strict ``YYYY-MM`` month.
+
+    Callers use it to REJECT an unrecognized period instead of silently falling
+    back to the current month (``resolve_period``'s lenient default), which would
+    answer a different question than the user asked.
+    """
+    return period in _LABELS or _parse_month(period) is not None
+
+
+def recent_months(count: int, today: date | None = None) -> list[str]:
+    """The last ``count`` months as ``YYYY-MM``, oldest first, ending in this month.
+
+    Each entry feeds ``resolve_period``/``period_label`` unchanged, so a
+    month-by-month report reuses the same windows a single-month query uses.
+    """
+    reference = today or datetime.now(UTC).date()
+    # Month index since year 0 makes the arithmetic a plain range, with no
+    # December/January wrap-around special case.
+    last = reference.year * 12 + reference.month - 1
+    return [
+        f"{index // 12:04d}-{index % 12 + 1:02d}"
+        for index in range(last - count + 1, last + 1)
+    ]
+
+
 def period_label(period: str) -> str:
     """Human-readable Spanish label for a named period or a ``YYYY-MM`` month."""
     month = _parse_month(period)

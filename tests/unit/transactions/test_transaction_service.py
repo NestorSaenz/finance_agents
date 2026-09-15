@@ -403,15 +403,20 @@ def _tx(
     tx_type: TransactionType = TransactionType.EXPENSE,
     category: str = CategoryType.OTROS,
     budget_date: date | None = None,
+    amount: Decimal = Decimal("100"),
+    payment_method: PaymentMethod | None = None,
+    card_id: str | None = None,
 ) -> Transaction:
     return Transaction(
         id=f"tx-{when.isoformat()}",
         user_id="u1",
-        amount=Decimal("100"),
+        amount=amount,
         currency=CurrencyType.MXN,
         transaction_type=tx_type,
         description="x",
         category=category,
+        payment_method=payment_method,
+        card_id=card_id,
         transaction_date=when,
         budget_date=budget_date or when,
         source="manual",
@@ -549,6 +554,60 @@ class TestListByPeriodBudgetDate:
 
         # Newest by budget_date first (20th), not by transaction_date.
         assert [t.transaction_date for t in result] == [date(2026, 9, 1), date(2026, 9, 2)]
+
+
+class TestGetSpendingSummaryPaymentSplit:
+    """credit_expenses + cash_expenses must always equal total_expenses: an
+    untagged expense is classified by whether it's linked to a card, the same
+    rule transaction_tools.query_transactions uses to filter by payment method.
+    Getting this wrong lets untagged expenses (e.g. a recurring occurrence
+    created before the ask-for-payment-method guard existed) count toward
+    neither bucket, silently inflating accumulated_surplus."""
+
+    async def test_untagged_with_card_counts_as_credit(self) -> None:
+        repo = _MultiRepo(
+            [_tx(date(2026, 9, 5), amount=Decimal("300"), card_id="card-1")]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        summary = await service.get_spending_summary(
+            "u1", period_start=date(2026, 9, 1), period_end=date(2026, 9, 30)
+        )
+
+        assert summary.credit_expenses == Decimal("300")
+        assert summary.cash_expenses == Decimal("0")
+
+    async def test_untagged_without_card_counts_as_cash(self) -> None:
+        repo = _MultiRepo([_tx(date(2026, 9, 5), amount=Decimal("300"))])
+        service = TransactionService(repo, FakeCategorizer())
+
+        summary = await service.get_spending_summary(
+            "u1", period_start=date(2026, 9, 1), period_end=date(2026, 9, 30)
+        )
+
+        assert summary.credit_expenses == Decimal("0")
+        assert summary.cash_expenses == Decimal("300")
+
+    async def test_credit_plus_cash_always_equals_total_expenses(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 9, 1), amount=Decimal("100"), payment_method=PaymentMethod.CREDITO),
+                _tx(date(2026, 9, 2), amount=Decimal("50"), payment_method=PaymentMethod.EFECTIVO),
+                _tx(date(2026, 9, 3), amount=Decimal("30"), card_id="card-1"),  # untagged+card
+                _tx(date(2026, 9, 4), amount=Decimal("20")),  # untagged+no card
+                _tx(date(2026, 9, 5), amount=Decimal("999"), tx_type=TransactionType.INCOME),
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        summary = await service.get_spending_summary(
+            "u1", period_start=date(2026, 9, 1), period_end=date(2026, 9, 30)
+        )
+
+        assert summary.total_expenses == Decimal("200")
+        assert summary.credit_expenses == Decimal("130")  # 100 tagged + 30 untagged+card
+        assert summary.cash_expenses == Decimal("70")  # 50 tagged + 20 untagged+no card
+        assert summary.credit_expenses + summary.cash_expenses == summary.total_expenses
 
 
 class TestDeleteMovements:

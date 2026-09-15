@@ -26,7 +26,7 @@ from app.agents.nodes.analyst_utils import (
 from app.core.exceptions import IncomeCannotBeCreditError, TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
-from app.shared.periods import period_label, resolve_period
+from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import (
     PaymentMethod,
     TransactionId,
@@ -66,10 +66,9 @@ ASK_PAYMENT_METHOD_MESSAGE: Final[str] = (
 # Cap on how many query results to list back (the count and total still cover all).
 QUERY_DISPLAY_LIMIT = 25
 
-# Accepted `period` args: named periods or a strict YYYY-MM month. Anything else is
-# rejected instead of silently falling back to the current month (resolve_period).
-_NAMED_PERIODS: Final[frozenset[str]] = frozenset({"este_mes", "mes_pasado", "todo"})
-_MONTH_ARG_RE: Final = re.compile(r"^\d{4}-\d{2}$")
+# Accepted `period` args: named periods or a strict YYYY-MM month (validated by
+# app.shared.periods.is_valid_period). Anything else is rejected instead of
+# silently falling back to the current month (resolve_period's lenient default).
 
 
 def _norm(text: str) -> str:
@@ -746,7 +745,7 @@ class TransactionToolkit:
         if period:
             # Reject unrecognized months so we don't silently return the current
             # month (resolve_period's lenient fallback) and mislead the user.
-            if period not in _NAMED_PERIODS and not _MONTH_ARG_RE.match(period):
+            if not is_valid_period(period):
                 return (
                     "¿De qué mes? Dímelo como '2026-06' (año-mes) o "
                     "'este_mes' / 'mes_pasado' / 'todo'."
@@ -888,7 +887,7 @@ class TransactionToolkit:
         end = _opt_date(args.get("end_date"))
         scope_label = ""
         if period:
-            if period not in _NAMED_PERIODS and not _MONTH_ARG_RE.match(period):
+            if not is_valid_period(period):
                 return "¿De qué período? Dime un mes ('2026-07'), 'todo', o un rango de fechas."
             start, end = resolve_period(period, today=current_today())
             scope_label = period_label(period)
