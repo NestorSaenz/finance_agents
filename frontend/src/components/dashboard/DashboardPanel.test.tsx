@@ -177,6 +177,79 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("Gastos vs ingresos")).toBeInTheDocument();
   });
 
+  it("requests transactions by budget_date alongside budget status", async () => {
+    summaryMock.mockResolvedValue(summary());
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText("Balance");
+
+    // Two calls to api.transactions: one for the Movimientos tab (default,
+    // transaction_date) and one for the budget detail (by=budget_date).
+    await waitFor(() =>
+      expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok", "budget_date"),
+    );
+    expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok");
+  });
+
+  it("expands a budget category to show the movements behind its 'spent' total", async () => {
+    // The reported bug, reproduced end to end: a July purchase paid (and thus
+    // budgeted) in September has NO September transaction_date, so it's absent
+    // from the plain Movimientos fetch — but IS returned by the budget_date
+    // fetch, and the category detail must show it with its real purchase date.
+    summaryMock.mockResolvedValue(summary());
+    budgetMock.mockResolvedValue({
+      statuses: [
+        {
+          budget: { id: "b1", name: "Tope de Venezuela", category: "venezuela", amount: "1300000" },
+          spent: "238290",
+          remaining: "1061710",
+          percentage: 18,
+          alert_triggered: false,
+          period_start: "2026-09-01",
+          period_end: "2026-09-30",
+        },
+      ],
+      total_budgeted: "1300000",
+      total_spent: "238290",
+    });
+    transactionsMock.mockImplementation((...args: unknown[]) => {
+      const by = args[2];
+      if (by === "budget_date") {
+        return Promise.resolve({
+          transactions: [
+            {
+              id: "v1",
+              amount: "238290",
+              description: "Merca Facil",
+              transaction_type: "expense",
+              category: "venezuela",
+              payment_method: "credito",
+              card_id: null,
+              transaction_date: "2026-07-28",
+              budget_date: "2026-09-02",
+              recurring_id: null,
+              created_at: "2026-07-28T00:00:00Z",
+            },
+          ],
+          total: 1,
+          page: 1,
+          page_size: 1,
+        });
+      }
+      return Promise.resolve({ transactions: [], total: 0, page: 1, page_size: 0 });
+    });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+
+    const toggle = await screen.findByRole("button", {
+      name: "Ver movimientos de Venezuela",
+    });
+    await userEvent.click(toggle);
+
+    expect(await screen.findByText("Merca Facil")).toBeInTheDocument();
+    // The row shows its REAL purchase date (July), not the September period.
+    expect(screen.getByText(/28 jul/i)).toBeInTheDocument();
+  });
+
   it("shows savings goals with progress", async () => {
     summaryMock.mockResolvedValue(summary());
     goalsMock.mockResolvedValue({

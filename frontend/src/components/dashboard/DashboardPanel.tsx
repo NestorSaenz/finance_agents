@@ -63,6 +63,10 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [view, setView] = useState<DashboardView>("resumen");
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
   const [movements, setMovements] = useState<Transaction[]>([]);
+  // Expenses that IMPACT this period's budget (by=budget_date), not just what
+  // was bought in it — a credit charge can be bought one month and paid (and
+  // thus budgeted) another. Only fetched alongside budgetStatus (este_mes).
+  const [budgetTransactions, setBudgetTransactions] = useState<Transaction[]>([]);
   const [budget, setBudget] = useState<BudgetStatusList | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -88,6 +92,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         summaryData,
         movementsData,
         budgetData,
+        budgetTransactionsData,
         profileData,
         goalsData,
         cardsData,
@@ -99,6 +104,11 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.spendingSummary(period, token),
         api.transactions(period, token),
         period === "este_mes" ? api.budgetStatus(token) : Promise.resolve(null),
+        // Only meaningful alongside budgetStatus (also este_mes-only): expenses
+        // that impact this period's BUDGET, not just what was bought in it.
+        period === "este_mes"
+          ? api.transactions(period, token, "budget_date")
+          : Promise.resolve(null),
         api.profile(token),
         api.goals(period, token),
         api.cardsStatus(period, token),
@@ -111,6 +121,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setSummary(summaryData);
       setMovements(movementsData.transactions);
       setBudget(budgetData);
+      setBudgetTransactions(budgetTransactionsData?.transactions ?? []);
       setProfile(profileData);
       setGoals(goalsData.goals);
       setGoalContributed(Number(goalsData.total_contributed ?? 0));
@@ -128,6 +139,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setSummary(null);
       setMovements([]);
       setBudget(null);
+      setBudgetTransactions([]);
       setProfile(null);
       setGoals([]);
       setGoalContributed(0);
@@ -283,6 +295,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
             <SummaryContent
               summary={summary}
               budget={budget}
+              budgetTransactions={budgetTransactions}
               profile={profile}
               goals={goals}
               goalContributions={goalContributed}

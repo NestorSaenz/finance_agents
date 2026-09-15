@@ -402,6 +402,7 @@ def _tx(
     *,
     tx_type: TransactionType = TransactionType.EXPENSE,
     category: str = CategoryType.OTROS,
+    budget_date: date | None = None,
 ) -> Transaction:
     return Transaction(
         id=f"tx-{when.isoformat()}",
@@ -412,7 +413,7 @@ def _tx(
         description="x",
         category=category,
         transaction_date=when,
-        budget_date=when,
+        budget_date=budget_date or when,
         source="manual",
         created_at=datetime.now(UTC),
     )
@@ -476,6 +477,78 @@ class TestListByPeriod:
         )
 
         assert [t.category for t in result] == [CategoryType.TECNOLOGIA]
+
+
+class TestListByPeriodBudgetDate:
+    """date_field='budget_date' — what impacts a period's budget, not what was
+    bought in it. The Venezuela bug: a July purchase paid in September must be
+    included when asking for September's budget-attributed movements."""
+
+    async def test_budget_date_includes_a_purchase_from_another_month(self) -> None:
+        repo = _MultiRepo(
+            [_tx(date(2026, 7, 28), budget_date=date(2026, 9, 2))]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1",
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30),
+            date_field="budget_date",
+        )
+
+        assert len(result) == 1
+        assert result[0].transaction_date == date(2026, 7, 28)  # real purchase date kept
+
+    async def test_transaction_date_default_excludes_it(self) -> None:
+        # Sanity: the SAME row, same period, but the default field (unchanged
+        # behavior) must NOT include it — its transaction_date is in July.
+        repo = _MultiRepo(
+            [_tx(date(2026, 7, 28), budget_date=date(2026, 9, 2))]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1", period_start=date(2026, 9, 1), period_end=date(2026, 9, 30)
+        )
+
+        assert result == []
+
+    async def test_budget_date_excludes_a_purchase_paid_next_month(self) -> None:
+        # Mirror case: bought THIS month but paid next — must not count for
+        # THIS month's budget even though its transaction_date is in range.
+        repo = _MultiRepo(
+            [_tx(date(2026, 9, 5), budget_date=date(2026, 10, 2))]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1",
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30),
+            date_field="budget_date",
+        )
+
+        assert result == []
+
+    async def test_sorts_by_the_selected_date_field(self) -> None:
+        repo = _MultiRepo(
+            [
+                _tx(date(2026, 9, 1), budget_date=date(2026, 9, 20)),
+                _tx(date(2026, 9, 2), budget_date=date(2026, 9, 10)),
+            ]
+        )
+        service = TransactionService(repo, FakeCategorizer())
+
+        result = await service.list_by_period(
+            "u1",
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30),
+            date_field="budget_date",
+        )
+
+        # Newest by budget_date first (20th), not by transaction_date.
+        assert [t.transaction_date for t in result] == [date(2026, 9, 1), date(2026, 9, 2)]
 
 
 class TestDeleteMovements:

@@ -22,6 +22,9 @@ import { PaymentSplit } from "./PaymentSplit";
 interface SummaryContentProps {
   summary: SpendingSummary;
   budget: BudgetStatusList | null;
+  /** Expenses that IMPACT this period's budget (by=budget_date) — used to list
+   *  what makes up each tope's "spent" on expand. Empty outside "este_mes". */
+  budgetTransactions: Transaction[];
   profile: UserProfile | null;
   goals: Goal[];
   /** Total set aside toward savings goals in the selected period. */
@@ -51,6 +54,7 @@ function isPastMonth(period: string): boolean {
 export function SummaryContent({
   summary,
   budget,
+  budgetTransactions,
   profile,
   goals,
   goalContributions,
@@ -246,7 +250,7 @@ export function SummaryContent({
           title="Cómo voy en cada categoría"
           subtitle="Incluye las compras a crédito según el mes en que las pagas."
         >
-          <BudgetProgress data={budget} />
+          <BudgetProgress data={budget} transactions={budgetTransactions} />
         </Section>
       )}
 

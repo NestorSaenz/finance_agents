@@ -45,6 +45,7 @@ class StubService(TransactionServiceABC):
         self.found = found
         self.movements = movements
         self.created: list[TransactionCreate] = []
+        self.list_by_period_kwargs: dict[str, object] = {}
 
     async def create_transaction(
         self, transaction: TransactionCreate, user_id: str
@@ -80,6 +81,7 @@ class StubService(TransactionServiceABC):
     async def list_by_period(
         self, user_id: str, **kwargs: object
     ) -> list[Transaction]:
+        self.list_by_period_kwargs = kwargs
         return self.movements if self.movements is not None else [_sample_transaction()]
 
     async def delete_movements(self, user_id: str, **kwargs: object) -> int:
@@ -193,6 +195,39 @@ class TestListTransactions:
             assert body["transactions"] == []
             assert body["total"] == 0
             assert body["page_size"] == 0
+        finally:
+            gen.close()
+
+    def test_by_defaults_to_transaction_date(self, client: TestClient) -> None:
+        response = client.get(BASE_URL, params={"period": "este_mes"})
+        assert response.status_code == 200
+        stub = app.dependency_overrides[get_transaction_service]()
+        assert stub.list_by_period_kwargs["date_field"] == "transaction_date"
+
+    def test_by_budget_date_is_passed_through(self, client: TestClient) -> None:
+        response = client.get(
+            BASE_URL, params={"period": "este_mes", "by": "budget_date"}
+        )
+        assert response.status_code == 200
+        stub = app.dependency_overrides[get_transaction_service]()
+        assert stub.list_by_period_kwargs["date_field"] == "budget_date"
+
+    def test_by_rejects_an_unknown_value(self, client: TestClient) -> None:
+        response = client.get(
+            BASE_URL, params={"period": "este_mes", "by": "created_at"}
+        )
+        assert response.status_code == 422
+
+    def test_response_includes_recurring_id(self) -> None:
+        recurring_row = _sample_transaction().model_copy(
+            update={"recurring_id": "rec-1"}
+        )
+        gen = _client_with_service(StubService(movements=[recurring_row]))
+        client = next(gen)
+        try:
+            response = client.get(BASE_URL, params={"period": "este_mes"})
+            assert response.status_code == 200
+            assert response.json()["transactions"][0]["recurring_id"] == "rec-1"
         finally:
             gen.close()
 

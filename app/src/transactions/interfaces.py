@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from app.shared.types import (
     CardId,
@@ -14,6 +15,12 @@ from app.shared.types import (
 )
 
 from .models import SpendingSummary, Transaction, TransactionCreate
+
+# Which date attributes a period to a transaction: its purchase date, or (for a
+# credit charge) the month its statement is PAID — the same distinction budgets
+# attribute by (migration 010/014). Lets a caller ask for "what impacts this
+# month's budget", not just "what was bought this month".
+TransactionDateField = Literal["transaction_date", "budget_date"]
 
 
 class TransactionCategorizerABC(ABC):
@@ -186,8 +193,14 @@ class TransactionServiceABC(ABC):
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
         card_id: CardId | None = None,
+        date_field: TransactionDateField = "transaction_date",
     ) -> list[Transaction]:
         """Return the transactions in the date range, newest date first.
+
+        ``date_field`` selects which date the range applies to: the purchase
+        date (default — "what did I buy this period") or ``budget_date`` ("what
+        impacts this period's budget" — a credit charge bought another month but
+        paid this one is included; one bought this month but paid next is not).
 
         Capped at the service fetch limit (ample for personal-finance volumes).
         """

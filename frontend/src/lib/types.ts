@@ -70,6 +70,8 @@ export interface BudgetStatusItem {
   remaining: string;
   percentage: number;
   alert_triggered: boolean;
+  period_start: string;
+  period_end: string;
 }
 
 export interface BudgetStatusList {
@@ -155,6 +157,9 @@ export interface Transaction {
   card_id: string | null; // credit card this charge belongs to, if any
   transaction_date: string;
   budget_date: string; // month this charge hits the budget (credit: payment date)
+  // Set only on a materialized recurring occurrence; a fixed bill never counts
+  // toward a budget's "spent" (mirrors the backend's migration 014 exclusion).
+  recurring_id: string | null;
   created_at: string;
 }
 

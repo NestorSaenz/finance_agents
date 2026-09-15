@@ -11,6 +11,8 @@ import type {
   Transaction,
 } from "@/lib/types";
 
+import { StatementRow } from "./StatementRow";
+
 /** Colour the debt bar by how much of the limit is used. */
 function barTone(pct: number): string {
   if (pct >= 90) return "bg-negative";
@@ -268,32 +270,3 @@ function CardStatement({
   );
 }
 
-function StatementRow({
-  title,
-  meta,
-  amount,
-  isInflow = false,
-}: {
-  title: string;
-  meta: string;
-  amount: string;
-  isInflow?: boolean;
-}) {
-  const money = useMoney();
-  return (
-    <li className="flex items-start justify-between gap-3 text-sm">
-      <div className="min-w-0">
-        <p className="truncate text-ink">{title}</p>
-        <p className="text-xs text-muted">{meta}</p>
-      </div>
-      <p
-        className={`shrink-0 font-medium tabular-nums ${
-          isInflow ? "text-positive" : "text-negative"
-        }`}
-      >
-        {isInflow ? "+" : "−"}
-        {money(amount)}
-      </p>
-    </li>
-  );
-}

@@ -107,8 +107,16 @@ export const api = {
   transactions: (
     period: string,
     token: string | null,
+    /** 'transaction_date' (default, what was bought) or 'budget_date' (what
+     *  impacts that period's budget — a credit charge paid this month even if
+     *  bought another one, and excludes one bought this month but paid next). */
+    by?: "transaction_date" | "budget_date",
   ): Promise<TransactionList> =>
-    request(`/transactions?period=${encodeURIComponent(period)}`, { token }),
+    request(
+      `/transactions?period=${encodeURIComponent(period)}` +
+        (by ? `&by=${by}` : ""),
+      { token },
+    ),
 
   budgetStatus: (token: string | null): Promise<BudgetStatusList> =>
     request("/budgets/status", { token }),

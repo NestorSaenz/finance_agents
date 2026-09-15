@@ -72,6 +72,12 @@ class TransactionResponse(BaseModel):
     budget_date: date = Field(
         ..., description="Budget month this charge affects (credit: payment date)"
     )
+    # Set only on a materialized recurring occurrence; a fixed bill never counts
+    # toward a budget's "spent" (migration 014) — the frontend needs this to
+    # reconcile a category's listed movements with its budget total.
+    recurring_id: str | None = Field(
+        default=None, description="Recurring template this occurrence came from, if any"
+    )
     created_at: str = Field(..., description="Creation timestamp (ISO 8601)")
 
     @classmethod
@@ -87,6 +93,7 @@ class TransactionResponse(BaseModel):
             card_id=transaction.card_id,
             transaction_date=transaction.transaction_date,
             budget_date=transaction.budget_date,
+            recurring_id=transaction.recurring_id,
             created_at=transaction.created_at.isoformat(),
         )
 

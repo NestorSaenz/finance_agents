@@ -27,6 +27,7 @@ from ..constants import (
 )
 from ..interfaces import (
     TransactionCategorizerABC,
+    TransactionDateField,
     TransactionRepositoryABC,
     TransactionServiceABC,
 )
@@ -192,6 +193,7 @@ class TransactionService(TransactionServiceABC):
         transaction_type: TransactionType | None = None,
         category: Category | None = None,
         card_id: CardId | None = None,
+        date_field: TransactionDateField = "transaction_date",
     ) -> list[Transaction]:
         # Push type/category to the repo (equality filters it supports) so a
         # filtered query doesn't miss older matches beyond the fetch window, then
@@ -205,10 +207,13 @@ class TransactionService(TransactionServiceABC):
             category=category,
             card_id=card_id,
         )
-        in_period = [
-            t for t in items if period_start <= t.transaction_date <= period_end
-        ]
-        in_period.sort(key=lambda t: (t.transaction_date, t.created_at), reverse=True)
+        get_date = (
+            (lambda t: t.transaction_date)
+            if date_field == "transaction_date"
+            else (lambda t: t.budget_date or t.transaction_date)
+        )
+        in_period = [t for t in items if period_start <= get_date(t) <= period_end]
+        in_period.sort(key=lambda t: (get_date(t), t.created_at), reverse=True)
         return in_period
 
     async def delete_movements(

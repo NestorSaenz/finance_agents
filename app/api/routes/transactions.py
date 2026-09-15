@@ -17,6 +17,7 @@ from app.src.transactions.dto import (
     TransactionListResponse,
     TransactionResponse,
 )
+from app.src.transactions.interfaces import TransactionDateField
 from app.src.transactions.models import TransactionCreate
 
 logger = get_logger(__name__)
@@ -60,6 +61,15 @@ async def list_transactions(
         description="Return every movement in a period ('este_mes', 'mes_pasado', "
         "'todo' or 'YYYY-MM'), newest first. Overrides pagination.",
     ),
+    by: TransactionDateField = Query(
+        default="transaction_date",
+        description=(
+            "Which date 'period' filters by: 'transaction_date' (default — what "
+            "was bought that period) or 'budget_date' (what impacts that "
+            "period's budget — a credit charge bought another month but paid "
+            "this one is included; one bought this month but paid next is not)."
+        ),
+    ),
 ) -> TransactionListResponse:
     """List the current user's transactions with pagination and filters."""
     # Resolve to the stored spelling (accent/typo tolerant) so a free-text
@@ -77,6 +87,7 @@ async def list_transactions(
             period_end=period_end,
             transaction_type=transaction_type,
             category=normalized_category,
+            date_field=by,
         )
         return TransactionListResponse(
             transactions=[TransactionResponse.from_domain(t) for t in movements],
