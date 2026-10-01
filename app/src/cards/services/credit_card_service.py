@@ -3,14 +3,20 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from difflib import SequenceMatcher
-from typing import Final
+from typing import Final, NamedTuple
 
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
 from app.shared.text_match import normalize
 from app.shared.types import CardId, UserId
 
-from ..cycle import compute_cycle, next_payment_date
+from ..cycle import (
+    UpcomingPayment,
+    compute_cycle,
+    next_payment_date,
+    payment_date_in_month,
+    upcoming_payment,
+)
 from ..interfaces import (
     CardPaymentRepositoryABC,
     CreditCardRepositoryABC,
@@ -196,9 +202,9 @@ class CreditCardService(CreditCardServiceABC):
         period_end: date | None = None,
     ) -> CreditCardStatus:
         # A selected month reconstructs the card "as of" that month-end: cycle,
-        # charges and payments are all evaluated at period_end (historical view).
+        # charges and payments are all evaluated at period_end (when a period is selected).
         # With no period we evaluate the live state at `reference` (today).
-        historical = period_start is not None and period_end is not None
+        has_period = period_start is not None and period_end is not None
         # A PAST month is reconstructed at its month-end; the CURRENT month (whose
         # period_end is in the future) must stay live, so cap `as_of` at today —
         # otherwise the cycle/next-payment and balance would jump a cycle ahead.
@@ -214,12 +220,12 @@ class CreditCardService(CreditCardServiceABC):
             card.user_id, card.id, cycle_start, as_of, period=period
         )
         paid_total = await self._payments.total_paid(
-            card.user_id, card.id, as_of=as_of if historical else None
+            card.user_id, card.id, as_of=as_of if has_period else None
         )
 
         # "spent" is the selected month's charges (dashboard) or the current
         # cycle's (chat/card status with no month).
-        spent_cycle = period_spent if historical else cycle_spent
+        spent_cycle = period_spent if has_period else cycle_spent
 
         balance = charges_total - paid_total
         # Available never exceeds the limit: overpaying (negative balance) is credit
@@ -231,6 +237,18 @@ class CreditCardService(CreditCardServiceABC):
             if card.credit_limit > 0
             else 0.0
         )
+        # Live view = no period, or a period that includes today (the dashboard
+        # always sends one, even for "este_mes"). There the next due date may settle
+        # an already-CLOSED statement, not the open cycle, and we claim the
+        # statement figures. A PAST month spans two statements, so no single
+        # statement applies: report the payment date that falls inside that month.
+        if period_end is None or period_end >= reference:
+            upcoming = upcoming_payment(card.cutoff_day, card.payment_day, as_of)
+            due_date = upcoming.due_date
+            statement = _statement_figures(upcoming, balance, cycle_spent)
+        else:
+            due_date = payment_date_in_month(card.payment_day, period_end)
+            statement = _NO_STATEMENT
         return CreditCardStatus(
             card=card,
             cycle_start=cycle_start,
@@ -239,8 +257,44 @@ class CreditCardService(CreditCardServiceABC):
             balance=balance,
             available=available,
             utilization=round(utilization, 2),
-            next_payment_date=next_payment_date(card.payment_day, cycle_end),
+            next_payment_date=due_date,
+            cycle_payment_date=next_payment_date(card.payment_day, cycle_end),
+            statement_start=statement.start,
+            statement_end=statement.end,
+            statement_amount=statement.amount,
+            overdue_amount=statement.overdue,
         )
+
+
+class _StatementFigures(NamedTuple):
+    start: date | None
+    end: date | None
+    amount: Decimal | None  # due on the upcoming date; None if not closed yet
+    overdue: Decimal | None  # past-due unpaid; None when folded into `amount`
+
+
+# Historical (selected-month) view: no single statement applies.
+_NO_STATEMENT: Final[_StatementFigures] = _StatementFigures(None, None, None, None)
+
+
+def _statement_figures(
+    upcoming: UpcomingPayment, balance: Decimal, open_cycle_charges: Decimal
+) -> _StatementFigures:
+    """Split the total debt into what's due on the upcoming date vs overdue.
+
+    Everything owed that was NOT charged in the open cycle was charged up to the
+    last cutoff, so it is either due on the upcoming date (that statement is
+    closed) or already past due (the upcoming date is the open cycle's).
+    Payments reduce it first; an overpayment never yields a negative amount.
+    """
+    unpaid_up_to_last_cutoff = max(balance - open_cycle_charges, Decimal("0"))
+    if upcoming.statement_closed:
+        return _StatementFigures(
+            upcoming.statement_start, upcoming.statement_end, unpaid_up_to_last_cutoff, None
+        )
+    return _StatementFigures(
+        upcoming.statement_start, upcoming.statement_end, None, unpaid_up_to_last_cutoff
+    )
 
 
 def _today() -> date:

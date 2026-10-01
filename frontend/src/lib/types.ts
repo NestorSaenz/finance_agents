@@ -114,7 +114,17 @@ export interface CreditCardStatusItem {
   balance: string;
   available: string;
   utilization: number;
+  /** Next payment due on/after today; may settle an already-closed statement. */
   next_payment_date: string;
+  /** Statement settled on next_payment_date. Null in a historical (month) view. */
+  statement_start: string | null;
+  statement_end: string | null;
+  /** Amount due on next_payment_date; null while that statement is still open
+   *  (or in a historical view). */
+  statement_amount: string | null;
+  /** Unpaid debt whose due date already passed; only set when next_payment_date
+   *  belongs to the still-open cycle. */
+  overdue_amount: string | null;
 }
 
 export interface CreditCardStatusList {

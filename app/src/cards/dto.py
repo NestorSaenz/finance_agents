@@ -55,6 +55,12 @@ class CreditCardStatusResponse(BaseModel):
     available: Decimal
     utilization: float
     next_payment_date: date
+    # Live view only (None for a selected month): the statement settled on
+    # next_payment_date, its amount (None until it closes) and any past-due debt.
+    statement_start: date | None = None
+    statement_end: date | None = None
+    statement_amount: Decimal | None = None
+    overdue_amount: Decimal | None = None
 
     @classmethod
     def from_domain(cls, status: CreditCardStatus) -> "CreditCardStatusResponse":
@@ -67,6 +73,10 @@ class CreditCardStatusResponse(BaseModel):
             available=status.available,
             utilization=status.utilization,
             next_payment_date=status.next_payment_date,
+            statement_start=status.statement_start,
+            statement_end=status.statement_end,
+            statement_amount=status.statement_amount,
+            overdue_amount=status.overdue_amount,
         )
 
 

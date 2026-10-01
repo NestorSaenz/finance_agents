@@ -23,14 +23,14 @@ from app.src.cards.services.credit_card_service import CreditCardService
 REF = date(2026, 7, 3)
 
 
-def _card(name: str = "Visa BBVA") -> CreditCard:
+def _card(name: str = "Visa BBVA", cutoff_day: int = 15, payment_day: int = 5) -> CreditCard:
     return CreditCard(
         id="card-1",
         user_id="u1",
         name=name,
         credit_limit=Decimal("5000000"),
-        cutoff_day=15,
-        payment_day=5,
+        cutoff_day=cutoff_day,
+        payment_day=payment_day,
         is_active=True,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
@@ -176,7 +176,14 @@ async def test_status_computes_balance_and_available() -> None:
     assert s.spent_cycle == Decimal("200000")
     assert s.cycle_start == date(2026, 6, 16)
     assert s.cycle_end == date(2026, 7, 15)
-    assert s.next_payment_date == date(2026, 8, 5)
+    # On Jul 3 the May 16-Jun 15 statement (closed Jun 15) is still due Jul 5; the
+    # open cycle's Aug 5 comes after it.
+    assert s.next_payment_date == date(2026, 7, 5)
+    assert s.cycle_payment_date == date(2026, 8, 5)
+    assert (s.statement_start, s.statement_end) == (date(2026, 5, 16), date(2026, 6, 15))
+    # Due Jul 5 = total debt minus the open cycle's charges: 500k - 200k.
+    assert s.statement_amount == Decimal("300000")
+    assert s.overdue_amount is None
 
 
 @pytest.mark.asyncio
@@ -253,10 +260,170 @@ async def test_current_month_stays_live_not_month_end() -> None:
         )
     )[0]
 
-    # cutoff 15 -> cycle at Jul 3 is Jun16–Jul15, next payment Aug 5 (NOT Sep 5).
+    # cutoff 15 -> cycle at Jul 3 is Jun16–Jul15, next payment Jul 5. Evaluated at
+    # month-end (Jul 31) it would be the Jul16–Aug15 cycle and Aug 5 instead.
     assert s.cycle_start == date(2026, 6, 16)
     assert s.cycle_end == date(2026, 7, 15)
-    assert s.next_payment_date == date(2026, 8, 5)
+    assert s.next_payment_date == date(2026, 7, 5)
+
+
+@pytest.mark.asyncio
+async def test_astrid_rappi_regression_pays_closed_statement_first() -> None:
+    # Real report: Rappi cutoff 19 / pay 2, asked on Sep 30. The Aug 20-Sep 19
+    # statement is due Oct 2 — Safi wrongly said "next payment Nov 2, nothing due".
+    service = CreditCardService(
+        FakeCardRepo(cards=[_card("Rappi", cutoff_day=19, payment_day=2)]),
+        FakePaymentRepo(total=Decimal("2000000")),
+        FakeSpending(cycle=Decimal("1500000"), total=Decimal("12573212")),
+    )
+
+    s = (await service.get_all_status("u1", as_of=date(2026, 9, 30)))[0]
+
+    assert s.balance == Decimal("10573212")  # TOTAL debt, open cycle included
+    assert s.next_payment_date == date(2026, 10, 2)
+    assert (s.statement_start, s.statement_end) == (date(2026, 8, 20), date(2026, 9, 19))
+    # Due Oct 2 = total debt minus the open (Sep 20-Oct 19) cycle's charges.
+    assert s.statement_amount == Decimal("10573212") - Decimal("1500000")
+    assert (s.cycle_start, s.cycle_end) == (date(2026, 9, 20), date(2026, 10, 19))
+    assert s.cycle_payment_date == date(2026, 11, 2)
+
+
+@pytest.mark.asyncio
+async def test_payment_day_after_cutoff_day_bbva() -> None:
+    # BBVA cutoff 10 / pay 26: on Sep 15 the Aug 11-Sep 10 statement is due Sep 26.
+    service = CreditCardService(
+        FakeCardRepo(cards=[_card("BBVA", cutoff_day=10, payment_day=26)]),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("100000"), total=Decimal("900000")),
+    )
+
+    s = (await service.get_all_status("u1", as_of=date(2026, 9, 15)))[0]
+
+    assert s.next_payment_date == date(2026, 9, 26)
+    assert (s.statement_start, s.statement_end) == (date(2026, 8, 11), date(2026, 9, 10))
+    assert s.statement_amount == Decimal("800000")
+    assert s.cycle_payment_date == date(2026, 10, 26)
+
+
+@pytest.mark.asyncio
+async def test_open_cycle_due_date_surfaces_overdue_debt() -> None:
+    # BBVA on Sep 28: Sep 26 passed, so the next due date (Oct 26) belongs to the
+    # still-open Sep 11-Oct 10 cycle — its amount isn't final. Unpaid debt from
+    # before the cycle (its due date passed) must surface as overdue, never as
+    # "nothing due".
+    service = CreditCardService(
+        FakeCardRepo(cards=[_card("BBVA", cutoff_day=10, payment_day=26)]),
+        FakePaymentRepo(total=Decimal("300000")),
+        FakeSpending(cycle=Decimal("100000"), total=Decimal("900000")),
+    )
+
+    s = (await service.get_all_status("u1", as_of=date(2026, 9, 28)))[0]
+
+    assert s.next_payment_date == date(2026, 10, 26)
+    assert (s.statement_start, s.statement_end) == (date(2026, 9, 11), date(2026, 10, 10))
+    assert s.statement_amount is None  # the statement hasn't closed yet
+    assert s.overdue_amount == Decimal("500000")  # 600k debt - 100k open cycle
+
+
+@pytest.mark.asyncio
+async def test_statement_amount_never_negative_when_overpaid() -> None:
+    # Paid more than everything charged before the open cycle: nothing is due (0),
+    # not a negative amount.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("700000")),
+        FakeSpending(cycle=Decimal("200000"), total=Decimal("800000")),
+    )
+
+    s = (await service.get_all_status("u1", as_of=REF))[0]
+
+    assert s.balance == Decimal("100000")
+    assert s.statement_amount == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_historical_view_claims_no_statement() -> None:
+    # A selected month spans two statements: no due date/amount is claimed.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("0"), total=Decimal("588770"), period=Decimal("588770")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1", as_of=REF, period_start=date(2026, 6, 1), period_end=date(2026, 6, 30)
+        )
+    )[0]
+
+    assert s.statement_start is None
+    assert s.statement_end is None
+    assert s.statement_amount is None
+    assert s.overdue_amount is None
+
+
+@pytest.mark.asyncio
+async def test_past_month_shows_the_payment_date_inside_that_month() -> None:
+    # Viewing June (payment_day 5): the "fecha de pago" is June 5 — the payment
+    # that falls in the viewed month — not the live next payment (Jul 5 / Aug 5).
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("0"), total=Decimal("588770"), period=Decimal("588770")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1", as_of=REF, period_start=date(2026, 6, 1), period_end=date(2026, 6, 30)
+        )
+    )[0]
+
+    assert s.next_payment_date == date(2026, 6, 5)
+
+
+@pytest.mark.asyncio
+async def test_current_month_period_still_claims_the_statement() -> None:
+    # The dashboard sends a period even for "este_mes". It includes today, so the
+    # view is LIVE: the due date and the amount due must be reported.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("200000"), total=Decimal("800000"), period=Decimal("200000")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1",
+            as_of=REF,  # 2026-07-03, cutoff 15 / payment 5
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+        )
+    )[0]
+
+    assert s.next_payment_date == date(2026, 7, 5)
+    assert s.statement_amount == Decimal("600000")  # 800k debt - 200k open cycle
+
+
+@pytest.mark.asyncio
+async def test_period_ending_today_is_still_live() -> None:
+    # The month's last day is today: the month isn't over, so it's the live view
+    # (statement figures claimed), not a past-month reconstruction.
+    service = CreditCardService(
+        FakeCardRepo(),
+        FakePaymentRepo(total=Decimal("0")),
+        FakeSpending(cycle=Decimal("0"), total=Decimal("100000"), period=Decimal("100000")),
+    )
+
+    s = (
+        await service.get_all_status(
+            "u1",
+            as_of=date(2026, 7, 31),
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+        )
+    )[0]
+
+    assert s.statement_start is not None
 
 
 @pytest.mark.asyncio

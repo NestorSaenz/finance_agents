@@ -62,7 +62,8 @@ def _snapshot() -> FinancialSnapshot:
                 balance=Decimal("500000"),
                 limit=Decimal("5000000"),
                 available=Decimal("4500000"),
-                next_payment_date=date(2026, 8, 5),
+                next_payment_date=date(2026, 7, 5),
+                statement_amount=Decimal("300000"),
             )
         ],
         card_debt_total=Decimal("500000"),
@@ -115,6 +116,34 @@ async def test_analyze_finances_formats_grounded_facts() -> None:
     assert "Visa BBVA" in result
     assert "vacaciones playa" in result
     assert "Alimentación" in result  # category label
+
+
+async def test_card_line_separates_total_debt_from_amount_due() -> None:
+    result = await AnalysisToolkit(FakeAnalysis()).dispatch(  # type: ignore[arg-type]
+        ANALYZE_FINANCES_TOOL, {}, "u1"
+    )
+
+    assert "Visa BBVA deuda total $500,000" in result
+    assert "a pagar el 2026-07-05: $300,000" in result
+
+
+async def test_card_line_with_open_cycle_due_shows_overdue() -> None:
+    class OpenCycle(FakeAnalysis):
+        async def snapshot(
+            self, user_id: UserId, period: str, today: date | None = None
+        ) -> FinancialSnapshot:
+            snap = _snapshot()
+            card = snap.cards[0].model_copy(
+                update={"statement_amount": None, "overdue_amount": Decimal("150000")}
+            )
+            return snap.model_copy(update={"cards": [card]})
+
+    result = await AnalysisToolkit(OpenCycle()).dispatch(  # type: ignore[arg-type]
+        ANALYZE_FINANCES_TOOL, {}, "u1"
+    )
+
+    assert "próximo pago 2026-07-05 (monto aún no definido, ciclo abierto)" in result
+    assert "vencido sin pagar $150,000" in result
 
 
 async def test_snapshot_surfaces_cash_vs_credit_split() -> None:

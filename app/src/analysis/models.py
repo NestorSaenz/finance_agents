@@ -36,13 +36,21 @@ class GoalLine(BaseModel):
 
 
 class CardLine(BaseModel):
-    """A credit card's debt and available credit."""
+    """A credit card's total debt, available credit and what's due next.
+
+    ``balance`` is the TOTAL debt (it includes the open cycle), not the amount
+    due on ``next_payment_date`` — that is ``statement_amount`` (None while the
+    statement it settles is still open). ``overdue_amount`` is unpaid debt whose
+    due date already passed (only set when the next date is the open cycle's).
+    """
 
     name: str
     balance: Decimal
     limit: Decimal
     available: Decimal
     next_payment_date: date
+    statement_amount: Decimal | None = None
+    overdue_amount: Decimal | None = None
 
 
 class MovementCandidate(BaseModel):

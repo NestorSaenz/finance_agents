@@ -77,7 +77,26 @@ class CreditCardStatus(BaseModel):
     cycle_start: date
     cycle_end: date
     spent_cycle: Decimal  # charges in the selected month, or the current cycle
-    balance: Decimal  # amount owed = charges - payments (up to the eval date)
+    # TOTAL debt = every charge - every payment (up to the eval date). It includes
+    # the open cycle's charges, so it is NOT the amount due on next_payment_date.
+    balance: Decimal
     available: Decimal  # credit_limit - max(balance, 0)
     utilization: float  # percentage of the limit used by the balance (0-100)
+    # Next payment due on/after the eval date. It may settle an already-CLOSED
+    # statement (e.g. cutoff 19, pay 2, today Oct 1 -> Oct 2), not the open cycle.
     next_payment_date: date
+    # Due date of the OPEN cycle's statement (cycle_start..cycle_end); equals
+    # next_payment_date when no closed statement is still pending.
+    cycle_payment_date: date
+    # Statement period settled on next_payment_date. Live view only: None in a
+    # historical (selected-month) view, where a month spans two statements.
+    statement_start: date | None = None
+    statement_end: date | None = None
+    # Amount to pay on next_payment_date = unpaid charges up to the last cutoff
+    # (includes any older unpaid statement). None when that statement hasn't
+    # closed yet (its amount isn't final) or in a historical view.
+    statement_amount: Decimal | None = None
+    # Unpaid charges from statements whose due date already PASSED. Only set when
+    # next_payment_date belongs to the open cycle (otherwise it's part of
+    # statement_amount); None in a historical view.
+    overdue_amount: Decimal | None = None

@@ -17,7 +17,7 @@ from app.shared.clock import current_today
 from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import UserId
 from app.src.cards.interfaces import CreditCardServiceABC
-from app.src.cards.models import CardPaymentCreate, CreditCardCreate
+from app.src.cards.models import CardPaymentCreate, CreditCardCreate, CreditCardStatus
 
 logger = get_logger(__name__)
 
@@ -54,9 +54,11 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": QUERY_CARDS_TOOL,
             "description": (
-                "Consulta las tarjetas del usuario: gastado, deuda, crédito disponible "
-                "y próxima fecha de pago. Sin 'period' informa el CICLO ACTUAL ('¿cómo "
-                "van mis tarjetas?', '¿cuánto llevo en la tarjeta?'). Con 'period' "
+                "Consulta las tarjetas del usuario: días de corte y pago, deuda TOTAL, "
+                "crédito disponible, cuánto hay que pagar en la próxima fecha (y de qué "
+                "corte) y lo que lleva el ciclo abierto. Sin 'period' informa el estado "
+                "ACTUAL ('¿cómo van mis tarjetas?', '¿cuánto debo pagar de la Visa?', "
+                "'¿cuándo pago la tarjeta?'). Con 'period' "
                 "informa lo gastado con cada tarjeta en ESE periodo ('¿cuánto gasté con "
                 "la Visa el mes pasado?', '¿con qué tarjeta gasto más históricamente?' "
                 "→ period='todo')."
@@ -257,19 +259,21 @@ class CardToolkit:
         )
         if not statuses:
             return "No tienes tarjetas registradas."
-        spent_label = f"gastado en {period_label(period)}" if period else "gastado este ciclo"
-        lines = [
-            f"- {s.card.name}: deuda ${s.balance} de ${s.card.credit_limit} "
-            f"(disponible ${s.available}); {spent_label} ${s.spent_cycle}; "
-            f"próximo pago {s.next_payment_date}"
-            for s in statuses
-        ]
-        header = (
-            f"{len(statuses)} tarjeta(s) — gasto de {period_label(period)} "
-            "(la deuda y el disponible son los del cierre de ese periodo):"
-            if period
-            else f"{len(statuses)} tarjeta(s):"
-        )
+        if period:
+            # A month spans two statements: no single due date/amount applies, so
+            # the historical view never claims one.
+            lines = [_historical_card_line(s, period_label(period)) for s in statuses]
+            header = (
+                f"{len(statuses)} tarjeta(s) — gasto de {period_label(period)} "
+                "(la deuda total y el disponible son los del cierre de ese periodo):"
+            )
+        else:
+            lines = [_live_card_line(s) for s in statuses]
+            header = (
+                f"{len(statuses)} tarjeta(s) — hoy {today}. La deuda TOTAL incluye el "
+                "ciclo abierto: NO es lo que se paga en la próxima fecha (eso es "
+                "'A pagar el'):"
+            )
         return f"{header}\n" + "\n".join(lines)
 
     async def _pay(self, args: dict[str, Any], user_id: UserId) -> str:
@@ -367,6 +371,50 @@ class CardToolkit:
         except CardNotFoundError:
             return "No encontré esa tarjeta (quizás ya no existe)."
         return f"🗑️ Eliminé tu tarjeta {deleted.name}. Su historial de gastos se conserva."
+
+
+def _card_heading(status: CreditCardStatus) -> str:
+    card = status.card
+    return f"- {card.name} (corte día {card.cutoff_day}, pago día {card.payment_day})"
+
+
+def _live_card_line(status: CreditCardStatus) -> str:
+    """Live line: total debt, what's due next (and for which cutoff), open cycle."""
+    s = status
+    if s.statement_amount is not None:
+        covered = " (ya cubierto)" if s.statement_amount == 0 else ""
+        due = (
+            f"A pagar el {s.next_payment_date}: ${s.statement_amount}{covered} "
+            f"(corte {s.statement_start}–{s.statement_end})."
+        )
+    else:
+        # The upcoming due date is the open cycle's: its amount isn't final yet.
+        due = (
+            f"A pagar el {s.next_payment_date}: monto aún no definido (el ciclo "
+            f"{s.cycle_start}–{s.cycle_end} sigue abierto)."
+        )
+    open_cycle = (
+        f"En el ciclo abierto {s.cycle_start}–{s.cycle_end} (se paga el "
+        f"{s.cycle_payment_date}): ${s.spent_cycle}."
+    )
+    overdue = (
+        f" Vencido sin pagar (de cortes anteriores ya vencidos): ${s.overdue_amount}."
+        if s.overdue_amount
+        else ""
+    )
+    return (
+        f"{_card_heading(s)}: deuda TOTAL ${s.balance} de ${s.card.credit_limit} "
+        f"(disponible ${s.available}). {due} {open_cycle}{overdue}"
+    )
+
+
+def _historical_card_line(status: CreditCardStatus, label: str) -> str:
+    """Historical line: month-end total debt and the month's spend, no due claim."""
+    s = status
+    return (
+        f"{_card_heading(s)}: deuda TOTAL ${s.balance} de ${s.card.credit_limit} "
+        f"(disponible ${s.available}); gastado en {label} ${s.spent_cycle}"
+    )
 
 
 def _to_decimal(value: Any) -> Decimal:

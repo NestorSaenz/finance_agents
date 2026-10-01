@@ -95,6 +95,8 @@ class AnalysisService(AnalysisServiceABC):
                 limit=s.card.credit_limit,
                 available=s.available,
                 next_payment_date=s.next_payment_date,
+                statement_amount=s.statement_amount,
+                overdue_amount=s.overdue_amount,
             )
             for s in card_statuses
         ]

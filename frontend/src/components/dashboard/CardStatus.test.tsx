@@ -27,7 +27,12 @@ function cardItem(over: Partial<CreditCardStatusItem> = {}): CreditCardStatusIte
     balance: "500000",
     available: "4500000",
     utilization: 10,
+    // Live, as of late July: the Jun 16–Jul 15 statement is due Aug 5.
     next_payment_date: "2026-08-05",
+    statement_start: "2026-06-16",
+    statement_end: "2026-07-15",
+    statement_amount: "300000",
+    overdue_amount: null,
     ...over,
   };
 }
@@ -106,6 +111,48 @@ describe("CardStatus", () => {
     expect(
       screen.queryByRole("button", { name: /Ver movimientos/i }),
     ).toBeNull();
+  });
+
+  it("live view shows the next payment date and the amount due on it", () => {
+    renderCards();
+
+    expect(screen.getByText("Próximo pago").nextElementSibling).toHaveTextContent("5 ago");
+    const due = screen.getByText(/^A pagar/);
+    expect(due).toHaveTextContent("A pagar (corte 15 jul)");
+    expect(due.nextElementSibling).toHaveTextContent(/300\.000/);
+    expect(screen.queryByText("Vencido sin pagar")).toBeNull();
+  });
+
+  it("surfaces overdue debt when the next payment is the still-open cycle's", () => {
+    renderCards({
+      data: list([cardItem({ statement_amount: null, overdue_amount: "150000" })]),
+    });
+
+    // The open cycle's amount isn't final yet: no "A pagar", but the overdue shows.
+    expect(screen.getByText("Próximo pago")).toBeInTheDocument();
+    expect(screen.queryByText(/^A pagar/)).toBeNull();
+    expect(screen.getByText("Vencido sin pagar").nextElementSibling).toHaveTextContent(
+      /150\.000/,
+    );
+  });
+
+  it("historical view shows the payment date inside the viewed month, not the live rows", () => {
+    renderCards({
+      data: list([
+        cardItem({
+          next_payment_date: "2026-06-05",
+          statement_start: null,
+          statement_end: null,
+          statement_amount: null,
+          overdue_amount: null,
+        }),
+      ]),
+    });
+
+    expect(screen.getByText("Disponible")).toBeInTheDocument();
+    expect(screen.getByText("Fecha de pago").nextElementSibling).toHaveTextContent("5 jun");
+    expect(screen.queryByText("Próximo pago")).toBeNull();
+    expect(screen.queryByText(/^A pagar/)).toBeNull();
   });
 
   it("keeps a single card open at a time (accordion)", async () => {

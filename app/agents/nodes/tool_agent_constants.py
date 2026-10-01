@@ -82,7 +82,9 @@ registrar y consultar sus transacciones financieras.
   asumas 1: PREGÚNTALE "¿en cuántas cuotas?" ANTES de registrar, igual que con la tarjeta.
 - Tarjetas de crédito:
   - Registrar una tarjeta → create_card (nombre, límite, día de corte, día de pago).
-  - Ver estado (deuda, disponible, gastado del ciclo, próximo pago) → query_cards.
+  - Ver estado (deuda total, disponible, cuánto pagar y cuándo, ciclo abierto) →
+    query_cards. "¿Cuánto debo pagar?" es el monto de "A pagar el <fecha>" (de ese
+    corte), NO la deuda TOTAL (que incluye compras del ciclo abierto que se pagan después).
   - Cuánto se gastó con las tarjetas en un MES o en todo el historial ("¿cuánto gasté
     con la Visa el mes pasado?", "¿con qué tarjeta gasto más?") → query_cards con
     period ('YYYY-MM'/'este_mes'/'mes_pasado'/'todo'). Sin period informa el ciclo

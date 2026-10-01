@@ -34,7 +34,11 @@ def _card(name: str = "Visa BBVA") -> CreditCard:
     )
 
 
-def _status(card: CreditCard) -> CreditCardStatus:
+def _status(card: CreditCard, *, historical: bool = False) -> CreditCardStatus:
+    """Card 15/5 as of Jul 3: the May 16-Jun 15 statement is due Jul 5.
+
+    A historical (selected-month) status carries no statement figures.
+    """
     return CreditCardStatus(
         card=card,
         cycle_start=date(2026, 6, 16),
@@ -43,7 +47,11 @@ def _status(card: CreditCard) -> CreditCardStatus:
         balance=Decimal("500000"),
         available=Decimal("4500000"),
         utilization=10.0,
-        next_payment_date=date(2026, 8, 5),
+        next_payment_date=date(2026, 7, 5),
+        cycle_payment_date=date(2026, 8, 5),
+        statement_start=None if historical else date(2026, 5, 16),
+        statement_end=None if historical else date(2026, 6, 15),
+        statement_amount=None if historical else Decimal("300000"),
     )
 
 
@@ -171,7 +179,57 @@ async def test_query_cards_shows_balance_and_available() -> None:
     result = await CardToolkit(FakeCardService()).dispatch("query_cards", {}, "u1")
     assert "Visa BBVA" in result
     assert "500000" in result and "4500000" in result
-    assert "gastado este ciclo" in result
+    assert "En el ciclo abierto" in result
+
+
+async def test_query_cards_live_separates_amount_due_from_open_cycle() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch("query_cards", {}, "u1")
+
+    assert "corte día 15, pago día 5" in result
+    # Total debt is labeled as TOTAL, never as what's due on the next date.
+    assert "deuda TOTAL $500000" in result
+    assert "A pagar el 2026-07-05: $300000 (corte 2026-05-16–2026-06-15)" in result
+    assert "En el ciclo abierto 2026-06-16–2026-07-15 (se paga el 2026-08-05): $200000" in result
+    assert "Vencido" not in result
+
+
+async def test_query_cards_open_cycle_due_shows_overdue_debt() -> None:
+    # The next due date is the open cycle's (its amount isn't final yet); unpaid
+    # debt whose due date passed must still surface, never "nothing due".
+    open_status = _status(_card()).model_copy(
+        update={
+            "next_payment_date": date(2026, 8, 5),
+            "statement_start": date(2026, 6, 16),
+            "statement_end": date(2026, 7, 15),
+            "statement_amount": None,
+            "overdue_amount": Decimal("150000"),
+        }
+    )
+
+    class OpenCycleService(FakeCardService):
+        async def get_all_status(
+            self, user_id: UserId, as_of: date | None = None, **kwargs: object
+        ) -> list[CreditCardStatus]:
+            return [open_status]
+
+    result = await CardToolkit(OpenCycleService()).dispatch("query_cards", {}, "u1")
+
+    assert "A pagar el 2026-08-05: monto aún no definido" in result
+    assert "Vencido sin pagar (de cortes anteriores ya vencidos): $150000" in result
+
+
+async def test_query_cards_paid_statement_says_covered() -> None:
+    covered = _status(_card()).model_copy(update={"statement_amount": Decimal("0")})
+
+    class CoveredService(FakeCardService):
+        async def get_all_status(
+            self, user_id: UserId, as_of: date | None = None, **kwargs: object
+        ) -> list[CreditCardStatus]:
+            return [covered]
+
+    result = await CardToolkit(CoveredService()).dispatch("query_cards", {}, "u1")
+
+    assert "A pagar el 2026-07-05: $0 (ya cubierto)" in result
 
 
 class RecordingCardService(FakeCardService):
@@ -190,7 +248,7 @@ class RecordingCardService(FakeCardService):
         period_end: date | None = None,
     ) -> list[CreditCardStatus]:
         self.windows.append((period_start, period_end))
-        return [_status(c) for c in self._cards]
+        return [_status(c, historical=period_start is not None) for c in self._cards]
 
 
 async def test_query_cards_without_period_asks_for_the_current_cycle() -> None:
@@ -211,6 +269,11 @@ async def test_query_cards_with_a_month_scopes_the_spend_to_it() -> None:
     assert service.windows == [(date(2026, 7, 1), date(2026, 7, 31))]
     assert "gastado en el mes pasado" in result
     assert "cierre de ese periodo" in result
+    assert "corte día 15, pago día 5" in result
+    # A month spans two statements: no due date or amount is claimed.
+    assert "A pagar" not in result
+    assert "próximo pago" not in result
+    assert "2026-07-05" not in result
 
 
 async def test_query_cards_accepts_a_specific_month_and_all_history() -> None:

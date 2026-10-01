@@ -19,7 +19,7 @@ from app.src.analysis.constants import (
     MIN_TREND_MONTHS,
 )
 from app.src.analysis.interfaces import AnalysisServiceABC
-from app.src.analysis.models import FinancialSnapshot, MonthlyTotals
+from app.src.analysis.models import CardLine, FinancialSnapshot, MonthlyTotals
 
 logger = get_logger(__name__)
 
@@ -185,6 +185,19 @@ def _payment_split_lines(s: FinancialSnapshot) -> list[str]:
     return [f"GASTOS POR MÉTODO DE PAGO: {'; '.join(parts)}"]
 
 
+def _card_summary(c: CardLine) -> str:
+    """One card: total debt vs what's due on the next date (never conflated)."""
+    if c.statement_amount is not None:
+        due = f"a pagar el {c.next_payment_date}: {_money(c.statement_amount)}"
+    else:
+        due = f"próximo pago {c.next_payment_date} (monto aún no definido, ciclo abierto)"
+    overdue = f", vencido sin pagar {_money(c.overdue_amount)}" if c.overdue_amount else ""
+    return (
+        f"{c.name} deuda total {_money(c.balance)} de {_money(c.limit)} "
+        f"(disponible {_money(c.available)}, {due}{overdue})"
+    )
+
+
 def _format_snapshot(s: FinancialSnapshot) -> str:
     """Render the snapshot as grounded facts for the LLM to reason over."""
     lines = [f"Situación financiera ({period_label(s.period)}):"]
@@ -233,13 +246,10 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
         lines.append(f"METAS DE AHORRO: {goals}")
 
     if s.cards:
-        cards = "; ".join(
-            f"{c.name} deuda {_money(c.balance)} de {_money(c.limit)} "
-            f"(disponible {_money(c.available)}, próximo pago {c.next_payment_date})"
-            for c in s.cards
-        )
+        cards = "; ".join(_card_summary(c) for c in s.cards)
         lines.append(
-            f"TARJETAS: deuda total {_money(s.card_debt_total)}, disponible "
+            f"TARJETAS: deuda total {_money(s.card_debt_total)} (incluye el ciclo "
+            f"abierto; no es lo que se paga en la próxima fecha), disponible "
             f"{_money(s.card_available_total)}. {cards}"
         )
 

@@ -41,15 +41,6 @@ interface SummaryContentProps {
   period: string;
 }
 
-/** True when the selected period is a month earlier than the current one. */
-function isPastMonth(period: string): boolean {
-  if (period === "mes_pasado") return true;
-  if (!/^\d{4}-\d{2}$/.test(period)) return false; // este_mes, todo → current
-  const now = new Date();
-  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  return period < current;
-}
-
 /** The scrollable body of the dashboard: totals, gauge, and progress sections. */
 export function SummaryContent({
   summary,
@@ -66,7 +57,10 @@ export function SummaryContent({
   period,
 }: SummaryContentProps) {
   const money = useMoney();
-  const historicalCards = isPastMonth(period);
+  // Past-month cards come back without a statement period (see CardStatus), so
+  // the subtitle follows the server's own live/past decision.
+  const historicalCards =
+    cards !== null && cards.cards.length > 0 && cards.cards.every((c) => c.statement_start === null);
   const activeGoals = goals.filter(
     (g) => g.status === "active" || g.status === "completed",
   );
@@ -271,7 +265,6 @@ export function SummaryContent({
         >
           <CardStatus
             data={cards}
-            historical={historicalCards}
             transactions={transactions}
             payments={payments?.payments ?? []}
             period={period}

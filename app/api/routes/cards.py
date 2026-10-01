@@ -44,9 +44,11 @@ async def get_cards_status(
     period: str | None = Query(
         default=None,
         description=(
-            "If given ('este_mes', 'mes_pasado', 'todo' or 'YYYY-MM'), every figure "
-            "(spent, balance, available, payment date) is reconstructed at that "
-            "month-end; otherwise it's the live state today."
+            "If given ('este_mes', 'mes_pasado', 'todo' or 'YYYY-MM'), spent, balance "
+            "and available are reconstructed at that month-end. When the period is "
+            "entirely in the past, next_payment_date is the payment date inside that "
+            "month and the statement fields are null (a month spans two statements); "
+            "a period that includes today is the live state."
         ),
     ),
 ) -> CreditCardStatusListResponse:

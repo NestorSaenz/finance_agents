@@ -46,7 +46,11 @@ def _status() -> CreditCardStatus:
         balance=Decimal("500000"),
         available=Decimal("4500000"),
         utilization=10.0,
-        next_payment_date=date(2026, 8, 5),
+        next_payment_date=date(2026, 7, 5),
+        cycle_payment_date=date(2026, 8, 5),
+        statement_start=date(2026, 5, 16),
+        statement_end=date(2026, 6, 15),
+        statement_amount=Decimal("300000"),
     )
 
 
@@ -182,6 +186,13 @@ class TestCards:
         assert body["total_limit"] == "5000000"
         assert body["total_balance"] == "500000"
         assert body["cards"][0]["available"] == "4500000"
+        # The statement settled on the next payment date, and what's due then.
+        card = body["cards"][0]
+        assert card["next_payment_date"] == "2026-07-05"
+        assert card["statement_start"] == "2026-05-16"
+        assert card["statement_end"] == "2026-06-15"
+        assert card["statement_amount"] == "300000"
+        assert card["overdue_amount"] is None
 
     def test_register_payment(self, client: TestClient) -> None:
         response = client.post(f"{BASE_URL}/card-1/payments", json={"amount": 300000})

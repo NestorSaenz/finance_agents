@@ -37,8 +37,6 @@ function pushInto<T>(map: Map<string, T[]>, key: string, value: T): void {
 
 interface CardStatusProps {
   data: CreditCardStatusList;
-  /** Viewing a past month: figures are reconstructed at that month-end. */
-  historical?: boolean;
   /** This period's transactions — a card's charges are filtered from these. */
   transactions: Transaction[];
   /** This period's card payments (already carry card_id). */
@@ -49,7 +47,6 @@ interface CardStatusProps {
 
 export function CardStatus({
   data,
-  historical = false,
   transactions,
   payments,
   period,
@@ -82,7 +79,6 @@ export function CardStatus({
         <CardStatusRow
           key={c.card.id}
           status={c}
-          historical={historical}
           heading={heading}
           charges={chargesByCard.get(c.card.id) ?? []}
           payments={paymentsByCard.get(c.card.id) ?? []}
@@ -98,7 +94,6 @@ export function CardStatus({
 
 function CardStatusRow({
   status: c,
-  historical,
   heading,
   charges,
   payments,
@@ -106,7 +101,6 @@ function CardStatusRow({
   onToggle,
 }: {
   status: CreditCardStatusList["cards"][number];
-  historical: boolean;
   heading: string;
   charges: Transaction[];
   payments: CardPaymentItem[];
@@ -115,6 +109,10 @@ function CardStatusRow({
 }) {
   const money = useMoney();
   const pct = c.utilization;
+  // The server is authoritative on live vs past: it only fills the statement
+  // period for a live view, so this can never disagree with the figures shown
+  // (a browser-clock check would, around midnight UTC at a month boundary).
+  const historical = c.statement_start === null;
   const hasStatement = charges.length > 0 || payments.length > 0;
   const regionId = `card-stmt-${c.card.id}`;
 
@@ -166,7 +164,7 @@ function CardStatusRow({
 
       <p className="mt-2 text-sm text-ink">
         <span className="font-semibold">{money(c.balance)}</span>
-        <span className="text-muted"> de deuda / {money(c.card.credit_limit)}</span>
+        <span className="text-muted"> de deuda total / {money(c.card.credit_limit)}</span>
       </p>
 
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
@@ -174,8 +172,38 @@ function CardStatusRow({
         <dd className="text-right font-medium text-positive">{money(c.available)}</dd>
         <dt className="text-muted">Gastado en el mes</dt>
         <dd className="text-right text-ink">{money(c.spent_cycle)}</dd>
-        <dt className="text-muted">{historical ? "Fecha de pago" : "Próximo pago"}</dt>
-        <dd className="text-right text-ink">{formatDayMonth(c.next_payment_date)}</dd>
+        {/* A past month spans two statements, so only the payment date inside that
+            month applies; the amount due and arrears are live-only. */}
+        {historical ? (
+          <>
+            <dt className="text-muted">Fecha de pago</dt>
+            <dd className="text-right text-ink">{formatDayMonth(c.next_payment_date)}</dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-muted">Próximo pago</dt>
+            <dd className="text-right text-ink">{formatDayMonth(c.next_payment_date)}</dd>
+            {c.statement_amount !== null && (
+              <>
+                <dt className="text-muted">
+                  A pagar
+                  {c.statement_end !== null && ` (corte ${formatDayMonth(c.statement_end)})`}
+                </dt>
+                <dd className="text-right font-medium text-ink">
+                  {money(c.statement_amount)}
+                </dd>
+              </>
+            )}
+            {c.overdue_amount !== null && Number(c.overdue_amount) > 0 && (
+              <>
+                <dt className="text-muted">Vencido sin pagar</dt>
+                <dd className="text-right font-medium text-negative">
+                  {money(c.overdue_amount)}
+                </dd>
+              </>
+            )}
+          </>
+        )}
       </dl>
 
       {hasStatement && isOpen && (
