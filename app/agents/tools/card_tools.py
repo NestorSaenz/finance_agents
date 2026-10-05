@@ -17,7 +17,7 @@ from app.shared.clock import current_today
 from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import UserId
 from app.src.cards.interfaces import CreditCardServiceABC
-from app.src.cards.models import CardPaymentCreate, CreditCardCreate, CreditCardStatus
+from app.src.cards.models import CardPaymentCreate, CreditCard, CreditCardCreate, CreditCardStatus
 
 logger = get_logger(__name__)
 
@@ -145,7 +145,20 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "description": (
                 "Cambia los datos de una tarjeta existente (nombre, cupo, día de corte "
                 "o de pago). La identificas por su NOMBRE actual; el sistema la "
-                "encuentra. Úsala tras confirmar el cambio con el usuario."
+                "encuentra. 'Periodo de facturación', 'ciclo', 'fecha de corte' y "
+                "'cierre' son el DÍA DE CORTE de la tarjeta, y 'fecha límite de pago' "
+                "es el día de pago: SÍ puedes cambiarlos (Safi cambia SU registro de la "
+                "tarjeta; el corte real lo define el banco). NUNCA respondas 'solo el "
+                "banco puede cambiarlo' para datos que Safi guarda. Si el usuario da un "
+                "periodo 'del 21 de agosto al 20 de septiembre', new_cutoff_day es el "
+                "ÚLTIMO día del periodo (20); si solo da el inicio ('desde el 21'), el "
+                "corte es inicio - 1. No cambies new_payment_day salvo que lo pida. "
+                "Pregunta el VALOR (y la tarjeta si tiene varias) solo si es ambiguo (el "
+                "inicio no es el día siguiente al fin del periodo anterior); si no, "
+                "propón el valor deducido ('corte 19 → 20, ¿lo "
+                "cambio?') y úsala tras su 'sí', o directamente si el usuario ya dio el "
+                "valor con una orden ('cambia el corte al 20'). No vuelvas a pedir un "
+                "valor que ya dio."
             ),
             "parameters": {
                 "type": "object",
@@ -158,11 +171,17 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "new_cutoff_day": {
                         "type": "integer",
-                        "description": "Nuevo día de corte, 1-31 (opcional)",
+                        "description": (
+                            "Nuevo día de corte, 1-31 (opcional). Equivale a 'periodo de "
+                            "facturación', 'ciclo', 'fecha de corte' o 'cierre'; si dan "
+                            "un periodo, es su último día"
+                        ),
                     },
                     "new_payment_day": {
                         "type": "integer",
-                        "description": "Nuevo día de pago, 1-31 (opcional)",
+                        "description": (
+                            "Nuevo día de pago o fecha límite de pago, 1-31 (opcional)"
+                        ),
                     },
                 },
                 "required": ["card_name"],
@@ -356,10 +375,11 @@ class CardToolkit:
             )
         except CardNotFoundError:
             return "No encontré esa tarjeta para actualizar."
-        return (
-            f"✏️ Actualicé tu tarjeta {updated.name} — cupo ${updated.credit_limit}, "
-            f"corte día {updated.cutoff_day}, pago día {updated.payment_day}."
-        )
+        changes, schedule_changed = _update_changes(card, updated)
+        if not changes:
+            return f"La tarjeta {updated.name} ya tenía esos datos; no hubo cambios."
+        note = f" {_FROZEN_CHARGES_NOTE}" if schedule_changed else ""
+        return f"✏️ Actualicé tu tarjeta {updated.name}: {'; '.join(changes)}.{note}"
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("card_name", "")).strip()
@@ -371,6 +391,33 @@ class CardToolkit:
         except CardNotFoundError:
             return "No encontré esa tarjeta (quizás ya no existe)."
         return f"🗑️ Eliminé tu tarjeta {deleted.name}. Su historial de gastos se conserva."
+
+
+_FROZEN_CHARGES_NOTE = (
+    "Los cargos ya registrados conservan el mes de presupuesto que se les asignó con "
+    "el día de corte/pago anterior."
+)
+
+
+def _update_changes(before: CreditCard, after: CreditCard) -> tuple[list[str], bool]:
+    """Return 'old → new' for each changed field, and whether cutoff/payment day changed."""
+    schedule = [
+        f"{label}: día {old} → {new}"
+        for label, old, new in (
+            ("corte", before.cutoff_day, after.cutoff_day),
+            ("pago", before.payment_day, after.payment_day),
+        )
+        if old != new
+    ]
+    others = [
+        *([f"nombre: {before.name} → {after.name}"] if before.name != after.name else []),
+        *(
+            [f"cupo: ${before.credit_limit} → ${after.credit_limit}"]
+            if before.credit_limit != after.credit_limit
+            else []
+        ),
+    ]
+    return [*others, *schedule], bool(schedule)
 
 
 def _card_heading(status: CreditCardStatus) -> str:

@@ -344,6 +344,60 @@ async def test_update_card_changes_limit() -> None:
     assert "8000000" in result
 
 
+async def test_update_card_reports_old_to_new_and_frozen_charges_note() -> None:
+    service = FakeCardService()
+    result = await CardToolkit(service).dispatch(
+        "update_card", {"card_name": "visa", "new_cutoff_day": 20}, "u1"
+    )
+    assert "corte: día 15 → 20" in result
+    assert "pago:" not in result
+    assert "cargos ya registrados" in result
+
+
+async def test_update_card_limit_only_has_no_frozen_charges_note() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch(
+        "update_card", {"card_name": "visa", "new_credit_limit": 8000000}, "u1"
+    )
+    assert "cupo: $5000000 → $8000000" in result
+    assert "cargos ya registrados" not in result
+
+
+async def test_update_card_payment_day_adds_frozen_charges_note() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch(
+        "update_card", {"card_name": "visa", "new_payment_day": 10}, "u1"
+    )
+    assert "pago: día 5 → 10" in result
+    assert "cargos ya registrados" in result
+
+
+async def test_update_card_name_change_uses_new_name_in_heading() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch(
+        "update_card", {"card_name": "visa", "new_name": "Visa Oro"}, "u1"
+    )
+    assert "tarjeta Visa Oro:" in result
+    assert "nombre: Visa BBVA → Visa Oro" in result
+    assert "cargos ya registrados" not in result
+
+
+async def test_update_card_combined_change_joins_parts_and_adds_note() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch(
+        "update_card",
+        {"card_name": "visa", "new_cutoff_day": 20, "new_credit_limit": 8000000},
+        "u1",
+    )
+    assert "cupo: $5000000 → $8000000; corte: día 15 → 20." in result
+    assert "cargos ya registrados" in result
+
+
+async def test_update_card_no_change_says_so() -> None:
+    result = await CardToolkit(FakeCardService()).dispatch(
+        "update_card", {"card_name": "visa", "new_cutoff_day": 15}, "u1"
+    )
+    assert "no hubo cambios" in result
+    assert "→" not in result
+    assert "cargos ya registrados" not in result
+
+
 async def test_update_card_ignores_invalid_day() -> None:
     service = FakeCardService()
     await CardToolkit(service).dispatch(

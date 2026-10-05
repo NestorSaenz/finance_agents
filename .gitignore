@@ -112,3 +112,4 @@ application_default_credentials.json
 
 # Borradores de la memoria del TFM (no van al repo)
 docs/memoria/
+scripts/.eval_card_cutoff_runs.jsonl

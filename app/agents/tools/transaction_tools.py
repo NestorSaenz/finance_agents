@@ -272,8 +272,8 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "description": (
                             "Nombre de la tarjeta de crédito SOLO si el usuario la nombra "
                             "para ESTE gasto. Pásalo EXACTAMENTE como lo escribió (si dijo "
-                            "'rappid', pasa 'rappid'); no lo corrijas ni lo cambies por una "
-                            "marca (no 'RappiCard'). Se busca por coincidencia parcial. "
+                            "'falabella', pasa 'falabella'); no lo corrijas ni lo cambies por una "
+                            "marca (no 'CMR Falabella'). Se busca por coincidencia parcial. "
                             "NUNCA la infieras de un gasto anterior: si no dijo cuál, omítela "
                             "y el sistema preguntará."
                         ),
