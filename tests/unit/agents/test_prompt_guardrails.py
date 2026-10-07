@@ -54,6 +54,11 @@ class TestCardCutoffVocabulary:
         assert "la razón" in TOOL_AGENT_SYSTEM_PROMPT
         assert "valor deducido" in TOOL_AGENT_SYSTEM_PROMPT
 
+    def test_prompt_only_acts_directly_on_an_explicit_order(self) -> None:
+        # A statement/complaint ("el corte fue el 20") must be proposed, not executed.
+        assert "SOLO si el usuario" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NO es una orden" in TOOL_AGENT_SYSTEM_PROMPT
+
     def test_update_card_schema_carries_the_same_rules(self) -> None:
         description = _update_card_description().lower()
         for phrase in ("periodo de facturación", "ciclo", "fecha de corte", "cierre"):
@@ -63,3 +68,8 @@ class TestCardCutoffVocabulary:
         assert "solo el banco" in description
         assert "→" in description
         assert "inicio - 1" in description
+
+    def test_update_card_schema_only_acts_directly_on_an_explicit_order(self) -> None:
+        description = _update_card_description()
+        assert "ORDENA" in description
+        assert "NO es una orden" in description

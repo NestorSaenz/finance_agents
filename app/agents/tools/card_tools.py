@@ -156,9 +156,11 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "Pregunta el VALOR (y la tarjeta si tiene varias) solo si es ambiguo (el "
                 "inicio no es el día siguiente al fin del periodo anterior); si no, "
                 "propón el valor deducido ('corte 19 → 20, ¿lo "
-                "cambio?') y úsala tras su 'sí', o directamente si el usuario ya dio el "
-                "valor con una orden ('cambia el corte al 20'). No vuelvas a pedir un "
-                "valor que ya dio."
+                "cambio?') y úsala tras su 'sí', o directamente solo si el usuario lo "
+                "ORDENA o lo pide ('cambia/modifica/actualiza/ajusta el corte al 20', "
+                "'¿puedes modificar el periodo del 21 de agosto al 20 de septiembre?'). Una afirmación o queja ('el corte "
+                "fue el 20 de septiembre', 'creo que está mal') NO es una orden ni un pedido: "
+                "propón el cambio (actual → nuevo) y espera su 'sí'. No vuelvas a pedir un valor que ya dio."
             ),
             "parameters": {
                 "type": "object",
