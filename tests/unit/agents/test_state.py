@@ -20,6 +20,9 @@ class TestBuildInitialState:
         assert state["user_id"] == "u1"
         assert state["user_context"] == ""
         assert state["timezone"] == ""
+        assert state["conversation_id"] == ""
+        assert state["turn_id"] == ""
+        assert state["turn_failed"] is False
         assert state["detected_intent"] == "unknown"
         assert state["category_suggestion"] is None
         assert state["next_agent"] == ""

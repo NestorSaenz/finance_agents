@@ -11,13 +11,20 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.exceptions import CardNotFoundError
+from app.core.exceptions import CardNotFoundError, DatabaseError, NoActiveTurnError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import UserId
-from app.src.cards.interfaces import CreditCardServiceABC
-from app.src.cards.models import CardPaymentCreate, CreditCard, CreditCardCreate, CreditCardStatus
+from app.src.cards.interfaces import CardScheduleChangeServiceABC, CreditCardServiceABC
+from app.src.cards.models import (
+    CardPaymentCreate,
+    CardScheduleChange,
+    CreditCard,
+    CreditCardCreate,
+    CreditCardStatus,
+    ScheduleChangeOutcome,
+)
 
 logger = get_logger(__name__)
 
@@ -26,6 +33,7 @@ QUERY_CARDS_TOOL = "query_cards"
 PAY_CARD_TOOL = "pay_card"
 REMOVE_CARD_PAYMENT_TOOL = "remove_card_payment"
 UPDATE_CARD_TOOL = "update_card"
+CONFIRM_CARD_CHANGE_TOOL = "confirm_card_change"
 DELETE_CARD_TOOL = "delete_card"
 
 CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -143,24 +151,14 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": UPDATE_CARD_TOOL,
             "description": (
-                "Cambia los datos de una tarjeta existente (nombre, cupo, día de corte "
-                "o de pago). La identificas por su NOMBRE actual; el sistema la "
-                "encuentra. 'Periodo de facturación', 'ciclo', 'fecha de corte' y "
-                "'cierre' son el DÍA DE CORTE de la tarjeta, y 'fecha límite de pago' "
-                "es el día de pago: SÍ puedes cambiarlos (Safi cambia SU registro de la "
-                "tarjeta; el corte real lo define el banco). NUNCA respondas 'solo el "
-                "banco puede cambiarlo' para datos que Safi guarda. Si el usuario da un "
-                "periodo 'del 21 de agosto al 20 de septiembre', new_cutoff_day es el "
-                "ÚLTIMO día del periodo (20); si solo da el inicio ('desde el 21'), el "
-                "corte es inicio - 1. No cambies new_payment_day salvo que lo pida. "
-                "Pregunta el VALOR (y la tarjeta si tiene varias) solo si es ambiguo (el "
-                "inicio no es el día siguiente al fin del periodo anterior); si no, "
-                "propón el valor deducido ('corte 19 → 20, ¿lo "
-                "cambio?') y úsala tras su 'sí', o directamente solo si el usuario lo "
-                "ORDENA o lo pide ('cambia/modifica/actualiza/ajusta el corte al 20', "
-                "'¿puedes modificar el periodo del 21 de agosto al 20 de septiembre?'). Una afirmación o queja ('el corte "
-                "fue el 20 de septiembre', 'creo que está mal') NO es una orden ni un pedido: "
-                "propón el cambio (actual → nuevo) y espera su 'sí'. No vuelvas a pedir un valor que ya dio."
+                "Cambia nombre/cupo de inmediato. Para día de corte/pago SOLO crea una "
+                "propuesta (no la aplica): muéstrala y pregunta ('Periodo del 21 ago al "
+                "20 sep' → corte 20; 'desde el 21' → 20). La identificas por su NOMBRE "
+                "actual. 'Periodo de facturación', 'ciclo', 'fecha de corte' y 'cierre' "
+                "son el DÍA DE CORTE; 'fecha límite de pago' es el día de pago. Safi "
+                "cambia SU registro de la tarjeta; el corte real lo define el banco: "
+                "NUNCA digas 'solo el banco puede'. No cambies new_payment_day salvo que "
+                "lo pida."
             ),
             "parameters": {
                 "type": "object",
@@ -193,6 +191,17 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": CONFIRM_CARD_CHANGE_TOOL,
+            "description": (
+                "Aplica el cambio de corte/pago propuesto en tu turno anterior. Úsala "
+                "SOLO si el mensaje ACTUAL del usuario acepta esa propuesta."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": DELETE_CARD_TOOL,
             "description": (
                 "Elimina (desactiva) una tarjeta existente. La identificas por su "
@@ -212,10 +221,17 @@ CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 
 class CardToolkit:
-    """Exposes credit-card tools to the LLM and dispatches its tool calls."""
+    """Exposes credit-card tools to the LLM and dispatches its tool calls.
 
-    def __init__(self, service: CreditCardServiceABC) -> None:
+    Known limit: cutoff/payment-day changes are gated in code only through
+    ``update_card`` + ``confirm_card_change``. A user could still change the days via
+    ``delete_card`` + ``create_card``, which is guarded only by the prompt (delete_card
+    asks for confirmation).
+    """
+
+    def __init__(self, service: CreditCardServiceABC, schedule: CardScheduleChangeServiceABC) -> None:
         self._service = service
+        self._schedule = schedule
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
@@ -232,6 +248,8 @@ class CardToolkit:
             return await self._remove_payment(arguments, user_id)
         if name == UPDATE_CARD_TOOL:
             return await self._update(arguments, user_id)
+        if name == CONFIRM_CARD_CHANGE_TOOL:
+            return await self._confirm_change(user_id)
         if name == DELETE_CARD_TOOL:
             return await self._delete(arguments, user_id)
         raise ValueError(f"Unknown card tool: {name}")
@@ -366,22 +384,75 @@ class CardToolkit:
         if new_limit is not None and new_limit <= 0:
             return "El nuevo cupo debe ser mayor a 0."
 
+        # Name/limit are applied now; cutoff/payment days only become a PROPOSAL that
+        # confirm_card_change applies after the user's later "sí" (enforced in code).
+        direct = ""
+        heading = card.name
+        if new_name is not None or new_limit is not None:
+            try:
+                updated = await self._service.update_card(
+                    card.id, user_id, name=new_name, credit_limit=new_limit
+                )
+            except CardNotFoundError:
+                return "No encontré esa tarjeta para actualizar."
+            heading = updated.name
+            changes, _ = _update_changes(card, updated)
+            direct = f"✏️ Actualicé tu tarjeta {updated.name}: {'; '.join(changes)}." if changes else ""
+
+        proposal = ""
+        if new_cutoff is not None or new_payment is not None:
+            proposal = await self._propose_schedule(card, heading, user_id, new_cutoff, new_payment)
+
+        if direct and proposal == _SCHEDULE_UNAVAILABLE:
+            proposal = _SCHEDULE_NOT_SAVED
+        result = " ".join(part for part in (direct, proposal) if part)
+        return result or f"La tarjeta {heading} ya tenía esos datos; no hubo cambios."
+
+    async def _propose_schedule(
+        self,
+        card: CreditCard,
+        heading: str,
+        user_id: UserId,
+        cutoff: int | None,
+        payment: int | None,
+    ) -> str:
+        """Store a schedule proposal; '' when the days already match the card."""
         try:
-            updated = await self._service.update_card(
-                card.id,
-                user_id,
-                name=new_name,
-                credit_limit=new_limit,
-                cutoff_day=new_cutoff,
-                payment_day=new_payment,
+            proposal = await self._schedule.propose(card, user_id, cutoff, payment)
+        except (NoActiveTurnError, DatabaseError) as e:
+            logger.warning("Could not store card schedule proposal", error=str(e))
+            return _SCHEDULE_UNAVAILABLE
+        if proposal is None:
+            return ""
+        summary = _proposal_summary(heading, proposal.change)
+        if proposal.already_pending:
+            return (
+                f"Ya está propuesto: {summary}. Si el usuario ya aceptó, llama a "
+                "confirm_card_change; si no, pregúntale «¿Lo cambio?»."
             )
-        except CardNotFoundError:
+        return (
+            f"PROPUESTA (aún NO aplicada): {summary}. "
+            "Pregunta al usuario «¿Lo cambio?». Si en su próximo mensaje acepta, "
+            "llama a confirm_card_change."
+        )
+
+    async def _confirm_change(self, user_id: UserId) -> str:
+        try:
+            result = await self._schedule.confirm(user_id)
+        except (NoActiveTurnError, DatabaseError) as e:
+            logger.warning("Could not confirm card schedule change", error=str(e))
+            return _SCHEDULE_UNAVAILABLE
+        if result.outcome is ScheduleChangeOutcome.NONE_PENDING:
+            return _NONE_PENDING
+        if result.outcome is ScheduleChangeOutcome.STALE:
+            return _STALE_SCHEDULE
+        if result.before is None or result.after is None:
             return "No encontré esa tarjeta para actualizar."
-        changes, schedule_changed = _update_changes(card, updated)
+        changes, schedule_changed = _update_changes(result.before, result.after)
         if not changes:
-            return f"La tarjeta {updated.name} ya tenía esos datos; no hubo cambios."
+            return f"La tarjeta {result.after.name} ya tenía esos datos; no hubo cambios."
         note = f" {_FROZEN_CHARGES_NOTE}" if schedule_changed else ""
-        return f"✏️ Actualicé tu tarjeta {updated.name}: {'; '.join(changes)}.{note}"
+        return f"✏️ Actualicé tu tarjeta {result.after.name}: {'; '.join(changes)}.{note}"
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("card_name", "")).strip()
@@ -399,6 +470,38 @@ _FROZEN_CHARGES_NOTE = (
     "Los cargos ya registrados conservan el mes de presupuesto que se les asignó con "
     "el día de corte/pago anterior."
 )
+
+
+_SCHEDULE_UNAVAILABLE = (
+    "No pude guardar ni aplicar el cambio de corte/pago ahora; no se cambió nada. "
+    "Inténtalo de nuevo en un momento."
+)
+_SCHEDULE_NOT_SAVED = "El cambio de corte/pago no se guardó; inténtalo de nuevo."
+_NONE_PENDING = (
+    "No hay un cambio de corte/pago aceptado por el usuario (se propone y se confirma "
+    "en mensajes distintos; o expiró). Vuelve a proponerlo con update_card."
+)
+_STALE_SCHEDULE = "Los días de la tarjeta cambiaron desde la propuesta; vuelve a proponer."
+
+
+def _proposal_summary(card_name: str, change: CardScheduleChange) -> str:
+    """Render the (not yet applied) change; shows the unchanged day for context."""
+    parts = [
+        f"{label} {old} → {new}"
+        for label, old, new in (
+            ("corte", change.prev_cutoff_day, change.cutoff_day),
+            ("pago", change.prev_payment_day, change.payment_day),
+        )
+        if new is not None
+    ]
+    kept = (
+        f", el día de pago sigue el {change.prev_payment_day}"
+        if change.payment_day is None
+        else f", el día de corte sigue el {change.prev_cutoff_day}"
+        if change.cutoff_day is None
+        else ""
+    )
+    return f"{card_name}: {' y '.join(parts)}{kept}"
 
 
 def _update_changes(before: CreditCard, after: CreditCard) -> tuple[list[str], bool]:

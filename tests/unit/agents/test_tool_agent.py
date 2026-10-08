@@ -12,6 +12,7 @@ from app.agents.state import build_initial_state
 from app.agents.tools.transaction_tools import TransactionToolkit
 from app.shared.clock import current_today, local_today
 from app.shared.interfaces.llm import LLMResponse, MessageRole, ToolCall
+from app.shared.turn import TurnContext, current_turn
 from app.shared.types import CategoryType, CurrencyType, TransactionType, UserId
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
@@ -323,3 +324,76 @@ class TestCategoryContextBlock:
         assert "venezuela" in block
         assert "consultas y medicamentos" in block
         assert "REUTIL" in block.upper()
+
+
+class TestToolAgentTurnBinding:
+    @staticmethod
+    def _probe_llm() -> ScriptedToolLLM:
+        call = LLMResponse(
+            content="",
+            model="fake",
+            tool_calls=[ToolCall(id="1", name="probe", arguments={})],
+        )
+        return ScriptedToolLLM([call, _text("ok")])
+
+    @staticmethod
+    def _probe_toolkit(seen: list[TurnContext | None]) -> Any:
+        class ProbeToolkit:
+            @property
+            def schemas(self) -> list[dict[str, Any]]:
+                return [{"type": "function", "function": {"name": "probe", "parameters": {}}}]
+
+            async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
+                seen.append(current_turn())
+                return "ok"
+
+        return ProbeToolkit()
+
+    async def test_tools_see_the_turn_and_conversation_from_the_state(self) -> None:
+        seen: list[TurnContext | None] = []
+        state = build_initial_state(
+            message="hola", user_id="u1", conversation_id="conv-9", turn_id="turn-9"
+        )
+
+        await tool_agent_node(state, self._probe_llm(), self._probe_toolkit(seen))
+
+        assert seen == [TurnContext(turn_id="turn-9", conversation_id="conv-9")]
+        assert current_turn() is None  # unbound again after the node
+
+    async def test_without_ids_no_turn_is_bound_so_two_step_tools_fail_closed(self) -> None:
+        seen: list[TurnContext | None] = []
+        state = build_initial_state(message="hola", user_id="u1")
+
+        await tool_agent_node(state, self._probe_llm(), self._probe_toolkit(seen))
+
+        assert seen == [None]
+
+
+class TestToolAgentTurnFailedFlag:
+    async def test_normal_answer_is_not_a_failed_turn(self) -> None:
+        state = build_initial_state(message="hola", user_id="u1")
+
+        result = await tool_agent_node(state, ScriptedToolLLM([_text("Hola")]), FakeToolkitStub())
+
+        assert result["turn_failed"] is False
+
+    async def test_generic_fallback_marks_the_turn_failed(self) -> None:
+        class BoomLLM(ScriptedToolLLM):
+            async def generate_with_tools(self, messages, tools, config=None):  # type: ignore[no-untyped-def]
+                raise RuntimeError("llm down")
+
+        state = build_initial_state(message="hola", user_id="u1")
+
+        result = await tool_agent_node(state, BoomLLM([_text("x")]), FakeToolkitStub())
+
+        assert result["turn_failed"] is True
+        assert result["messages"][-1].content.startswith("Lo siento, no pude completar")
+
+
+class FakeToolkitStub:
+    @property
+    def schemas(self) -> list[dict[str, Any]]:
+        return []
+
+    async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
+        return "ok"

@@ -6,11 +6,27 @@ embedding, or vector-store providers.
 """
 
 from collections.abc import AsyncIterator
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
 from app.shared.interfaces.database import QueryConfig, QueryResult
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, LLMResponse, Message
+from app.shared.turn import TurnContext
+from app.shared.types import CardId, UserId
+from app.src.cards.interfaces import CreditCardServiceABC
+from app.src.cards.models import (
+    CardPayment,
+    CardPaymentCreate,
+    CardPaymentView,
+    CreditCard,
+    CreditCardCreate,
+    CreditCardStatus,
+)
+from app.src.pending.interfaces import PendingActionRepositoryABC, PendingActionServiceABC
+from app.src.pending.models import PendingAction
+from app.src.pending.types import PendingActionKind
 from app.src.ratelimit.interfaces import RateLimitServiceABC
 
 
@@ -98,6 +114,168 @@ class FakeRateLimitService(RateLimitServiceABC):
 
     async def check_chat(self, user_id: str, *, has_image: bool) -> None:
         self.calls.append((user_id, has_image))
+
+
+class FakePendingActionRepository(PendingActionRepositoryABC):
+    """In-memory store mirroring the RPC semantics of migration 016.
+
+    ``consume`` only matches a live row (``expires_at >= now``) of the same
+    user/conversation/kind proposed in ANOTHER turn, and deletes it atomically.
+    ``discard_stale`` drops the user's expired rows and this conversation's rows of
+    other turns. ``now`` is settable so tests can expire proposals.
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], PendingAction] = {}
+        self.now: datetime = datetime.now(UTC)
+
+    async def upsert(self, action: PendingAction) -> None:
+        self.rows[(action.user_id, action.conversation_id)] = action
+
+    async def get(self, user_id: UserId, conversation_id: str) -> PendingAction | None:
+        return self.rows.get((user_id, conversation_id))
+
+    async def consume(
+        self, user_id: UserId, conversation_id: str, kind: PendingActionKind, turn_id: str
+    ) -> dict[str, object] | None:
+        self._drop_expired(user_id)
+        row = self.rows.get((user_id, conversation_id))
+        if row is None or row.kind != kind or row.turn_id == turn_id:
+            return None
+        del self.rows[(user_id, conversation_id)]
+        return row.payload
+
+    async def discard_stale(
+        self, user_id: UserId, conversation_id: str, keep_turn_id: str
+    ) -> None:
+        self._drop_expired(user_id)
+        row = self.rows.get((user_id, conversation_id))
+        if row is not None and row.turn_id != keep_turn_id:
+            del self.rows[(user_id, conversation_id)]
+
+    def _drop_expired(self, user_id: UserId) -> None:
+        for key in [k for k, r in self.rows.items() if k[0] == user_id and r.expires_at < self.now]:
+            del self.rows[key]
+
+
+class FakePendingActionService(PendingActionServiceABC):
+    """Records sweeps (and optionally fails them) for route tests."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.discarded: list[tuple[str, TurnContext]] = []
+        self.keep_current: list[bool] = []
+        self._error = error
+
+    async def propose(
+        self,
+        user_id: UserId,
+        turn: TurnContext,
+        kind: PendingActionKind,
+        payload: dict[str, object],
+    ) -> bool:
+        return True
+
+    async def consume(
+        self, user_id: UserId, turn: TurnContext, kind: PendingActionKind
+    ) -> dict[str, object] | None:
+        return None
+
+    async def discard_stale(
+        self, user_id: UserId, turn: TurnContext, *, keep_current: bool = True
+    ) -> None:
+        self.discarded.append((user_id, turn))
+        self.keep_current.append(keep_current)
+        if self._error is not None:
+            raise self._error
+
+
+class InMemoryCardService(CreditCardServiceABC):
+    """Card service stub that PERSISTS ``update_card`` (list_cards reflects it)."""
+
+    def __init__(self, cards: list[CreditCard]) -> None:
+        self.cards = cards
+        self.update_calls = 0
+
+    async def list_cards(self, user_id: UserId) -> list[CreditCard]:
+        return [c for c in self.cards if c.user_id == user_id and c.is_active]
+
+    async def resolve_by_name(self, name: str, user_id: UserId) -> CreditCard | None:
+        return next(
+            (c for c in await self.list_cards(user_id) if name.lower() in c.name.lower()), None
+        )
+
+    async def update_card(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        name: str | None = None,
+        credit_limit: Decimal | None = None,
+        cutoff_day: int | None = None,
+        payment_day: int | None = None,
+    ) -> CreditCard:
+        from app.core.exceptions import CardNotFoundError
+
+        self.update_calls += 1
+        index = next(
+            (i for i, c in enumerate(self.cards) if c.id == card_id and c.user_id == user_id), None
+        )
+        if index is None:
+            raise CardNotFoundError(card_id)
+        changes = {
+            "name": name,
+            "credit_limit": credit_limit,
+            "cutoff_day": cutoff_day,
+            "payment_day": payment_day,
+        }
+        self.cards[index] = self.cards[index].model_copy(
+            update={k: v for k, v in changes.items() if v is not None}
+        )
+        return self.cards[index]
+
+    async def create_card(self, card: CreditCardCreate, user_id: UserId) -> CreditCard:
+        raise NotImplementedError
+
+    async def get_all_status(
+        self,
+        user_id: UserId,
+        as_of: date | None = None,
+        *,
+        period_start: date | None = None,
+        period_end: date | None = None,
+    ) -> list[CreditCardStatus]:
+        raise NotImplementedError
+
+    async def get_status(
+        self, card_id: CardId, user_id: UserId, as_of: date | None = None
+    ) -> CreditCardStatus:
+        raise NotImplementedError
+
+    async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
+        raise NotImplementedError
+
+    async def register_payment(
+        self, card_id: CardId, user_id: UserId, payment: CardPaymentCreate
+    ) -> CardPayment:
+        raise NotImplementedError
+
+    async def list_payments(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[CardPaymentView]:
+        raise NotImplementedError
+
+    async def remove_payment(
+        self,
+        user_id: UserId,
+        amount: Decimal,
+        *,
+        payment_date: date | None = None,
+        card_id: CardId | None = None,
+    ) -> CardPayment | None:
+        raise NotImplementedError
+
+    async def delete_card(self, card_id: CardId, user_id: UserId) -> CreditCard:
+        raise NotImplementedError
 
 
 class FakeDatabase:

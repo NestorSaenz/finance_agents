@@ -18,13 +18,17 @@ from app.agents.nodes.image_ingestion import (
 )
 from app.agents.state import build_initial_state
 from app.core.config import settings
+from app.core.exceptions import DatabaseError
 from app.core.logging import get_logger
 from app.core.observability import get_trace_callbacks
 from app.shared.dependencies import LLMVisionDep
+from app.shared.turn import TurnContext
 from app.src.auth.dependencies import CurrentUserId
 from app.src.chat.dependencies import ChatMemoryServiceDep
 from app.src.chat.models import ChatMessage
 from app.src.memory.dependencies import MemoryAgentServiceDep
+from app.src.pending.dependencies import PendingActionServiceDep
+from app.src.pending.interfaces import PendingActionServiceABC
 from app.src.ratelimit.dependencies import RateLimitServiceDep
 from app.src.users.dependencies import UserProfileServiceDep
 
@@ -109,6 +113,7 @@ async def chat(
     profiles: UserProfileServiceDep,
     ingestion: IngestionDep,
     rate_limiter: RateLimitServiceDep,
+    pending: PendingActionServiceDep,
 ) -> ChatResponse:
     """Send a message to the FinanceGPT assistant.
 
@@ -145,10 +150,18 @@ async def chat(
 
     # An attached image goes through the dedicated ingestion flow (extract + propose),
     # bypassing the classifier/tool graph.
+    # Unique id of THIS request: a proposal made now can only be confirmed from a
+    # later turn, never from this one (see app.shared.turn).
+    turn = TurnContext(turn_id=uuid.uuid4().hex, conversation_id=conversation_id)
+
     if request.image:
-        return await _handle_image(
-            request, ingestion, memory, conversation_id, user_id, user_context
-        )
+        try:
+            return await _handle_image(
+                request, ingestion, memory, conversation_id, user_id, user_context
+            )
+        finally:
+            # No proposal can come from an image turn: drop everything older AND this turn's.
+            await _discard_stale_pending(pending, user_id, turn, keep_current=False)
 
     initial_state = build_initial_state(
         message=request.message,
@@ -156,12 +169,14 @@ async def chat(
         history=history,
         user_context=user_context,
         timezone=timezone,
+        conversation_id=conversation_id,
+        turn_id=turn.turn_id,
     )
-    # Fresh thread id per request: history is injected explicitly, so the
-    # in-memory checkpointer must not also carry it over. recursion_limit is a
-    # hard backstop against runaway loops (cost control).
+    # The turn id doubles as the thread id: fresh per request, so history is injected
+    # explicitly and the in-memory checkpointer must not also carry it over.
+    # recursion_limit is a hard backstop against runaway loops (cost control).
     config: dict[str, Any] = {
-        "configurable": {"thread_id": uuid.uuid4().hex},
+        "configurable": {"thread_id": turn.turn_id},
         "recursion_limit": GRAPH_RECURSION_LIMIT,
     }
 
@@ -178,10 +193,13 @@ async def chat(
             "langfuse_tags": [f"env:{settings.ENVIRONMENT}", "channel:chat"],
         }
 
+    # Keep THIS turn's proposal only when the user got a normal answer showing it.
+    keep_current = False
     try:
         final_state = await asyncio.wait_for(
             graph.ainvoke(initial_state, config=config), timeout=GRAPH_TIMEOUT_SECONDS
         )
+        keep_current = not final_state.get("turn_failed", False)
     except TimeoutError:
         logger.error("Graph invocation timed out", conversation_id=conversation_id)
         return ChatResponse(
@@ -192,6 +210,10 @@ async def chat(
         return ChatResponse(
             response=FALLBACK_RESPONSE, session_id=conversation_id, agent_used="error"
         )
+    finally:
+        # A proposal is only valid in the very next user turn: drop older ones, and
+        # this turn's too when it timed out, errored or fell back (user never saw it).
+        await _discard_stale_pending(pending, user_id, turn, keep_current=keep_current)
 
     response_text = _extract_response(final_state)
 
@@ -253,6 +275,24 @@ async def _handle_image(
     return ChatResponse(
         response=proposal, session_id=conversation_id, agent_used="ingestion"
     )
+
+
+async def _discard_stale_pending(
+    pending: PendingActionServiceABC,
+    user_id: str,
+    turn: TurnContext,
+    *,
+    keep_current: bool = True,
+) -> None:
+    """End-of-turn sweep of stale proposals; a storage failure never breaks the chat."""
+    try:
+        await pending.discard_stale(user_id, turn, keep_current=keep_current)
+    except DatabaseError as e:
+        logger.error(
+            "Could not discard stale pending actions",
+            conversation_id=turn.conversation_id,
+            error=str(e),
+        )
 
 
 async def _build_user_context(

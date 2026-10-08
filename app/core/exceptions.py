@@ -315,6 +315,16 @@ class CardNotFoundError(ApplicationError):
         )
 
 
+class NoActiveTurnError(ApplicationError):
+    """Raised when a two-step action runs outside a bound chat turn (fail closed)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            message="No active chat turn is bound; the action cannot be proposed or confirmed",
+            code="NO_ACTIVE_TURN",
+        )
+
+
 class CardTemplateNotFoundError(ApplicationError):
     """Raised when a card template is not found."""
 

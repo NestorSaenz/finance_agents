@@ -10,12 +10,14 @@ from fastapi.testclient import TestClient
 
 from app.agents.graph import create_financegpt_graph, get_compiled_graph
 from app.api.routes.chat import get_ingestion_service
+from app.core.exceptions import DatabaseQueryError
 from app.main import app
 from app.src.chat.dependencies import get_chat_memory_service
 from app.src.chat.interfaces import ChatMemoryServiceABC
 from app.src.chat.models import ChatMessage
 from app.src.memory.dependencies import get_memory_agent_service
 from app.src.memory.interfaces import MemoryAgentServiceABC
+from app.src.pending.dependencies import get_pending_action_service
 from app.src.ratelimit.dependencies import get_rate_limit_service
 from app.src.ratelimit.interfaces import RateLimitRepositoryABC, RateLimitServiceABC
 from app.src.ratelimit.models import RateLimitBucket
@@ -26,6 +28,7 @@ from app.src.users.models import UserProfile, UserProfileUpdate
 from tests.fakes import (
     FakeEmbeddingClient,
     FakeLLM,
+    FakePendingActionService,
     FakeRateLimitService,
     FakeToolkit,
     FakeVectorStore,
@@ -101,13 +104,17 @@ class StubIngestion:
         return INGESTION_REPLY
 
 
-def _override_memory() -> None:
+def _override_memory() -> FakePendingActionService:
     app.dependency_overrides[get_chat_memory_service] = lambda: FakeChatMemory()
     app.dependency_overrides[get_memory_agent_service] = lambda: FakeMemoryAgent()
     app.dependency_overrides[get_user_profile_service] = lambda: FakeProfileService()
     app.dependency_overrides[get_ingestion_service] = lambda: StubIngestion()
     # Permissive limiter so unrelated chat tests don't need a live rate-limit DB.
     app.dependency_overrides[get_rate_limit_service] = lambda: FakeRateLimitService()
+    # Records the end-of-turn sweep so no pending-actions DB is needed.
+    pending = FakePendingActionService()
+    app.dependency_overrides[get_pending_action_service] = lambda: pending
+    return pending
 
 
 @pytest.fixture
@@ -272,6 +279,133 @@ class TestChatEndpoint:
 
         assert response.status_code == 200
         assert response.json()["response"] == FINAL_TEXT  # replied despite memory being down
+
+
+class TestPendingActionSweep:
+    """Every turn ends by dropping proposals made before it (propose -> next turn only)."""
+
+    def test_sweeps_on_success_with_this_turns_id(self) -> None:
+        captured: dict[str, object] = {}
+
+        class CapturingGraph:
+            async def ainvoke(self, state: dict, config: dict) -> dict:
+                captured["state"] = state
+                captured["thread_id"] = config["configurable"]["thread_id"]
+                return {"messages": []}
+
+        app.dependency_overrides[get_compiled_graph] = lambda: CapturingGraph()
+        pending = _override_memory()
+        try:
+            response = TestClient(app).post(
+                CHAT_URL, json={"message": "hola", "session_id": "sess-1"}
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert len(pending.discarded) == 1
+        _, turn = pending.discarded[0]
+        state = captured["state"]
+        assert isinstance(state, dict)
+        # The same ids reach the graph state, so a proposal made in the graph is kept.
+        assert turn.conversation_id == "sess-1" == state["conversation_id"]
+        assert turn.turn_id == state["turn_id"] == captured["thread_id"]
+
+    def test_each_request_gets_a_new_turn_id(self, client_with_fake_graph: TestClient) -> None:
+        pending = FakePendingActionService()
+        app.dependency_overrides[get_pending_action_service] = lambda: pending
+
+        client_with_fake_graph.post(CHAT_URL, json={"message": "uno", "session_id": "s"})
+        client_with_fake_graph.post(CHAT_URL, json={"message": "dos", "session_id": "s"})
+
+        first, second = (turn for _, turn in pending.discarded)
+        assert first.turn_id != second.turn_id
+
+    def test_sweeps_on_graph_error(self) -> None:
+        class BrokenGraph:
+            async def ainvoke(self, state: dict, config: dict) -> dict:
+                raise RuntimeError("llm down")
+
+        app.dependency_overrides[get_compiled_graph] = lambda: BrokenGraph()
+        pending = _override_memory()
+        try:
+            response = TestClient(app).post(CHAT_URL, json={"message": "hola"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.json()["agent_used"] == "error"
+        assert len(pending.discarded) == 1
+        assert pending.keep_current == [False]  # the user never saw this turn's proposal
+
+    def test_sweeps_on_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import app.api.routes.chat as chat_module
+
+        class SlowGraph:
+            async def ainvoke(self, state: dict, config: dict) -> dict:
+                await asyncio.sleep(1)
+                return {"messages": []}
+
+        monkeypatch.setattr(chat_module, "GRAPH_TIMEOUT_SECONDS", 0.01)
+        app.dependency_overrides[get_compiled_graph] = lambda: SlowGraph()
+        pending = _override_memory()
+        try:
+            response = TestClient(app).post(CHAT_URL, json={"message": "hola"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.json()["agent_used"] == "timeout"
+        assert len(pending.discarded) == 1
+        assert pending.keep_current == [False]
+
+    def test_sweeps_on_the_image_path(self, client_with_fake_graph: TestClient) -> None:
+        pending = FakePendingActionService()
+        app.dependency_overrides[get_pending_action_service] = lambda: pending
+        image_b64 = base64.b64encode(b"fake-image-bytes").decode()
+
+        response = client_with_fake_graph.post(
+            CHAT_URL,
+            json={"message": "", "image": image_b64, "image_mime_type": "image/png"},
+        )
+
+        assert response.json()["agent_used"] == "ingestion"
+        assert len(pending.discarded) == 1
+        assert pending.keep_current == [False]
+
+    def test_keeps_this_turns_proposal_after_a_normal_answer(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        pending = FakePendingActionService()
+        app.dependency_overrides[get_pending_action_service] = lambda: pending
+
+        client_with_fake_graph.post(CHAT_URL, json={"message": "gasté 50 en pizza"})
+
+        assert pending.keep_current == [True]
+
+    def test_drops_this_turns_proposal_when_the_node_returned_its_fallback(self) -> None:
+        class FallbackGraph:
+            async def ainvoke(self, state: dict, config: dict) -> dict:
+                return {"messages": [], "turn_failed": True}
+
+        app.dependency_overrides[get_compiled_graph] = lambda: FallbackGraph()
+        pending = _override_memory()
+        try:
+            TestClient(app).post(CHAT_URL, json={"message": "hola"})
+        finally:
+            app.dependency_overrides.clear()
+
+        assert pending.keep_current == [False]
+
+    def test_a_failing_sweep_never_breaks_the_chat(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        pending = FakePendingActionService(error=DatabaseQueryError("rpc", "db down"))
+        app.dependency_overrides[get_pending_action_service] = lambda: pending
+
+        response = client_with_fake_graph.post(CHAT_URL, json={"message": "gasté 50 en pizza"})
+
+        assert response.status_code == 200
+        assert response.json()["response"] == FINAL_TEXT
+        assert len(pending.discarded) == 1
 
 
 class _OverLimitRepo(RateLimitRepositoryABC):

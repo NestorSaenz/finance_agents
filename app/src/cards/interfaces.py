@@ -13,6 +13,8 @@ from .models import (
     CreditCard,
     CreditCardCreate,
     CreditCardStatus,
+    ScheduleChangeResult,
+    ScheduleProposal,
 )
 
 
@@ -187,3 +189,27 @@ class CreditCardServiceABC(ABC):
     @abstractmethod
     async def delete_card(self, card_id: CardId, user_id: UserId) -> CreditCard:
         """Deactivate a card (soft delete) or raise ``CardNotFoundError``."""
+
+
+class CardScheduleChangeServiceABC(ABC):
+    """Contract for the two-step (propose, then confirm) cutoff/payment-day change."""
+
+    @abstractmethod
+    async def propose(
+        self,
+        card: CreditCard,
+        user_id: UserId,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleProposal | None:
+        """Store a proposal for the CURRENT turn; ``None`` when nothing would change.
+
+        Does NOT modify the card. Raises ``NoActiveTurnError`` outside a bound turn.
+        """
+
+    @abstractmethod
+    async def confirm(self, user_id: UserId) -> ScheduleChangeResult:
+        """Apply the proposal made in an EARLIER turn, once, if still valid.
+
+        Raises ``NoActiveTurnError`` outside a bound turn (fails closed).
+        """

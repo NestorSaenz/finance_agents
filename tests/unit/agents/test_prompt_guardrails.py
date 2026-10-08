@@ -48,28 +48,34 @@ class TestCardCutoffVocabulary:
         assert "solo el banco" in TOOL_AGENT_SYSTEM_PROMPT
         assert "modificar y eliminar" in TOOL_AGENT_SYSTEM_PROMPT
 
-    def test_prompt_confirms_with_the_deduced_value_and_never_reasks(self) -> None:
+    def test_prompt_keeps_deduction_rules_and_never_reasks(self) -> None:
         assert "→" in TOOL_AGENT_SYSTEM_PROMPT
         assert "re-preguntes" in TOOL_AGENT_SYSTEM_PROMPT
         assert "la razón" in TOOL_AGENT_SYSTEM_PROMPT
-        assert "valor deducido" in TOOL_AGENT_SYSTEM_PROMPT
 
-    def test_prompt_only_acts_directly_on_an_explicit_order(self) -> None:
-        # A statement/complaint ("el corte fue el 20") must be proposed, not executed.
-        assert "SOLO si el usuario" in TOOL_AGENT_SYSTEM_PROMPT
-        assert "NO es una orden" in TOOL_AGENT_SYSTEM_PROMPT
+    def test_prompt_routes_schedule_changes_through_propose_then_confirm(self) -> None:
+        # Code enforces the confirmation; the prompt only has to name the two steps.
+        assert "PROPONE" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "confirm_card_change" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "✏️ Actualicé" in TOOL_AGENT_SYSTEM_PROMPT
 
     def test_update_card_schema_carries_the_same_rules(self) -> None:
         description = _update_card_description().lower()
         for phrase in ("periodo de facturación", "ciclo", "fecha de corte", "cierre"):
             assert phrase in description
-        assert "último día" in description
         assert "fecha límite de pago" in description
         assert "solo el banco" in description
         assert "→" in description
-        assert "inicio - 1" in description
 
-    def test_update_card_schema_only_acts_directly_on_an_explicit_order(self) -> None:
+    def test_update_card_schema_only_proposes_schedule_changes(self) -> None:
         description = _update_card_description()
-        assert "ORDENA" in description
-        assert "NO es una orden" in description
+        assert "SOLO crea una propuesta" in description
+        assert "no la aplica" in description
+
+    def test_confirm_card_change_is_argument_free_and_gated_on_the_current_message(self) -> None:
+        schema = next(
+            s for s in CARD_TOOL_SCHEMAS if s["function"]["name"] == "confirm_card_change"
+        )
+        function = schema["function"]
+        assert function["parameters"]["properties"] == {}
+        assert "SOLO si el mensaje ACTUAL" in function["description"]

@@ -2,6 +2,8 @@
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
+from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,3 +102,41 @@ class CreditCardStatus(BaseModel):
     # next_payment_date belongs to the open cycle (otherwise it's part of
     # statement_amount); None in a historical view.
     overdue_amount: Decimal | None = None
+
+
+class CardScheduleChange(BaseModel):
+    """A proposed change to a card's cutoff and/or payment day, awaiting confirmation.
+
+    ``None`` leaves that day unchanged. ``prev_*`` snapshot the card's days when the
+    change was proposed, so confirming can detect that they changed in the meantime.
+    """
+
+    card_id: str
+    cutoff_day: int | None = Field(default=None, ge=1, le=31)
+    payment_day: int | None = Field(default=None, ge=1, le=31)
+    prev_cutoff_day: int = Field(..., ge=1, le=31)
+    prev_payment_day: int = Field(..., ge=1, le=31)
+
+
+class ScheduleProposal(NamedTuple):
+    """A stored proposal; ``already_pending`` when an identical earlier one was kept."""
+
+    change: CardScheduleChange
+    already_pending: bool
+
+
+class ScheduleChangeOutcome(StrEnum):
+    """Result of confirming a proposed schedule change."""
+
+    APPLIED = "applied"
+    NONE_PENDING = "none_pending"
+    STALE = "stale"
+    NOT_FOUND = "not_found"
+
+
+class ScheduleChangeResult(NamedTuple):
+    """Outcome of a confirmation plus the card before/after (only when applied)."""
+
+    outcome: ScheduleChangeOutcome
+    before: CreditCard | None = None
+    after: CreditCard | None = None

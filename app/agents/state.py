@@ -20,12 +20,17 @@ class AgentState(TypedDict):
     user_id: str
     user_context: str  # durable facts about the user (Memory Agent), for personalization
     timezone: str  # user's IANA timezone, for resolving relative dates in their local day
+    conversation_id: str  # chat conversation this turn belongs to ('' when unknown)
+    turn_id: str  # unique id of THIS request; separates 'propose' from a later 'confirm'
 
     # Routing / results.
     detected_intent: str
     category_suggestion: str | None  # set by the categorizer, phrased by response_generator
     next_agent: str
     should_respond: bool
+    # Set by a node that could not complete the turn (fallback answer): the route then
+    # drops any proposal made in it, since the user never saw it.
+    turn_failed: bool
 
 
 def build_initial_state(
@@ -34,6 +39,8 @@ def build_initial_state(
     history: list[BaseMessage] | None = None,
     user_context: str = "",
     timezone: str = "",
+    conversation_id: str = "",
+    turn_id: str = "",
 ) -> AgentState:
     """Build a fresh :class:`AgentState` for a new user turn.
 
@@ -43,6 +50,9 @@ def build_initial_state(
         history: Prior conversation messages (oldest first) for multi-turn context.
         user_context: The user's long-term knowledge facts, for personalization.
         timezone: The user's IANA timezone, used to resolve "today" in their local day.
+        conversation_id: The chat conversation id (scopes pending confirmations).
+        turn_id: Unique id of this request; a pending proposal can only be confirmed
+            from a different turn.
 
     Returns:
         A fully populated initial state.
@@ -52,8 +62,11 @@ def build_initial_state(
         user_id=user_id,
         user_context=user_context,
         timezone=timezone,
+        conversation_id=conversation_id,
+        turn_id=turn_id,
         detected_intent="unknown",
         category_suggestion=None,
         next_agent="",
         should_respond=False,
+        turn_failed=False,
     )

@@ -153,12 +153,15 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.src.cards.repositories.card_payment_repository import CardPaymentRepository
     from app.src.cards.repositories.credit_card_repository import CreditCardRepository
     from app.src.cards.services.credit_card_service import CreditCardService
+    from app.src.cards.services.schedule_change_service import CardScheduleChangeService
     from app.src.cards.services.spending_provider import TransactionCardSpendingProvider
     from app.src.goals.repositories.goal_contribution_repository import (
         GoalContributionRepository,
     )
     from app.src.goals.repositories.goal_repository import GoalRepository
     from app.src.goals.services.goal_service import GoalService
+    from app.src.pending.repositories.pending_action_repository import PendingActionRepository
+    from app.src.pending.services.pending_action_service import PendingActionService
     from app.src.recurring.repositories.recurring_repository import RecurringRepository
     from app.src.recurring.services.recurring_service import RecurringService
     from app.src.transactions.repositories.transaction_repository import TransactionRepository
@@ -182,6 +185,9 @@ def get_compiled_graph() -> "CompiledStateGraph":
         CardPaymentRepository(db),
         TransactionCardSpendingProvider(db),
     )
+    card_schedule_service = CardScheduleChangeService(
+        card_service, PendingActionService(PendingActionRepository(db))
+    )
     user_profile_service = UserProfileService(UserProfileRepository(db))
     analysis_service = AnalysisService(
         transaction_service,
@@ -199,7 +205,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
             TransactionToolkit(transaction_service, cards=card_service, budgets=budget_service),
             BudgetToolkit(budget_service),
             GoalToolkit(goal_service),
-            CardToolkit(card_service),
+            CardToolkit(card_service, card_schedule_service),
             AnalysisToolkit(analysis_service),
             CategoryToolkit(transaction_service, budget_service),
             RecurringToolkit(recurring_service, cards=card_service),

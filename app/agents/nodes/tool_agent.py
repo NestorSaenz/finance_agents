@@ -8,6 +8,7 @@ time — never from the model.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import date
 
 from langchain_core.messages import AIMessage
@@ -24,6 +25,7 @@ from app.core.logging import get_logger
 from app.core.observability import record_tool_span, start_tool_span
 from app.shared.clock import bound_today, current_today, local_today
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, Message, MessageRole, ToolCall
+from app.shared.turn import TurnContext, bound_turn
 
 logger = get_logger(__name__)
 
@@ -85,17 +87,35 @@ async def tool_agent_node(
     # None → UTC fallback (no warning) for callers that don't set one.
     today = local_today(state.get("timezone") or None)
 
+    turn_failed = False
     try:
-        final_text = await _run_tool_loop(
-            llm, toolkit, history, user_message, user_id, user_block, today
-        )
+        # Bind the turn so two-step tools (propose now, confirm later) know which
+        # request they run in. Without ids nothing is bound and those tools fail closed.
+        with _turn_scope(state):
+            final_text = await _run_tool_loop(
+                llm, toolkit, history, user_message, user_id, user_block, today
+            )
     except Exception as e:  # noqa: BLE001 - LLM/tool boundary: degrade gracefully.
         logger.error("Tool agent failed", error=str(e))
         final_text = "Lo siento, no pude completar la operación. ¿Puedes intentarlo de nuevo?"
+        turn_failed = True
 
     logger.info("Tool agent responded", answer=final_text[:200])
     # Return only the delta: the add_messages reducer appends the new message.
-    return {"messages": [AIMessage(content=final_text)], "should_respond": False}
+    return {
+        "messages": [AIMessage(content=final_text)],
+        "should_respond": False,
+        "turn_failed": turn_failed,
+    }
+
+
+def _turn_scope(state: AgentState) -> AbstractContextManager[None]:
+    """Bind the state's turn/conversation ids, or nothing when either is missing."""
+    turn_id = state.get("turn_id", "")
+    conversation_id = state.get("conversation_id", "")
+    if not turn_id or not conversation_id:
+        return nullcontext()
+    return bound_turn(TurnContext(turn_id=turn_id, conversation_id=conversation_id))
 
 
 async def _run_tool_loop(
