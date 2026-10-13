@@ -242,7 +242,7 @@ export function SummaryContent({
       {budget && (
         <Section
           title="Cómo voy en cada categoría"
-          subtitle="Incluye las compras a crédito según el mes en que las pagas."
+          subtitle="Incluye tus gastos fijos y las compras a crédito según el mes en que las pagas. El aviso llega cuando tus gastos variables se acercan al tope o te pasas."
         >
           <BudgetProgress data={budget} transactions={budgetTransactions} />
         </Section>

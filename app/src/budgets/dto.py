@@ -72,6 +72,7 @@ class BudgetStatusResponse(BaseModel):
     period_start: date
     period_end: date
     spent: Decimal
+    spent_fixed: Decimal = Decimal("0")
     remaining: Decimal
     percentage: float
     alert_triggered: bool
@@ -83,6 +84,7 @@ class BudgetStatusResponse(BaseModel):
             period_start=status.period_start,
             period_end=status.period_end,
             spent=status.spent,
+            spent_fixed=status.spent_fixed,
             remaining=status.remaining,
             percentage=status.percentage,
             alert_triggered=status.alert_triggered,

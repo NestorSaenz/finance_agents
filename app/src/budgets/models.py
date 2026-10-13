@@ -49,13 +49,32 @@ class Budget(BaseModel):
     created_at: datetime
 
 
+class BudgetSpending(BaseModel):
+    """Spending of a budget's scope in a period: the total and its recurring part."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total: Decimal = Decimal("0")
+    fixed: Decimal = Decimal("0")
+
+    @property
+    def variable(self) -> Decimal:
+        """The part of the total that is NOT a recurring (fixed) expense."""
+        return self.total - self.fixed
+
+
 class BudgetStatus(BaseModel):
-    """A budget evaluated against actual spending in the current period."""
+    """A budget evaluated against actual spending in the current period.
+
+    ``spent`` is ALL expenses (fixed bills included); ``spent_fixed`` is the part
+    that comes from recurring expenses, so variable = ``spent - spent_fixed``.
+    """
 
     budget: Budget
     period_start: date
     period_end: date
     spent: Decimal
+    spent_fixed: Decimal = Decimal("0")
     remaining: Decimal
     percentage: float = Field(..., description="Percentage of the budget spent")
     alert_triggered: bool

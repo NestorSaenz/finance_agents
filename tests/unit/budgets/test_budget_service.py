@@ -10,7 +10,7 @@ import pytest
 from app.core.exceptions import BudgetNotFoundError
 from app.shared.types import BudgetId, BudgetPeriod, CategoryType, CurrencyType, UserId
 from app.src.budgets.interfaces import BudgetRepositoryABC, BudgetSpendingABC
-from app.src.budgets.models import Budget, BudgetCreate
+from app.src.budgets.models import Budget, BudgetCreate, BudgetSpending, BudgetStatus
 from app.src.budgets.services.budget_service import BudgetService
 
 
@@ -37,11 +37,13 @@ def _budget(
 
 
 class FakeSpending(BudgetSpendingABC):
-    def __init__(self, spent: Decimal) -> None:
-        self.spent = spent
+    def __init__(self, spent: Decimal, fixed: Decimal = Decimal("0")) -> None:
+        self.spending = BudgetSpending(total=spent, fixed=fixed)
 
-    async def get_spent(self, user_id, category, period_start, period_end) -> Decimal:  # type: ignore[no-untyped-def]
-        return self.spent
+    async def get_spending(  # type: ignore[no-untyped-def]
+        self, user_id, category, period_start, period_end
+    ) -> BudgetSpending:
+        return self.spending
 
 
 class FakeBudgetRepository(BudgetRepositoryABC):
@@ -143,6 +145,65 @@ class TestGetBudgetStatus:
         )
 
         status = await service.get_budget_status("bud-1", "u1", as_of=REF)
+
+        assert status.alert_triggered is False
+
+
+class TestFixedSpendingAlerts:
+    """spent counts fixed bills; the alert watches variable spending or being over."""
+
+    async def _status(self, spent: str, fixed: str, alert_enabled: bool = True) -> BudgetStatus:
+        service = BudgetService(
+            FakeBudgetRepository(
+                budget=_budget(amount=Decimal("1000"), alert_enabled=alert_enabled)
+            ),
+            FakeSpending(Decimal(spent), Decimal(fixed)),
+        )
+        return await service.get_budget_status("bud-1", "u1", as_of=REF)
+
+    async def test_rent_only_exactly_at_cap_does_not_alert(self) -> None:
+        status = await self._status("1000", "1000")
+
+        assert status.spent == Decimal("1000")
+        assert status.spent_fixed == Decimal("1000")
+        assert status.percentage == 100.0
+        assert status.remaining == Decimal("0")
+        assert status.alert_triggered is False
+
+    async def test_fixed_plus_small_variable_below_cap_does_not_alert(self) -> None:
+        status = await self._status("950", "900")  # variable 50 = 5% < 80%
+
+        assert status.alert_triggered is False
+
+    async def test_fixed_plus_variable_over_cap_alerts(self) -> None:
+        status = await self._status("1100", "900")
+
+        assert status.alert_triggered is True
+        assert status.remaining == Decimal("-100")
+        assert status.percentage == 110.0
+
+    async def test_variable_reaching_threshold_alerts(self) -> None:
+        status = await self._status("900", "100")  # variable 800 = 80%
+
+        assert status.alert_triggered is True
+
+    async def test_variable_just_below_threshold_does_not_alert(self) -> None:
+        status = await self._status("899", "100")  # variable 799 < 800
+
+        assert status.alert_triggered is False
+
+    async def test_zero_amount_never_alerts(self) -> None:
+        service = BudgetService(
+            FakeBudgetRepository(budget=_budget(amount=Decimal("0"))),
+            FakeSpending(Decimal("0")),
+        )
+
+        status = await service.get_budget_status("bud-1", "u1", as_of=REF)
+
+        assert status.alert_triggered is False
+
+    async def test_disabled_alerts_never_trigger_even_over_cap(self) -> None:
+        status = await self._status("1500", "0", alert_enabled=False)
 
         assert status.alert_triggered is False
 

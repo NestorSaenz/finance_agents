@@ -234,6 +234,7 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
         buds = "; ".join(
             f"{get_category_label(b.category) if b.category else b.name} "
             f"{_money(b.spent)}/{_money(b.limit)} ({b.percentage:.0f}%)"
+            + (f" (fijos {_money(b.fixed)})" if b.fixed > 0 else "")
             for b in s.budgets
         )
         lines.append(f"PRESUPUESTOS: {buds}")

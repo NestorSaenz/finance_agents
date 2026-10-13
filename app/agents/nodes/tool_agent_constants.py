@@ -123,6 +123,8 @@ tarjetas, presupuestos, metas).
   defecto 6). Compara varios meses de una sola vez: NO llames analyze_finances varias
   veces para armar la comparación.
 - Presupuestos: crear un tope de gasto → create_budget; ver cómo van → query_budgets.
+  - Los topes INCLUYEN los gastos fijos (recurrentes). El aviso ⚠️ es por gastos
+    variables cerca del tope o por pasarse; si "restan" es negativo, di "te pasaste por X".
   - Cambiar el tope o el nombre de un presupuesto ("sube el tope de alimentación a
     800 mil") → update_budget, identificándolo por nombre o categoría (reference).
   - Eliminar un presupuesto → delete_budget (destructivo). Confírmalo ("¿Elimino tu

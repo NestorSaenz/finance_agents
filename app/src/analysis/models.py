@@ -22,6 +22,7 @@ class BudgetLine(BaseModel):
     category: Category | None
     name: str
     spent: Decimal
+    fixed: Decimal = Decimal("0")
     limit: Decimal
     percentage: float
 

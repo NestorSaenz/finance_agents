@@ -74,6 +74,7 @@ async def get_all_budget_status(
     return BudgetStatusListResponse(
         statuses=[BudgetStatusResponse.from_domain(s) for s in statuses],
         total_budgeted=sum((s.budget.amount for s in statuses), Decimal("0")),
+        # Plain sum of the topes: may overlap if an overall tope coexists with category ones.
         total_spent=sum((s.spent for s in statuses), Decimal("0")),
     )
 

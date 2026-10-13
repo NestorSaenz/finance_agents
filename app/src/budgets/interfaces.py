@@ -8,21 +8,21 @@ from decimal import Decimal
 
 from app.shared.types import BudgetId, Category, UserId
 
-from .models import Budget, BudgetCreate, BudgetStatus
+from .models import Budget, BudgetCreate, BudgetSpending, BudgetStatus
 
 
 class BudgetSpendingABC(ABC):
     """Contract for computing how much a user has spent in a period."""
 
     @abstractmethod
-    async def get_spent(
+    async def get_spending(
         self,
         user_id: UserId,
         category: Category | None,
         period_start: date,
         period_end: date,
-    ) -> Decimal:
-        """Return total expenses for the user/category within the period."""
+    ) -> BudgetSpending:
+        """Return total expenses (and their recurring part) for the user/category."""
 
 
 class BudgetRepositoryABC(ABC):

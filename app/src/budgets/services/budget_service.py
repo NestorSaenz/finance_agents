@@ -130,20 +130,33 @@ class BudgetService(BudgetServiceABC):
 
     async def _build_status(self, budget: Budget, reference: date) -> BudgetStatus:
         period_start, period_end = compute_period(budget.period_type, reference)
-        spent = await self._spending.get_spent(
+        spending = await self._spending.get_spending(
             budget.user_id, budget.category, period_start, period_end
         )
+        spent = spending.total
 
         # Compute the ratio and the alert decision in Decimal (exact at the
         # threshold boundary); expose percentage as float for the response model.
         percentage = spent / budget.amount * 100 if budget.amount > 0 else Decimal("0")
-        alert_triggered = budget.alert_enabled and percentage >= budget.alert_threshold
+        # The bar counts everything (fixed bills included) but the alert must not
+        # fire every month just because a fixed bill materialized: it fires when
+        # really over the cap (total) or when the VARIABLE spending reaches the
+        # threshold. A rent-like bill exactly at 100% with no variable -> no alert.
+        alert_triggered = (
+            budget.alert_enabled
+            and budget.amount > 0
+            and (
+                spent > budget.amount
+                or spending.variable * 100 >= budget.amount * budget.alert_threshold
+            )
+        )
 
         return BudgetStatus(
             budget=budget,
             period_start=period_start,
             period_end=period_end,
             spent=spent,
+            spent_fixed=spending.fixed,
             remaining=budget.amount - spent,
             percentage=round(float(percentage), 2),
             alert_triggered=alert_triggered,

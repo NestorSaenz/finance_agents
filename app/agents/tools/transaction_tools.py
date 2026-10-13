@@ -167,15 +167,16 @@ def _resolve_delete_group(
 
 
 def _budget_date_matches(transaction: Transaction, start: date, end: date) -> bool:
-    """True if ``transaction`` is a non-recurring expense whose budget/impact
-    date falls in ``[start, end]``.
+    """True if ``transaction`` is an expense whose budget/impact date falls in
+    ``[start, end]``.
 
-    Mirrors ``sum_expenses`` (migration 014) — the same rule the budget bars use
+    Mirrors ``budget_spending`` (migration 017) — the same rule the budget bars use
     to attribute a credit charge to the month its statement is PAID, not the
-    month it was bought. Cash/debit rows never diverge from their purchase date
-    (their ``budget_date`` always equals it); only credit charges can.
+    month it was bought (recurring expenses count too). Cash/debit rows never
+    diverge from their purchase date (their ``budget_date`` always equals it);
+    only credit charges can.
     """
-    if transaction.transaction_type != TransactionType.EXPENSE or transaction.recurring_id:
+    if transaction.transaction_type != TransactionType.EXPENSE:
         return False
     impact = transaction.budget_date or transaction.transaction_date
     return start <= impact <= end
@@ -647,6 +648,9 @@ class TransactionToolkit:
             self._budgets is None
             or created.transaction_type != TransactionType.EXPENSE
             or created.category is None
+            # A materialized recurring row is a predictable fixed bill, not a
+            # decision the user just made: never nudge on it.
+            or created.recurring_id
         ):
             return ""
         try:
@@ -672,20 +676,29 @@ class TransactionToolkit:
                 return ""
             spent_after = status.spent
             before = spent_after - created.amount
+            # The bar counts fixed bills, but the "approaching" warning watches only
+            # VARIABLE spending (a fixed bill alone must not nag every month).
+            fixed = status.spent_fixed
+            variable_after = spent_after - fixed
+            variable_before = variable_after - created.amount
             threshold_amt = limit * status.budget.alert_threshold / 100
             name = status.budget.name or created.category
+            fixed_note = f" (incluye {_money(fixed)} en gastos fijos)" if fixed > 0 else ""
             # Nudge only on the crossing tx (over-budget takes priority over the
-            # approaching-threshold warning when a single tx trips both).
-            if before < limit <= spent_after:
+            # approaching-threshold warning when a single tx trips both). Being
+            # EXACTLY at the cap is not "over": it must strictly exceed it.
+            if before <= limit < spent_after:
                 return (
                     f"\n⚠️ Con esto te pasaste de tu tope de {name}: "
-                    f"{_money(spent_after)} de {_money(limit)}."
+                    f"{_money(spent_after)} de {_money(limit)}{fixed_note}."
                 )
-            if before < threshold_amt <= spent_after:
-                pct = round(status.percentage)
+            # Only while still within the cap: once over it, the "over" message above
+            # (or silence) is the truthful one, not an "approaching" warning.
+            if spent_after <= limit and variable_before < threshold_amt <= variable_after:
+                pct_var = round(variable_after / limit * 100)
                 return (
-                    f"\n⚠️ Ojo: vas al {pct}% de tu tope de {name} "
-                    f"({_money(spent_after)} de {_money(limit)})."
+                    f"\n⚠️ Ojo: tus gastos variables en {name} ya suman "
+                    f"{_money(variable_after)} ({pct_var}% del tope)."
                 )
             return ""
         except Exception as exc:  # noqa: BLE001 - best-effort nudge, never fail registration
@@ -754,7 +767,7 @@ class TransactionToolkit:
             by_purchase = [t for t in items if start <= t.transaction_date <= end]
             # A credit charge's PURCHASE month (transaction_date) can differ from
             # the month it actually hits the budget (budget_date, the statement's
-            # payment month) — the same split query_budgets/sum_expenses already
+            # payment month) — the same split query_budgets/budget_spending already
             # use. Compare both from the SAME already-fetched rows (no extra
             # query) so a period answer never silently disagrees with the budget
             # bar for this category. Budgets never attribute income, so BOTH sides

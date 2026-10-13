@@ -60,7 +60,9 @@ BUDGET_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": QUERY_BUDGETS_TOOL,
             "description": (
                 "Consulta los presupuestos del usuario y cuánto ha gastado en cada uno "
-                "(gastado, restante y porcentaje). Úsala para '¿cómo van mis presupuestos?'."
+                "(gastado, restante y porcentaje). El gastado INCLUYE los gastos fijos "
+                "(recurrentes); la alerta ⚠️ avisa si los gastos variables se acercan al "
+                "tope o si ya se pasó. Úsala para '¿cómo van mis presupuestos?'."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -227,9 +229,15 @@ def _format_status(status: BudgetStatus) -> str:
     budget = status.budget
     scope = budget.category if budget.category else "general"
     alert = " ⚠️" if status.alert_triggered else ""
+    fixed = f" (incluye ${status.spent_fixed} en fijos)" if status.spent_fixed > 0 else ""
+    left = (
+        f"restan ${status.remaining}"
+        if status.remaining >= 0
+        else f"te pasaste por ${-status.remaining}"
+    )
     return (
-        f"- {budget.name} ({scope}): gastado ${status.spent} de ${budget.amount} "
-        f"({status.percentage:.0f}%), restan ${status.remaining}{alert}"
+        f"- {budget.name} ({scope}): gastado ${status.spent}{fixed} de ${budget.amount} "
+        f"({status.percentage:.0f}%), {left}{alert}"
     )
 
 

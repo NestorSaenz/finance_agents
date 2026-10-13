@@ -52,6 +52,7 @@ class FakeBudgets:
                 period_start=date(2026, 7, 1),
                 period_end=date(2026, 7, 31),
                 spent=Decimal("200000"),
+                spent_fixed=Decimal("150000"),
                 remaining=Decimal("400000"),
                 percentage=33.0,
                 alert_triggered=False,
@@ -144,6 +145,13 @@ async def test_snapshot_registered_income_replaces_base() -> None:
     assert snap.income_registered == Decimal("30000")
     assert snap.total_income == Decimal("30000")  # registered replaces the base
     assert snap.disposable == Decimal("-170000")  # 30k - 200k
+
+
+async def test_snapshot_budget_line_carries_total_and_fixed_part() -> None:
+    snap = await _service().snapshot("u1", "este_mes")
+
+    assert snap.budgets[0].spent == Decimal("200000")
+    assert snap.budgets[0].fixed == Decimal("150000")
 
 
 async def test_snapshot_computes_savings_target_from_total_income() -> None:

@@ -91,6 +91,8 @@ class FakeTransactionService(TransactionServiceABC):
         self.resolved_category: str | None = None
         # When set, update_transaction simulates the income+credito guard rejecting.
         self.raise_income_credit = False
+        # When set, created rows carry this recurring_id (a materialized fixed bill).
+        self.created_recurring_id: str | None = None
 
     async def create_transaction(self, transaction: TransactionCreate, user_id: str) -> Transaction:
         self.created.append((transaction, user_id))
@@ -105,6 +107,7 @@ class FakeTransactionService(TransactionServiceABC):
                 "description": transaction.description,
                 "transaction_date": transaction.transaction_date,
                 "budget_date": transaction.budget_date or transaction.transaction_date,
+                "recurring_id": self.created_recurring_id,
             }
         )
 
@@ -204,6 +207,7 @@ def _status(
     percentage: float,
     period_start: date = date(2026, 8, 1),
     period_end: date = date(2026, 8, 31),
+    spent_fixed: Decimal = Decimal("0"),
 ) -> BudgetStatus:
     threshold_amt = budget.amount * budget.alert_threshold / 100
     return BudgetStatus(
@@ -211,6 +215,7 @@ def _status(
         period_start=period_start,
         period_end=period_end,
         spent=spent,
+        spent_fixed=spent_fixed,
         remaining=budget.amount - spent,
         percentage=percentage,
         alert_triggered=spent >= threshold_amt,
@@ -285,9 +290,15 @@ class FakeBudgetService(BudgetServiceABC):
 
 class TestBudgetNudge:
     async def _register_expense(
-        self, budgets: FakeBudgetService, *, amount: int = 100, tx_type: str = "expense"
+        self,
+        budgets: FakeBudgetService,
+        *,
+        amount: int = 100,
+        tx_type: str = "expense",
+        recurring_id: str | None = None,
     ) -> str:
         service = FakeTransactionService()
+        service.created_recurring_id = recurring_id
         toolkit = TransactionToolkit(service, budgets=budgets)
         return await toolkit.dispatch(
             REGISTER_TRANSACTION_TOOL,
@@ -306,8 +317,71 @@ class TestBudgetNudge:
         status = _status(budget, spent=Decimal("820"), percentage=82.0)  # before=720
         result = await self._register_expense(FakeBudgetService(budget, status))
 
-        assert "vas al 82%" in result
+        assert "gastos variables en Restaurantes ya suman" in result
+        assert "(82% del tope)" in result
         assert "⚠️" in result
+
+    async def test_threshold_nudge_watches_variable_not_fixed(self) -> None:
+        # Total 820 (crosses 80%) but 700 is fixed -> variable 120 (12%): no nudge.
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(
+            budget, spent=Decimal("820"), percentage=82.0, spent_fixed=Decimal("700")
+        )
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "⚠️" not in result
+
+    async def test_variable_crossing_threshold_with_fixed_nudges_variable_total(self) -> None:
+        # spent 900 with 100 fixed: variable_after 800 (80%), variable_before 700
+        # -> this expense crosses the threshold on VARIABLE spending.
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(
+            budget, spent=Decimal("900"), percentage=90.0, spent_fixed=Decimal("100")
+        )
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "gastos variables en Restaurantes ya suman" in result
+        assert "(80% del tope)" in result
+
+    async def test_over_cap_then_variable_expense_does_not_say_ojo(self) -> None:
+        # cap 1000, fixed 900. A 600 variable expense takes the total 1100 -> 1700
+        # (already over BEFORE this expense) and variable 200 -> 800 (crosses 80%).
+        # The cap was already exceeded earlier, so neither "te pasaste" (only on the
+        # crossing expense) nor an "approaching" Ojo must be said.
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(
+            budget, spent=Decimal("1700"), percentage=170.0, spent_fixed=Decimal("900")
+        )
+        result = await self._register_expense(FakeBudgetService(budget, status), amount=600)
+
+        assert "Ojo" not in result
+        assert "te pasaste" not in result
+
+    async def test_crossing_cap_with_fixed_says_te_pasaste(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(
+            budget, spent=Decimal("1100"), percentage=110.0, spent_fixed=Decimal("900")
+        )
+        result = await self._register_expense(FakeBudgetService(budget, status), amount=200)
+
+        assert "te pasaste" in result
+
+    async def test_recurring_row_never_nudges(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(budget, spent=Decimal("1050"), percentage=105.0)
+        result = await self._register_expense(
+            FakeBudgetService(budget, status), recurring_id="rec-1"
+        )
+
+        assert "⚠️" not in result
+
+    async def test_landing_exactly_on_cap_is_not_over(self) -> None:
+        # before=900, spent_after=1000 == limit: at the cap, NOT "te pasaste".
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(budget, spent=Decimal("1000"), percentage=100.0)
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "te pasaste" not in result
 
     async def test_expense_well_under_budget_has_no_nudge(self) -> None:
         budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
@@ -323,6 +397,17 @@ class TestBudgetNudge:
 
         assert "te pasaste" in result
         assert "⚠️" in result
+        assert "gastos fijos" not in result  # no fixed part -> no "incluye" clause
+
+    async def test_over_cap_nudge_mentions_fixed_part(self) -> None:
+        budget = _budget(amount=Decimal("1000"), alert_threshold=Decimal("80"))
+        status = _status(
+            budget, spent=Decimal("1050"), percentage=105.0, spent_fixed=Decimal("600")
+        )
+        result = await self._register_expense(FakeBudgetService(budget, status))
+
+        assert "te pasaste de tu tope de Restaurantes" in result
+        assert "incluye" in result and "en gastos fijos" in result
 
     async def test_no_budget_for_category_has_no_nudge(self) -> None:
         result = await self._register_expense(FakeBudgetService(budget=None))
@@ -950,9 +1035,9 @@ class TestBudgetDivergenceNote:
         assert "nota" not in result.lower()
         assert "presupuesto" not in result.lower()
 
-    async def test_recurring_charge_excluded_from_budget_divergence(self) -> None:
-        # A recurring (fixed) expense doesn't count toward a budget (mig. 014);
-        # its payment-month divergence must not trigger the note either.
+    async def test_recurring_charge_counts_in_budget_divergence(self) -> None:
+        # Recurring (fixed) expenses count toward the budget now (mig. 017), so a
+        # recurring charge paid next month is a normal budget-date divergence.
         service = FakeTransactionService()
         service.items = [
             _transaction().model_copy(
@@ -969,8 +1054,7 @@ class TestBudgetDivergenceNote:
             QUERY_TRANSACTIONS_TOOL, {"period": "2026-09"}, user_id="u1"
         )
 
-        assert "no se encontraron" in result.lower()
-        assert "presupuesto" not in result.lower()
+        assert "SÍ afectan el presupuesto" in result
 
 
 class TestAnalyze:

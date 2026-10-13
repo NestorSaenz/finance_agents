@@ -17,6 +17,7 @@ from app.src.analysis.constants import (
     MIN_TREND_MONTHS,
 )
 from app.src.analysis.models import (
+    BudgetLine,
     CardLine,
     CategoryLine,
     FinancialSnapshot,
@@ -116,6 +117,42 @@ async def test_analyze_finances_formats_grounded_facts() -> None:
     assert "Visa BBVA" in result
     assert "vacaciones playa" in result
     assert "Alimentación" in result  # category label
+
+
+async def test_budget_line_shows_fixed_part_only_when_present() -> None:
+    class WithBudgets(FakeAnalysis):
+        async def snapshot(  # type: ignore[no-untyped-def]
+            self, user_id, period, today=None
+        ) -> FinancialSnapshot:
+            snap = _snapshot()
+            return snap.model_copy(
+                update={
+                    "budgets": [
+                        BudgetLine(
+                            category=CategoryType.ALIMENTACION,
+                            name="Comida",
+                            spent=Decimal("1140"),
+                            fixed=Decimal("900"),
+                            limit=Decimal("1000"),
+                            percentage=114.0,
+                        ),
+                        BudgetLine(
+                            category=CategoryType.TRANSPORTE,
+                            name="Bus",
+                            spent=Decimal("100"),
+                            limit=Decimal("500"),
+                            percentage=20.0,
+                        ),
+                    ]
+                }
+            )
+
+    result = await AnalysisToolkit(WithBudgets()).dispatch(  # type: ignore[arg-type]
+        ANALYZE_FINANCES_TOOL, {}, "u1"
+    )
+
+    assert "$1,140/$1,000 (114%) (fijos $900)" in result
+    assert result.count("fijos") == 1  # the budget without fixed spending omits it
 
 
 async def test_card_line_separates_total_debt_from_amount_due() -> None:

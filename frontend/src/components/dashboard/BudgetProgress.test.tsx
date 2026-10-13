@@ -111,9 +111,9 @@ describe("BudgetProgress", () => {
     expect(screen.getByText(/28 jul/i)).toBeInTheDocument();
   });
 
-  it("excludes recurring occurrences from a category's detail", async () => {
-    // A fixed bill (e.g. Netflix) never counts toward a budget's spent (mig.
-    // 014); it must not appear in the detail list either.
+  it("includes recurring occurrences in a category's detail, marked Fijo", async () => {
+    // A fixed bill (e.g. Netflix) counts toward a budget's spent (mig. 017), so
+    // it appears in the detail list, labelled as a fixed expense.
     renderBudgets({
       transactions: [
         expenseTx(),
@@ -124,7 +124,32 @@ describe("BudgetProgress", () => {
     await userEvent.click(screen.getByRole("button", { name: "Ver movimientos de Venezuela" }));
 
     expect(screen.getByText("Merca Facil")).toBeInTheDocument();
-    expect(screen.queryByText("Netflix")).toBeNull();
+    expect(screen.getByText("Netflix")).toBeInTheDocument();
+    expect(screen.getByText(/^Fijo · /)).toBeInTheDocument();
+  });
+
+  it("reconciles when fixed rows are part of spent and shows the fixed footer", async () => {
+    // spent 238290 + 100000 fixed = 338290; rows add up, so no "couldn't detail" note.
+    renderBudgets({
+      transactions: [
+        expenseTx(),
+        expenseTx({ id: "rec1", description: "Colegio", amount: "100000", recurring_id: "r-1" }),
+      ],
+      data: list([budgetItem({ spent: "338290", spent_fixed: "100000" })]),
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Ver movimientos de Venezuela" }));
+
+    expect(screen.getByText(/Incluye .*100\.000.* en gastos fijos\./)).toBeInTheDocument();
+    expect(screen.queryByText(/No pudimos detallar/i)).toBeNull();
+  });
+
+  it("omits the fixed footer when there are no fixed expenses", async () => {
+    renderBudgets({ transactions: [expenseTx()] });
+
+    await userEvent.click(screen.getByRole("button", { name: "Ver movimientos de Venezuela" }));
+
+    expect(screen.queryByText(/en gastos fijos/i)).toBeNull();
   });
 
   it("flags when the listed rows don't reconcile with the bar's total", async () => {

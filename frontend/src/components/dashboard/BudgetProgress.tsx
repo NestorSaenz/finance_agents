@@ -34,8 +34,8 @@ function Bar({ pct, className }: { pct: number; className: string }) {
 interface BudgetProgressProps {
   data: BudgetStatusList;
   /** Expenses that impact this period's budget (fetched with by=budget_date —
-   *  the SAME attribution rule "spent" itself uses: expense-only, excludes
-   *  recurring bills). Grouped per category so an expand explains the number
+   *  the SAME attribution rule "spent" itself uses: expense-only, recurring
+   *  (fixed) bills included). Grouped per category so an expand explains the number
    *  shown, never recomputes it. Empty outside "este_mes" (budgets are current-
    *  period only, so there's nothing to expand there anyway). */
   transactions: Transaction[];
@@ -47,12 +47,12 @@ export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
 
   // Group budget-attributed expense rows by category ONCE, so each row just
   // reads its slice. A budget with no single category (category: null, an
-  // "overall" tope) gets every row — sum_expenses with p_category IS NULL
+  // "overall" tope) gets every row — budget_spending with p_category IS NULL
   // sums everything the same way.
   const byCategory = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of transactions) {
-      if (tx.transaction_type !== "expense" || tx.recurring_id) continue;
+      if (tx.transaction_type !== "expense") continue;
       const bucket = map.get(tx.category);
       if (bucket) bucket.push(tx);
       else map.set(tx.category, [tx]);
@@ -61,7 +61,7 @@ export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
   }, [transactions]);
 
   const allExpenseRows = useMemo(
-    () => transactions.filter((t) => t.transaction_type === "expense" && !t.recurring_id),
+    () => transactions.filter((t) => t.transaction_type === "expense"),
     [transactions],
   );
 
@@ -153,7 +153,13 @@ function BudgetRow({
       </div>
 
       {hasDetail && isOpen && (
-        <BudgetCategoryDetail id={regionId} label={label} spent={s.spent} rows={rows} />
+        <BudgetCategoryDetail
+          id={regionId}
+          label={label}
+          spent={s.spent}
+          spentFixed={s.spent_fixed}
+          rows={rows}
+        />
       )}
     </div>
   );

@@ -128,6 +128,7 @@ class AnalysisService(AnalysisServiceABC):
                     category=s.budget.category,
                     name=s.budget.name,
                     spent=s.spent,
+                    fixed=s.spent_fixed,
                     limit=s.budget.amount,
                     percentage=s.percentage,
                 )

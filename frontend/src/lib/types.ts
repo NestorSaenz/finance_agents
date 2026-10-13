@@ -67,6 +67,9 @@ export interface SpendingSummary {
 export interface BudgetStatusItem {
   budget: { id: string; name: string; category: string | null; amount: string };
   spent: string;
+  /** Part of `spent` that comes from recurring (fixed) expenses. Additive: older
+   *  backends omit it. */
+  spent_fixed?: string;
   remaining: string;
   percentage: number;
   alert_triggered: boolean;

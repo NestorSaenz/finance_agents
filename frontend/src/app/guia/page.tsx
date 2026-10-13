@@ -264,6 +264,12 @@ export default function GuiaPage() {
                 Te aviso si te pasas.
               </SafiMsg>
             </Thread>
+            <Under>
+              La barra <Em>incluye tus gastos fijos</Em> (arriendo, colegio, suscripciones). La
+              alerta te avisa cuando tus gastos <Em>variables</Em> se acercan al tope o cuando ya
+              te pasaste — no cada mes solo porque llegó una cuenta fija. Si tus gastos fijos ya
+              ocupan casi todo el tope, el aviso llega cuando te pasas.
+            </Under>
           </Chapter>
 
           <Chapter

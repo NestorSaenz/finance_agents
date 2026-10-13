@@ -293,6 +293,42 @@ class TestBudgetToolkit:
         assert "Comida" in result
         assert "3200" in result and "3000" in result
         assert "106%" in result
+        assert "te pasaste por $200" in result
+        assert "restan" not in result
+
+    async def test_format_status_shows_fixed_part_and_remaining(self) -> None:
+        from app.agents.tools.budget_tools import _format_status
+
+        status = BudgetStatus(
+            budget=_budget(),
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+            spent=Decimal("1140"),
+            spent_fixed=Decimal("900"),
+            remaining=Decimal("860"),
+            percentage=57.0,
+            alert_triggered=False,
+        )
+
+        line = _format_status(status)
+
+        assert "(incluye $900 en fijos)" in line
+        assert "restan $860" in line
+
+    async def test_format_status_omits_fixed_clause_when_zero(self) -> None:
+        from app.agents.tools.budget_tools import _format_status
+
+        status = BudgetStatus(
+            budget=_budget(),
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31),
+            spent=Decimal("100"),
+            remaining=Decimal("2900"),
+            percentage=3.0,
+            alert_triggered=False,
+        )
+
+        assert "incluye" not in _format_status(status)
 
     async def test_unknown_tool_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown budget tool"):
