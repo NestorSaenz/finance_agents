@@ -86,3 +86,8 @@ export function formatDayMonth(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
+
+/** The calendar month of `now` (local time) as "YYYY-MM". */
+export function currentMonthKey(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}

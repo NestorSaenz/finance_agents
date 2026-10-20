@@ -401,7 +401,7 @@ describe("DashboardPanel", () => {
     budgetMock.mockClear();
 
     const select = screen.getByLabelText("Elegir un mes") as HTMLSelectElement;
-    const monthValue = select.options[1].value; // first real month (skip the placeholder)
+    const monthValue = select.options[2].value; // a past month (options[0] placeholder, [1] current)
     await userEvent.selectOptions(select, monthValue);
 
     await waitFor(() =>
@@ -410,6 +410,34 @@ describe("DashboardPanel", () => {
     expect(paymentsMock).toHaveBeenLastCalledWith(monthValue, "tok");
     // Budgets are current-period only; a specific month must not fetch them.
     expect(budgetMock).not.toHaveBeenCalled();
+  });
+
+  it("treats the current month picked from the dropdown as Este mes", async () => {
+    summaryMock.mockResolvedValue(
+      summary({ total_income: "0", total_expenses: "0", balance: "0", by_category: [] }),
+    );
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    await screen.findByText(/Aún no hay movimientos/i);
+
+    const select = screen.getByLabelText("Elegir un mes") as HTMLSelectElement;
+    // Go to a past month first so the switch back to the current one is observable.
+    await userEvent.selectOptions(select, select.options[2].value);
+    await waitFor(() =>
+      expect(summaryMock).toHaveBeenLastCalledWith(select.options[2].value, "tok"),
+    );
+    budgetMock.mockClear();
+    transactionsMock.mockClear();
+
+    await userEvent.selectOptions(select, select.options[1].value); // current month
+
+    await waitFor(() => expect(summaryMock).toHaveBeenLastCalledWith("este_mes", "tok"));
+    expect(paymentsMock).toHaveBeenLastCalledWith("este_mes", "tok");
+    expect(budgetMock).toHaveBeenCalledWith("tok");
+    expect(transactionsMock).toHaveBeenCalledWith("este_mes", "tok", "budget_date");
+    expect(screen.getByText("Este mes")).toHaveAttribute("aria-pressed", "true");
+    // The dropdown goes back to its placeholder: the tab is the active control now.
+    expect(select.value).toBe("");
   });
 
   it("lists individual movements when the Movimientos tab is opened", async () => {

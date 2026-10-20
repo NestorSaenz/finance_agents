@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { categoryLabel, formatMoney } from "./format";
+import { categoryLabel, currentMonthKey, formatMoney } from "./format";
 
 describe("categoryLabel", () => {
   it("maps known slugs to Spanish labels", () => {
@@ -37,5 +37,16 @@ describe("formatMoney", () => {
 
   it("returns a dash for non-numeric input", () => {
     expect(formatMoney("abc")).toBe("—");
+  });
+});
+
+describe("currentMonthKey", () => {
+  it("zero-pads single-digit months", () => {
+    expect(currentMonthKey(new Date(2026, 2, 15))).toBe("2026-03");
+  });
+
+  it("handles December and January using local date parts", () => {
+    expect(currentMonthKey(new Date(2026, 11, 31, 23, 59))).toBe("2026-12");
+    expect(currentMonthKey(new Date(2027, 0, 1, 0, 0))).toBe("2027-01");
   });
 });

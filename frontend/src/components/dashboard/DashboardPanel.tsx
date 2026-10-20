@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { ApiError, api } from "@/lib/api";
+import { currentMonthKey } from "@/lib/format";
 import { useAuth } from "@/context/AuthContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import type {
@@ -42,7 +43,7 @@ function buildMonthOptions(count: number): { value: string; label: string }[] {
   const fmt = new Intl.DateTimeFormat("es", { month: "long", year: "numeric" });
   return Array.from({ length: count }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const value = currentMonthKey(d);
     const label = fmt.format(d);
     return { value, label: label.charAt(0).toUpperCase() + label.slice(1) };
   });
@@ -252,7 +253,9 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
             id="month-picker"
             value={MONTH_OPTIONS.some((m) => m.value === period) ? period : ""}
             onChange={(e) => {
-              if (e.target.value) setPeriod(e.target.value);
+              const { value } = e.target;
+              // The current month behaves like the "Este mes" tab (live view).
+              if (value) setPeriod(value === currentMonthKey() ? "este_mes" : value);
             }}
             className={`w-full rounded-lg border px-3 py-1.5 text-sm transition-colors ${
               MONTH_OPTIONS.some((m) => m.value === period)
