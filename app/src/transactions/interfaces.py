@@ -229,8 +229,16 @@ class TransactionServiceABC(ABC):
         transaction_type: TransactionType | None = None,
         transaction_date: date | None = None,
         payment_method: PaymentMethod | None = None,
+        budget_date: date | None = None,
     ) -> Transaction:
-        """Update the given fields of a transaction (or raise if not found)."""
+        """Update the given fields of a transaction (or raise if not found).
+
+        ``budget_date`` is the already-resolved budget/impact date (the caller
+        derives it from the card cycle); ``None`` leaves it untouched.
+
+        Switching ``payment_method`` to ``efectivo`` on a row linked to a card also
+        unlinks the card (``card_id`` becomes NULL).
+        """
 
     @abstractmethod
     async def delete_transaction(

@@ -7,6 +7,7 @@ from fastapi import Depends
 from app.shared.dependencies import DatabaseDep
 
 from .interfaces import (
+    CardBudgetDateSyncABC,
     CardPaymentRepositoryABC,
     CreditCardRepositoryABC,
     CreditCardServiceABC,
@@ -14,6 +15,7 @@ from .interfaces import (
 )
 from .repositories.card_payment_repository import CardPaymentRepository
 from .repositories.credit_card_repository import CreditCardRepository
+from .services.budget_date_sync import TransactionBudgetDateSync
 from .services.credit_card_service import CreditCardService
 from .services.spending_provider import TransactionCardSpendingProvider
 
@@ -33,13 +35,19 @@ def get_card_spending(db: DatabaseDep) -> CreditCardSpendingABC:
     return TransactionCardSpendingProvider(db)
 
 
+def get_card_budget_sync(db: DatabaseDep) -> CardBudgetDateSyncABC:
+    """Provide the card budget-date re-sync (writes the transactions table)."""
+    return TransactionBudgetDateSync(db)
+
+
 def get_credit_card_service(
     repository: Annotated[CreditCardRepositoryABC, Depends(get_credit_card_repository)],
     payments: Annotated[CardPaymentRepositoryABC, Depends(get_card_payment_repository)],
     spending: Annotated[CreditCardSpendingABC, Depends(get_card_spending)],
+    budget_sync: Annotated[CardBudgetDateSyncABC, Depends(get_card_budget_sync)],
 ) -> CreditCardServiceABC:
     """Provide the credit-card service."""
-    return CreditCardService(repository, payments, spending)
+    return CreditCardService(repository, payments, spending, budget_sync)
 
 
 CreditCardServiceDep = Annotated[

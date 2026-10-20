@@ -9,7 +9,7 @@ from app.core.logging import get_logger
 from app.shared.clock import current_today, local_date
 from app.shared.serialization import decimal_to_db
 from app.shared.types import Category, PaymentMethod, TransactionType, UserId
-from app.src.cards.cycle import compute_cycle, next_payment_date
+from app.src.cards.cycle import budget_date_for
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
 from app.src.transactions.interfaces import TransactionServiceABC
@@ -229,7 +229,7 @@ class RecurringService(RecurringServiceABC):
         created = 0
         next_run = rec.next_run_date
         while rec.active and next_run <= as_of and count < MAX_CATCHUP_RUNS:
-            budget_date = self._budget_date(card, next_run)
+            budget_date = budget_date_for(card, next_run)
             transaction = TransactionCreate(
                 amount=rec.amount,
                 description=rec.description,
@@ -308,18 +308,6 @@ class RecurringService(RecurringServiceABC):
             )
             return None, PaymentMethod.EFECTIVO, None
         return card, rec.payment_method, rec.card_id
-
-    def _budget_date(self, card: CreditCard | None, run_date: date) -> date:
-        """Budget/impact date for an occurrence.
-
-        For a credit charge (a resolved card), the payment date of the statement
-        that contains it, derived from the card's cutoff/payment cycle — so it hits
-        the month it is actually paid. For cash/debit (no card), the run date.
-        """
-        if card is None:
-            return run_date
-        _, cycle_end = compute_cycle(card.cutoff_day, run_date)
-        return next_payment_date(card.payment_day, cycle_end)
 
     async def _get(
         self, recurring_id: str, user_id: UserId

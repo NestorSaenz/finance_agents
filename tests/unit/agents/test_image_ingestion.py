@@ -1,8 +1,11 @@
 """Unit tests for the image ingestion service (vision LLM mocked)."""
 
+from datetime import date
+
 import pytest
 
 from app.agents.nodes.image_ingestion import ImageIngestionService
+from app.shared.clock import bound_today
 from tests.fakes import FakeLLM
 
 pytestmark = pytest.mark.asyncio
@@ -112,3 +115,26 @@ async def test_propose_does_not_duplicate_payment_question() -> None:
     proposal = await service.propose(b"x", "image/png")
 
     assert proposal.lower().count("efectivo") == 1  # not asked twice
+
+
+async def test_propose_corrects_misread_statement_year() -> None:
+    raw = """
+    {"movements": [
+      {"description": "Rappi", "amount": 30000, "transaction_type": "expense",
+       "date": "2023-09-04", "category": "comida", "payment_method": "credito"},
+      {"description": "Uber", "amount": 12000, "transaction_type": "expense",
+       "date": "2026-10-15", "category": "transporte", "payment_method": "credito"},
+      {"description": "Raro", "amount": 1000, "transaction_type": "expense",
+       "date": "ayer", "category": "otros", "payment_method": "credito"}],
+     "questions": [], "notes": null}
+    """
+    fake = FakeLLM(raw)
+    with bound_today(date(2026, 10, 20)):
+        proposal = await ImageIngestionService(fake).propose(b"x", "image/png")
+
+    assert "2026-09-04" in proposal and "2023-09-04" not in proposal
+    assert "2026-10-15" in proposal  # plausible date untouched
+    assert "ayer" in proposal  # unparseable left as is
+    system = fake.calls[0][0].content
+    assert "2026-10-20" in system  # today is given to the extractor
+    assert "año de hoy" in system

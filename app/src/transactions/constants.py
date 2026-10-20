@@ -1,5 +1,6 @@
 """Static values for the transactions module."""
 
+import re
 from typing import Final
 
 # Supabase table backing transactions.
@@ -37,3 +38,10 @@ CATEGORY_FUZZY_MATCH_CUTOFF: Final[float] = 0.85
 # so a typo can't spawn hundreds of transactions. 72 = 6 years, the longest plan
 # banks realistically offer here.
 MAX_INSTALLMENTS: Final[int] = 72
+
+# Installment rows are stored as separate transactions named "<purchase> (cuota i/n)".
+# Matches that suffix (group 1 = total installments) so a deferred purchase can be
+# treated as one group.
+INSTALLMENT_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(
+    r"\s*\(cuota\s+\d+/(\d+)\)\s*$", re.IGNORECASE
+)

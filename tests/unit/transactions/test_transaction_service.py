@@ -353,6 +353,64 @@ class TestUpdateTransaction:
         assert repo.updated == [("tx-1", {"payment_method": "credito"})]
 
 
+class TestUpdateBudgetDate:
+    async def test_budget_date_is_serialized_when_given(self) -> None:
+        repo = FakeRepository(stored=_stored_tx())
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction(
+            "tx-1",
+            "u1",
+            transaction_date=date(2026, 9, 21),
+            budget_date=date(2026, 10, 17),
+        )
+
+        _tx_id, data = repo.updated[0]
+        assert data == {"transaction_date": "2026-09-21", "budget_date": "2026-10-17"}
+
+    async def test_budget_date_omitted_when_not_given(self) -> None:
+        repo = FakeRepository(stored=_stored_tx())
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction("tx-1", "u1", description="x")
+
+        assert "budget_date" not in repo.updated[0][1]
+
+
+class TestUpdateUnlinksCardOnCash:
+    @staticmethod
+    def _credit_row() -> Transaction:
+        return _stored_tx().model_copy(
+            update={"payment_method": PaymentMethod.CREDITO, "card_id": "card-1"}
+        )
+
+    async def test_credit_to_efectivo_clears_card_id(self) -> None:
+        repo = FakeRepository(stored=self._credit_row())
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction("tx-1", "u1", payment_method=PaymentMethod.EFECTIVO)
+
+        assert repo.updated[0][1] == {"payment_method": "efectivo", "card_id": None}
+
+    async def test_card_id_untouched_when_only_date_and_amount_change(self) -> None:
+        repo = FakeRepository(stored=self._credit_row())
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction(
+            "tx-1", "u1", amount=Decimal("10"), transaction_date=date(2026, 9, 21)
+        )
+
+        assert "card_id" not in repo.updated[0][1]
+
+    async def test_efectivo_row_without_card_gets_no_card_id_key(self) -> None:
+        repo = FakeRepository(stored=_stored_tx())  # no card_id
+        service = TransactionService(repo, FakeCategorizer())
+
+        await service.update_transaction("tx-1", "u1", payment_method=PaymentMethod.EFECTIVO)
+
+        assert "card_id" not in repo.updated[0][1]
+
+
 class TestDeleteTransaction:
     async def test_deletes_existing_and_returns_it(self) -> None:
         repo = FakeRepository(stored=_stored_tx())

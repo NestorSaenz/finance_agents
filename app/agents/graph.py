@@ -152,6 +152,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     from app.src.budgets.services.spending_provider import TransactionSpendingProvider
     from app.src.cards.repositories.card_payment_repository import CardPaymentRepository
     from app.src.cards.repositories.credit_card_repository import CreditCardRepository
+    from app.src.cards.services.budget_date_sync import TransactionBudgetDateSync
     from app.src.cards.services.credit_card_service import CreditCardService
     from app.src.cards.services.schedule_change_service import CardScheduleChangeService
     from app.src.cards.services.spending_provider import TransactionCardSpendingProvider
@@ -184,6 +185,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
         CreditCardRepository(db),
         CardPaymentRepository(db),
         TransactionCardSpendingProvider(db),
+        TransactionBudgetDateSync(db),
     )
     card_schedule_service = CardScheduleChangeService(
         card_service, PendingActionService(PendingActionRepository(db))

@@ -19,6 +19,7 @@ from app.src.cards.models import (
     CreditCard,
     CreditCardCreate,
     CreditCardStatus,
+    ScheduleUpdate,
 )
 
 BASE_URL = "/api/v1/cards"
@@ -120,12 +121,22 @@ class StubCardService(CreditCardServiceABC):
         *,
         name: str | None = None,
         credit_limit: Decimal | None = None,
-        cutoff_day: int | None = None,
-        payment_day: int | None = None,
     ) -> CreditCard:
         if not self.found:
             raise CardNotFoundError(card_id)
         return _card()
+
+    async def change_schedule(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleUpdate:
+        if not self.found:
+            raise CardNotFoundError(card_id)
+        return ScheduleUpdate(_card(), None)
 
     async def delete_card(self, card_id: CardId, user_id: UserId) -> CreditCard:
         if not self.found:

@@ -1,16 +1,61 @@
 """Unit tests for the credit-card billing-cycle math."""
 
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 
 from app.src.cards.cycle import (
     UpcomingPayment,
+    budget_date_for,
     compute_cycle,
     next_payment_date,
     payment_date_in_month,
     upcoming_payment,
 )
+from app.src.cards.models import CreditCard
+
+
+def _card(cutoff_day: int, payment_day: int) -> CreditCard:
+    return CreditCard(
+        id="c1",
+        user_id="u1",
+        name="Card",
+        credit_limit=Decimal("1000000"),
+        cutoff_day=cutoff_day,
+        payment_day=payment_day,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+class TestBudgetDateFor:
+    @pytest.mark.parametrize(
+        ("cutoff", "payment", "on", "expected"),
+        [
+            # Nu 27/17
+            (27, 17, date(2026, 10, 10), date(2026, 11, 17)),
+            (27, 17, date(2026, 10, 27), date(2026, 11, 17)),
+            (27, 17, date(2026, 10, 28), date(2026, 12, 17)),
+            (27, 17, date(2026, 12, 28), date(2027, 2, 17)),
+            # Rappi 19/2
+            (19, 2, date(2026, 10, 1), date(2026, 11, 2)),
+            (19, 2, date(2026, 10, 20), date(2026, 12, 2)),
+            # BBVA 9/26 (payment day after the cutoff day)
+            (9, 26, date(2026, 10, 5), date(2026, 10, 26)),
+            (9, 26, date(2026, 10, 10), date(2026, 11, 26)),
+            # month-end clamping
+            (31, 15, date(2026, 2, 10), date(2026, 3, 15)),
+            (15, 31, date(2026, 1, 20), date(2026, 2, 28)),
+            (15, 31, date(2028, 1, 20), date(2028, 2, 29)),
+        ],
+    )
+    def test_budget_date_for_card(
+        self, cutoff: int, payment: int, on: date, expected: date
+    ) -> None:
+        assert budget_date_for(_card(cutoff, payment), on) == expected
+
+    def test_no_card_returns_the_charge_date(self) -> None:
+        assert budget_date_for(None, date(2026, 10, 10)) == date(2026, 10, 10)
 
 
 class TestComputeCycle:

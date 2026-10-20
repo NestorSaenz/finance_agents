@@ -12,12 +12,14 @@ from app.shared.turn import TurnContext, bound_turn
 from app.shared.types import CardId, UserId
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import (
+    BudgetDateSync,
     CardPayment,
     CardPaymentCreate,
     CardPaymentView,
     CreditCard,
     CreditCardCreate,
     CreditCardStatus,
+    ScheduleUpdate,
 )
 from app.src.cards.services.schedule_change_service import CardScheduleChangeService
 from app.src.pending.models import PendingAction
@@ -76,6 +78,7 @@ class FakeCardService(CreditCardServiceABC):
         self.created: list[CreditCardCreate] = []
         self.payments: list[tuple[str, Decimal]] = []
         self._cards = cards if cards is not None else [_card()]
+        self.sync: BudgetDateSync | None = BudgetDateSync(updated=3, failed=0)
 
     async def create_card(self, card: CreditCardCreate, user_id: UserId) -> CreditCard:
         self.created.append(card)
@@ -149,17 +152,24 @@ class FakeCardService(CreditCardServiceABC):
         *,
         name: str | None = None,
         credit_limit: Decimal | None = None,
-        cutoff_day: int | None = None,
-        payment_day: int | None = None,
     ) -> CreditCard:
-        self.updated: dict[str, object] = {
-            "name": name,
-            "credit_limit": credit_limit,
-            "cutoff_day": cutoff_day,
-            "payment_day": payment_day,
-        }
+        return self._apply({"name": name, "credit_limit": credit_limit})
+
+    async def change_schedule(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleUpdate:
+        card = self._apply({"cutoff_day": cutoff_day, "payment_day": payment_day})
+        return ScheduleUpdate(card, self.sync)
+
+    def _apply(self, changes: dict[str, object]) -> CreditCard:
+        self.updated: dict[str, object] = changes
         updated = self._cards[0].model_copy(
-            update={k: v for k, v in self.updated.items() if v is not None}
+            update={k: v for k, v in changes.items() if v is not None}
         )
         self._cards[0] = updated
         return updated
@@ -413,7 +423,7 @@ async def test_update_card_limit_and_cutoff_applies_limit_and_only_proposes_cuto
             "u1",
         )
     assert service.updated["credit_limit"] == Decimal("8000000")
-    assert service.updated["cutoff_day"] is None
+    assert "cutoff_day" not in service.updated  # days never go through update_card
     assert service._cards[0].cutoff_day == 15
     assert "✏️ Actualicé tu tarjeta Visa BBVA: cupo: $5000000 → $8000000." in result
     assert "PROPUESTA (aún NO aplicada)" in result
@@ -438,7 +448,7 @@ async def test_update_card_ignores_invalid_day() -> None:
         "u1",
     )
     # Out-of-range day is dropped; the valid field still goes through.
-    assert service.updated["cutoff_day"] is None
+    assert "cutoff_day" not in service.updated  # days never go through update_card
     assert service.updated["name"] == "Visa Oro"
 
 
@@ -486,9 +496,50 @@ async def test_confirm_in_a_later_turn_applies_the_proposal_once() -> None:
 
     assert "✏️ Actualicé tu tarjeta Visa BBVA: corte: día 15 → 20." in result
     assert "pago:" not in result
-    assert "cargos ya registrados" in result
+    assert (
+        "Recalculé 3 cargo(s) pendiente(s) con las nuevas fechas; "
+        "los estados ya vencidos conservan su mes."
+    ) in result
     assert service._cards[0].cutoff_day == 20
     assert "No hay un cambio de corte/pago aceptado" in again
+
+
+@pytest.mark.parametrize(
+    ("sync", "expected"),
+    [
+        (BudgetDateSync(updated=0, failed=0), "No había cargos pendientes por recalcular."),
+        (
+            None,
+            "No pude recalcular los cargos pendientes; conservan su mes anterior.",
+        ),
+        (
+            BudgetDateSync(updated=0, failed=2),
+            "No pude recalcular los cargos pendientes; conservan su mes anterior.",
+        ),
+        (
+            BudgetDateSync(updated=2, failed=1),
+            "Recalculé 2 cargo(s); 1 no se pudieron actualizar y conservan su mes anterior.",
+        ),
+        (
+            BudgetDateSync(updated=3, failed=0),
+            "Recalculé 3 cargo(s) pendiente(s) con las nuevas fechas; "
+            "los estados ya vencidos conservan su mes.",
+        ),
+    ],
+)
+async def test_confirm_reports_how_the_pending_charges_were_resynced(
+    sync: BudgetDateSync | None, expected: str
+) -> None:
+    service = FakeCardService()
+    service.sync = sync
+    toolkit = _toolkit(service)
+    with bound_turn(_turn("t1")):
+        await toolkit.dispatch("update_card", {"card_name": "visa", "new_cutoff_day": 20}, "u1")
+    with bound_turn(_turn("t2")):
+        result = await toolkit.dispatch("confirm_card_change", {}, "u1")
+
+    assert result.endswith(expected)
+    assert service._cards[0].cutoff_day == 20  # the card change itself still applied
 
 
 async def test_confirm_in_the_same_turn_has_no_effect() -> None:

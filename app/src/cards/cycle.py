@@ -11,6 +11,8 @@ import calendar
 from datetime import date, timedelta
 from typing import NamedTuple
 
+from .models import CreditCard
+
 
 def _day_in_month(year: int, month: int, day: int) -> date:
     """Return ``day`` of the given month, clamped to the month's last day."""
@@ -61,6 +63,20 @@ def next_payment_date(payment_day: int, cycle_end: date) -> date:
         return candidate
     ny, nm = _add_month(cycle_end.year, cycle_end.month)
     return _day_in_month(ny, nm, payment_day)
+
+
+def budget_date_for(card: CreditCard | None, on: date) -> date:
+    """Budget/impact date of a charge made on ``on``.
+
+    With a card, the due date of the statement that CONTAINS the charge, so a
+    purchase after the cutoff lands on the month it is actually paid. Without a
+    card (cash/debit), the charge date itself. The single rule shared by chat
+    registration, edits, recurring occurrences and card-schedule re-dating.
+    """
+    if card is None:
+        return on
+    _, cycle_end = compute_cycle(card.cutoff_day, on)
+    return next_payment_date(card.payment_day, cycle_end)
 
 
 def payment_date_in_month(payment_day: int, month_end: date) -> date:

@@ -3,16 +3,20 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from app.core.exceptions import CardNotFoundError
+from app.shared.clock import bound_today
 from app.shared.types import CardId, UserId
 from app.src.cards.interfaces import (
+    CardBudgetDateSyncABC,
     CardPaymentRepositoryABC,
     CreditCardRepositoryABC,
     CreditCardSpendingABC,
 )
 from app.src.cards.models import (
+    BudgetDateSync,
     CardPayment,
     CardPaymentCreate,
     CreditCard,
@@ -607,3 +611,63 @@ async def test_remove_payment_no_match_returns_none() -> None:
 
     assert removed is None
     assert payments.deleted == []
+
+
+class FakeBudgetSync(CardBudgetDateSyncABC):
+    def __init__(self, *, error: bool = False) -> None:
+        self.error = error
+        self.calls: list[tuple[CreditCard, str, date]] = []
+
+    async def resync(self, card: CreditCard, user_id: UserId, *, from_date: date) -> BudgetDateSync:
+        self.calls.append((card, user_id, from_date))
+        if self.error:
+            raise httpx.ConnectError("db down")
+        return BudgetDateSync(updated=2, failed=0)
+
+
+def _schedule_service(repo: FakeCardRepo, sync: FakeBudgetSync | None) -> CreditCardService:
+    return CreditCardService(repo, FakePaymentRepo(), FakeSpending(Decimal("0"), Decimal("0")), sync)
+
+
+@pytest.mark.asyncio
+class TestChangeSchedule:
+    async def test_updates_the_card_then_resyncs_with_new_days_from_today(self) -> None:
+        sync = FakeBudgetSync()
+        service = _schedule_service(FakeCardRepo(), sync)
+
+        with bound_today(date(2026, 10, 20)):
+            update = await service.change_schedule("card-1", "u1", cutoff_day=27, payment_day=None)
+
+        assert update.card.cutoff_day == 27
+        assert update.card.payment_day == 5  # unchanged
+        assert update.sync == BudgetDateSync(updated=2, failed=0)
+        [(card, user_id, from_date)] = sync.calls
+        assert (card.cutoff_day, card.payment_day) == (27, 5)  # the NEW days
+        assert (user_id, from_date) == ("u1", date(2026, 10, 20))
+
+    async def test_unknown_card_raises_and_does_not_resync(self) -> None:
+        sync = FakeBudgetSync()
+        service = _schedule_service(FakeCardRepo(cards=[]), sync)
+
+        with pytest.raises(CardNotFoundError):
+            await service.change_schedule("missing", "u1", cutoff_day=27, payment_day=None)
+
+        assert sync.calls == []
+
+    async def test_resync_database_failure_keeps_the_card_change(self) -> None:
+        repo = FakeCardRepo()
+        service = _schedule_service(repo, FakeBudgetSync(error=True))
+
+        update = await service.change_schedule("card-1", "u1", cutoff_day=27, payment_day=None)
+
+        assert update.sync is None
+        assert update.card.cutoff_day == 27
+        assert repo.cards[0].cutoff_day == 27  # not rolled back
+
+    async def test_without_a_sync_collaborator_sync_is_none(self) -> None:
+        service = _schedule_service(FakeCardRepo(), None)
+
+        update = await service.change_schedule("card-1", "u1", cutoff_day=None, payment_day=9)
+
+        assert update.sync is None
+        assert update.card.payment_day == 9

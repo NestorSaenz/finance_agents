@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from datetime import date
 from decimal import Decimal
 from typing import Final
 
 from pydantic import BaseModel, ValidationError
 
 from app.core.logging import get_logger
+from app.shared.clock import current_today, resolve_statement_date
 from app.shared.interfaces.llm import (
     ImagePart,
     LLMConfig,
@@ -103,6 +105,8 @@ _SYSTEM_PROMPT: Final[str] = (
     "payment_method='credito' y card con el nombre de la tarjeta. Así NO vuelvas a "
     "preguntar el método ni la tarjeta.\n"
     "- Si no hay fecha, usa null (se asumirá la fecha de hoy).\n"
+    "- Si el extracto no muestra el año, usa el año de hoy (o el anterior si la fecha "
+    "quedaría en el futuro). Nunca uses un año anterior al año pasado.\n"
     "- Si el documento no contiene movimientos financieros, devuelve movements vacío."
 )
 
@@ -151,7 +155,8 @@ class ImageIngestionService(ImageIngestionServiceABC):
         self, image: bytes, mime_type: str, user_context: str = "", user_note: str = ""
     ) -> str:
         """Extract movements from ``image`` and return a Spanish proposal to confirm."""
-        system_content = _SYSTEM_PROMPT
+        today = current_today()
+        system_content = f"{_SYSTEM_PROMPT}\n\nFecha de hoy: {today.isoformat()}."
         if user_context:
             system_content = f"{system_content}\n\nContexto del usuario:\n{user_context}"
 
@@ -184,7 +189,7 @@ class ImageIngestionService(ImageIngestionServiceABC):
             )
 
         logger.info("Image ingestion parsed", movements=len(result.movements))
-        return _format_proposal(result)
+        return _format_proposal(_with_resolved_dates(result, today))
 
 
 def _parse_extraction(raw: str) -> ExtractionResult:
@@ -201,6 +206,29 @@ def _parse_extraction(raw: str) -> ExtractionResult:
         return ExtractionResult.model_validate(json.loads(text))
     except (json.JSONDecodeError, ValidationError) as e:
         raise ValueError(f"Unparseable extraction output: {e}") from e
+
+
+def _resolve_movement_date(raw: str | None, today: date) -> str | None:
+    """ISO date of ``raw`` with a misread year corrected; unparseable stays as is."""
+    if not raw:
+        return raw
+    try:
+        parsed = date.fromisoformat(raw.strip()[:10])
+    except ValueError:
+        return raw
+    return resolve_statement_date(parsed, today).isoformat()
+
+
+def _with_resolved_dates(result: ExtractionResult, today: date) -> ExtractionResult:
+    """Copy of ``result`` whose movement dates have a plausible year."""
+    return result.model_copy(
+        update={
+            "movements": [
+                m.model_copy(update={"date": _resolve_movement_date(m.date, today)})
+                for m in result.movements
+            ]
+        }
+    )
 
 
 def _format_proposal(result: ExtractionResult) -> str:

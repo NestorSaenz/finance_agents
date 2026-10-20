@@ -85,7 +85,7 @@ class CardScheduleChangeService(CardScheduleChangeServiceABC):
             return ScheduleChangeResult(ScheduleChangeOutcome.STALE)
 
         try:
-            updated = await self._cards.update_card(
+            update = await self._cards.change_schedule(
                 card.id,
                 user_id,
                 cutoff_day=change.cutoff_day,
@@ -93,4 +93,4 @@ class CardScheduleChangeService(CardScheduleChangeServiceABC):
             )
         except CardNotFoundError:
             return ScheduleChangeResult(ScheduleChangeOutcome.NOT_FOUND)
-        return ScheduleChangeResult(ScheduleChangeOutcome.APPLIED, card, updated)
+        return ScheduleChangeResult(ScheduleChangeOutcome.APPLIED, card, update.card, update.sync)

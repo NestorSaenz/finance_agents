@@ -7,6 +7,7 @@ from decimal import Decimal
 from app.shared.types import CardId, UserId
 
 from .models import (
+    BudgetDateSync,
     CardPayment,
     CardPaymentCreate,
     CardPaymentView,
@@ -15,6 +16,7 @@ from .models import (
     CreditCardStatus,
     ScheduleChangeResult,
     ScheduleProposal,
+    ScheduleUpdate,
 )
 
 
@@ -108,6 +110,22 @@ class CreditCardSpendingABC(ABC):
         """
 
 
+class CardBudgetDateSyncABC(ABC):
+    """Contract for re-dating a card's pending charges after its schedule changes."""
+
+    @abstractmethod
+    async def resync(
+        self, card: CreditCard, user_id: UserId, *, from_date: date
+    ) -> BudgetDateSync:
+        """Recompute ``budget_date`` of the card's credit charges still pending.
+
+        Only charges whose current ``budget_date`` is on/after ``from_date`` are
+        touched (earlier ones are closed history); installment rows keep their own
+        date. Per-row failures are counted, not raised; a failure of the initial
+        read raises the database error.
+        """
+
+
 class CreditCardServiceABC(ABC):
     """Contract for credit-card use cases (business logic)."""
 
@@ -181,10 +199,27 @@ class CreditCardServiceABC(ABC):
         *,
         name: str | None = None,
         credit_limit: Decimal | None = None,
-        cutoff_day: int | None = None,
-        payment_day: int | None = None,
     ) -> CreditCard:
-        """Change a card's details or raise ``CardNotFoundError``."""
+        """Change a card's name/limit or raise ``CardNotFoundError``.
+
+        The billing days are changed only through ``change_schedule``, so every
+        day change re-dates the card's pending charges.
+        """
+
+    @abstractmethod
+    async def change_schedule(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleUpdate:
+        """Change a card's cutoff and/or payment day and re-date its pending charges.
+
+        ``None`` leaves that day unchanged. Raises ``CardNotFoundError``. The card
+        update is not rolled back when re-dating fails (``sync`` is then ``None``).
+        """
 
     @abstractmethod
     async def delete_card(self, card_id: CardId, user_id: UserId) -> CreditCard:

@@ -273,6 +273,7 @@ class TransactionService(TransactionServiceABC):
         transaction_type: TransactionType | None = None,
         transaction_date: date | None = None,
         payment_method: PaymentMethod | None = None,
+        budget_date: date | None = None,
     ) -> Transaction:
         # Ensure it exists and belongs to the user before touching it; also use its
         # CURRENT fields to validate the resulting state of a partial update (a
@@ -300,6 +301,12 @@ class TransactionService(TransactionServiceABC):
             data["transaction_date"] = transaction_date.isoformat()
         if payment_method is not None:
             data["payment_method"] = payment_method.value
+            # Cash can't keep a card link: unlink it (NULL) so the row neither
+            # counts toward the card's balance nor keeps a stale card_id.
+            if payment_method is PaymentMethod.EFECTIVO and current.card_id is not None:
+                data["card_id"] = None
+        if budget_date is not None:
+            data["budget_date"] = budget_date.isoformat()
 
         if not data:
             return current  # already the current row; no second fetch needed

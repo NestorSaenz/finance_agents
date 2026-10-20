@@ -13,7 +13,6 @@ from app.agents.tools.transaction_tools import (
     REGISTER_TRANSACTION_TOOL,
     UPDATE_TRANSACTION_TOOL,
     TransactionToolkit,
-    _credit_budget_date,
 )
 from app.core.exceptions import (
     BudgetNotFoundError,
@@ -29,6 +28,8 @@ from app.shared.types import (
 )
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.budgets.models import Budget, BudgetCreate, BudgetStatus
+from app.src.cards.cycle import budget_date_for
+from app.src.cards.models import CreditCard
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import SpendingSummary, Transaction, TransactionCreate
 from tests.unit.agents.test_card_tools import FakeCardService, _card
@@ -1343,6 +1344,108 @@ class TestUpdateDelete:
         assert "no encontré" in result.lower()
 
 
+def _nu_card() -> CreditCard:
+    return _card("Nu").model_copy(update={"id": "nu", "cutoff_day": 27, "payment_day": 17})
+
+
+def _card_expense(**changes: object) -> Transaction:
+    return _transaction().model_copy(
+        update={
+            "payment_method": PaymentMethod.CREDITO,
+            "card_id": "nu",
+            "transaction_date": date(2023, 9, 21),
+            "budget_date": date(2023, 10, 17),
+            **changes,
+        }
+    )
+
+
+async def _update_with(
+    tx: Transaction, args: dict[str, object], cards: list[CreditCard] | None = None
+) -> dict:
+    service = FakeTransactionService()
+    service.items = [tx]
+    toolkit = TransactionToolkit(service, cards=FakeCardService(cards=cards or [_nu_card()]))
+    await toolkit.dispatch(UPDATE_TRANSACTION_TOOL, {"description": "pizza", **args}, user_id="u1")
+    return service.updated[0][2]
+
+
+class TestUpdateRecomputesBudgetDate:
+    async def test_card_expense_before_cutoff_pays_next_payment_date(self) -> None:
+        fields = await _update_with(_card_expense(), {"new_transaction_date": "2026-09-21"})
+        assert fields["transaction_date"] == date(2026, 9, 21)
+        assert fields["budget_date"] == date(2026, 10, 17)
+
+    async def test_card_expense_after_cutoff_rolls_one_more_month(self) -> None:
+        fields = await _update_with(_card_expense(), {"new_transaction_date": "2026-09-28"})
+        assert fields["budget_date"] == date(2026, 11, 17)
+
+    async def test_cash_expense_budget_date_follows_new_date(self) -> None:
+        cash = _transaction().model_copy(update={"payment_method": PaymentMethod.EFECTIVO})
+        fields = await _update_with(cash, {"new_transaction_date": "2026-09-28"})
+        assert fields["budget_date"] == date(2026, 9, 28)
+
+    async def test_description_only_update_leaves_budget_date_untouched(self) -> None:
+        fields = await _update_with(_card_expense(), {"new_description": "pizza grande"})
+        assert fields["budget_date"] is None  # None = service leaves it untouched
+
+    async def test_credit_to_cash_sets_budget_date_to_transaction_date(self) -> None:
+        tx = _card_expense(transaction_date=date(2026, 9, 21))
+        fields = await _update_with(tx, {"payment_method": "efectivo"})
+        assert fields["budget_date"] == date(2026, 9, 21)
+
+    async def test_missing_card_keeps_budget_date(self) -> None:
+        fields = await _update_with(
+            _card_expense(card_id="deleted"), {"new_transaction_date": "2026-09-21"}
+        )
+        assert fields["budget_date"] is None  # None = service leaves it untouched
+
+    async def test_installment_date_change_sets_budget_date_to_its_own_date(self) -> None:
+        tx = _card_expense(description="pizza (cuota 2/6)")
+        fields = await _update_with(tx, {"new_transaction_date": "2026-09-21"})
+        assert fields["budget_date"] == date(2026, 9, 21)
+
+    async def test_installment_description_only_update_leaves_budget_date(self) -> None:
+        tx = _card_expense(description="pizza (cuota 2/6)")
+        fields = await _update_with(tx, {"new_description": "pizza (cuota 2/6) x"})
+        assert fields["budget_date"] is None
+
+    async def test_method_change_only_on_card_row_uses_existing_date(self) -> None:
+        tx = _card_expense(transaction_date=date(2026, 9, 28), payment_method=None)
+        fields = await _update_with(tx, {"payment_method": "credito"})
+        assert fields["budget_date"] == date(2026, 11, 17)
+
+    async def test_date_and_method_change_together(self) -> None:
+        fields = await _update_with(
+            _card_expense(), {"new_transaction_date": "2026-09-28", "payment_method": "efectivo"}
+        )
+        assert fields["budget_date"] == date(2026, 9, 28)
+
+    async def test_switch_to_efectivo_dates_by_purchase_and_sends_cash_method(self) -> None:
+        # The service owns the card unlinking: it keys off payment_method=efectivo
+        # on a card-linked row, so the tool must forward exactly that.
+        fields = await _update_with(
+            _card_expense(transaction_date=date(2026, 9, 28)), {"payment_method": "efectivo"}
+        )
+        assert fields["payment_method"] == PaymentMethod.EFECTIVO
+        assert fields["budget_date"] == date(2026, 9, 28)
+
+    async def test_income_date_change_sets_budget_date_to_new_date(self) -> None:
+        tx = _transaction(transaction_type=TransactionType.INCOME)
+        fields = await _update_with(tx, {"new_transaction_date": "2026-09-28"})
+        assert fields["budget_date"] == date(2026, 9, 28)
+
+    async def test_card_row_without_card_service_keeps_budget_date(self) -> None:
+        service = FakeTransactionService()
+        service.items = [_card_expense()]
+        await TransactionToolkit(service, cards=None).dispatch(
+            UPDATE_TRANSACTION_TOOL,
+            {"description": "pizza", "new_transaction_date": "2026-09-21"},
+            user_id="u1",
+        )
+        assert service.updated[0][2]["budget_date"] is None
+
+
 class TestDispatch:
     async def test_unknown_tool_raises(self) -> None:
         toolkit = TransactionToolkit(FakeTransactionService())
@@ -1354,14 +1457,14 @@ class TestCreditBudgetDate:
     def test_credit_purchase_after_cutoff_rolls_to_payment_month(self) -> None:
         # Card cutoff 15, payment 5. Purchase Jul 22 -> statement closes Aug 15
         # -> paid Sep 5 -> budget impact = September.
-        assert _credit_budget_date(_card(), date(2026, 7, 22)) == date(2026, 9, 5)
+        assert budget_date_for(_card(), date(2026, 7, 22)) == date(2026, 9, 5)
 
     def test_credit_purchase_before_cutoff_pays_next_month(self) -> None:
         # Purchase Jul 10 -> statement closes Jul 15 -> paid Aug 5.
-        assert _credit_budget_date(_card(), date(2026, 7, 10)) == date(2026, 8, 5)
+        assert budget_date_for(_card(), date(2026, 7, 10)) == date(2026, 8, 5)
 
     def test_cash_keeps_purchase_date(self) -> None:
-        assert _credit_budget_date(None, date(2026, 7, 22)) == date(2026, 7, 22)
+        assert budget_date_for(None, date(2026, 7, 22)) == date(2026, 7, 22)
 
 
 class TestCardScopedOps:

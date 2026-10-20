@@ -134,9 +134,27 @@ class ScheduleChangeOutcome(StrEnum):
     NOT_FOUND = "not_found"
 
 
+class BudgetDateSync(NamedTuple):
+    """Result of re-dating a card's pending charges: rows updated vs rows that failed."""
+
+    updated: int
+    failed: int
+
+
+class ScheduleUpdate(NamedTuple):
+    """A card after a schedule change plus how re-dating its charges went.
+
+    ``sync`` is ``None`` when re-dating was not attempted or failed outright.
+    """
+
+    card: CreditCard
+    sync: BudgetDateSync | None
+
+
 class ScheduleChangeResult(NamedTuple):
     """Outcome of a confirmation plus the card before/after (only when applied)."""
 
     outcome: ScheduleChangeOutcome
     before: CreditCard | None = None
     after: CreditCard | None = None
+    sync: BudgetDateSync | None = None

@@ -17,12 +17,14 @@ from app.shared.turn import TurnContext
 from app.shared.types import CardId, UserId
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import (
+    BudgetDateSync,
     CardPayment,
     CardPaymentCreate,
     CardPaymentView,
     CreditCard,
     CreditCardCreate,
     CreditCardStatus,
+    ScheduleUpdate,
 )
 from app.src.pending.interfaces import PendingActionRepositoryABC, PendingActionServiceABC
 from app.src.pending.models import PendingAction
@@ -195,6 +197,7 @@ class InMemoryCardService(CreditCardServiceABC):
     def __init__(self, cards: list[CreditCard]) -> None:
         self.cards = cards
         self.update_calls = 0
+        self.sync: BudgetDateSync | None = BudgetDateSync(updated=0, failed=0)
 
     async def list_cards(self, user_id: UserId) -> list[CreditCard]:
         return [c for c in self.cards if c.user_id == user_id and c.is_active]
@@ -211,9 +214,23 @@ class InMemoryCardService(CreditCardServiceABC):
         *,
         name: str | None = None,
         credit_limit: Decimal | None = None,
-        cutoff_day: int | None = None,
-        payment_day: int | None = None,
     ) -> CreditCard:
+        return self._apply(card_id, user_id, {"name": name, "credit_limit": credit_limit})
+
+    async def change_schedule(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleUpdate:
+        card = self._apply(
+            card_id, user_id, {"cutoff_day": cutoff_day, "payment_day": payment_day}
+        )
+        return ScheduleUpdate(card, self.sync)
+
+    def _apply(self, card_id: CardId, user_id: UserId, changes: dict[str, Any]) -> CreditCard:
         from app.core.exceptions import CardNotFoundError
 
         self.update_calls += 1
@@ -222,12 +239,6 @@ class InMemoryCardService(CreditCardServiceABC):
         )
         if index is None:
             raise CardNotFoundError(card_id)
-        changes = {
-            "name": name,
-            "credit_limit": credit_limit,
-            "cutoff_day": cutoff_day,
-            "payment_day": payment_day,
-        }
         self.cards[index] = self.cards[index].model_copy(
             update={k: v for k, v in changes.items() if v is not None}
         )

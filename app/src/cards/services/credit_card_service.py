@@ -5,8 +5,12 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Final, NamedTuple
 
+import httpx
+from postgrest.exceptions import APIError
+
 from app.core.exceptions import CardNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.text_match import normalize
 from app.shared.types import CardId, UserId
 
@@ -18,6 +22,7 @@ from ..cycle import (
     upcoming_payment,
 )
 from ..interfaces import (
+    CardBudgetDateSyncABC,
     CardPaymentRepositoryABC,
     CreditCardRepositoryABC,
     CreditCardServiceABC,
@@ -30,6 +35,7 @@ from ..models import (
     CreditCard,
     CreditCardCreate,
     CreditCardStatus,
+    ScheduleUpdate,
 )
 
 logger = get_logger(__name__)
@@ -37,6 +43,9 @@ logger = get_logger(__name__)
 # Minimum name similarity (0-1) to resolve a card by a fuzzy/typo'd name. High
 # enough that distinct cards don't collide, low enough to catch "rapid"->"rappid".
 _FUZZY_MATCH_CUTOFF: Final[float] = 0.8
+
+# Raw failures the Supabase/PostgREST client can raise (not wrapped by the client).
+_DB_FAILURES: Final = (APIError, httpx.HTTPError)
 
 # All-history window for matching a payment to remove (PostgREST can't range
 # filter here, so we fetch and match in Python; personal volumes are small).
@@ -52,10 +61,12 @@ class CreditCardService(CreditCardServiceABC):
         repository: CreditCardRepositoryABC,
         payments: CardPaymentRepositoryABC,
         spending: CreditCardSpendingABC,
+        budget_sync: CardBudgetDateSyncABC | None = None,
     ) -> None:
         self._repository = repository
         self._payments = payments
         self._spending = spending
+        self._budget_sync = budget_sync
 
     async def create_card(self, card: CreditCardCreate, user_id: UserId) -> CreditCard:
         return await self._repository.create(card, user_id)
@@ -150,20 +161,41 @@ class CreditCardService(CreditCardServiceABC):
         *,
         name: str | None = None,
         credit_limit: Decimal | None = None,
-        cutoff_day: int | None = None,
-        payment_day: int | None = None,
     ) -> CreditCard:
         updated = await self._repository.update(
-            card_id,
-            user_id,
-            name=name,
-            credit_limit=credit_limit,
-            cutoff_day=cutoff_day,
-            payment_day=payment_day,
+            card_id, user_id, name=name, credit_limit=credit_limit
         )
         if updated is None:
             raise CardNotFoundError(card_id)
         return updated
+
+    async def change_schedule(
+        self,
+        card_id: CardId,
+        user_id: UserId,
+        *,
+        cutoff_day: int | None,
+        payment_day: int | None,
+    ) -> ScheduleUpdate:
+        updated = await self._repository.update(
+            card_id, user_id, cutoff_day=cutoff_day, payment_day=payment_day
+        )
+        if updated is None:
+            raise CardNotFoundError(card_id)
+        if self._budget_sync is None:
+            return ScheduleUpdate(updated, None)
+        # The card change is already saved; a failed re-dating must not undo it.
+        try:
+            sync = await self._budget_sync.resync(updated, user_id, from_date=current_today())
+        except _DB_FAILURES as e:
+            logger.error(
+                "Could not re-date card charges after schedule change",
+                card_id=card_id,
+                user_id=user_id,
+                error=str(e),
+            )
+            return ScheduleUpdate(updated, None)
+        return ScheduleUpdate(updated, sync)
 
     async def delete_card(self, card_id: CardId, user_id: UserId) -> CreditCard:
         card = await self._repository.deactivate(card_id, user_id)

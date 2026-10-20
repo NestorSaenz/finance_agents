@@ -8,7 +8,6 @@ arguments. The model only provides the transaction data.
 """
 
 import asyncio
-import re
 import unicodedata
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -35,10 +34,14 @@ from app.shared.types import (
     normalize_category,
 )
 from app.src.budgets.interfaces import BudgetServiceABC
-from app.src.cards.cycle import compute_cycle, next_payment_date
+from app.src.cards.cycle import budget_date_for
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import CreditCard
-from app.src.transactions.constants import DELETE_CONCURRENCY, MAX_INSTALLMENTS
+from app.src.transactions.constants import (
+    DELETE_CONCURRENCY,
+    INSTALLMENT_SUFFIX_RE,
+    MAX_INSTALLMENTS,
+)
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.transactions.models import Transaction, TransactionCreate
 
@@ -93,19 +96,14 @@ def _matches_term(transaction: Transaction, term: str) -> bool:
     # 2-3 char category ("gym") can't swallow a verbose phrase the agent passes.
     return any(f and (needle in f or (len(f) >= 4 and f in needle)) for f in fields)
 
-# Installment rows are stored as separate transactions named "<purchase> (cuota i/n)".
-# This matches that suffix so a deferred purchase can be treated as one group.
-_CUOTA_RE: Final = re.compile(r"\s*\(cuota\s+\d+/(\d+)\)\s*$", re.IGNORECASE)
-
-
 def _cuota_base(description: str) -> str:
     """The purchase name without its '(cuota i/n)' suffix."""
-    return _CUOTA_RE.sub("", description).strip()
+    return INSTALLMENT_SUFFIX_RE.sub("", description).strip()
 
 
 def _cuota_count(description: str) -> int | None:
     """Total number of installments if this row is one of a split, else ``None``."""
-    match = _CUOTA_RE.search(description)
+    match = INSTALLMENT_SUFFIX_RE.search(description)
     return int(match.group(1)) if match else None
 
 
@@ -583,7 +581,7 @@ class TransactionToolkit:
         transaction_date = _to_date(args.get("transaction_date"))
         # A credit charge hits the budget the month its statement is paid, not the
         # purchase month; cash/debit hit the purchase month.
-        budget_date = _credit_budget_date(card, transaction_date)
+        budget_date = budget_date_for(card, transaction_date)
         try:
             transaction = TransactionCreate(
                 amount=_to_decimal(args.get("amount")),
@@ -965,6 +963,8 @@ class TransactionToolkit:
         new_category = _to_category(args.get("new_category"))
         if new_category is not None:
             new_category = await self._service.resolve_category(new_category, user_id)
+        new_date = _opt_date(args.get("new_transaction_date"))
+        new_method = _to_payment_method(args.get("payment_method"))
         try:
             updated = await self._service.update_transaction(
                 target.id,
@@ -972,8 +972,11 @@ class TransactionToolkit:
                 amount=_opt_decimal(args.get("new_amount")),
                 description=_opt_str(args.get("new_description")),
                 category=new_category,
-                transaction_date=_opt_date(args.get("new_transaction_date")),
-                payment_method=_to_payment_method(args.get("payment_method")),
+                transaction_date=new_date,
+                payment_method=new_method,
+                budget_date=await self._recomputed_budget_date(
+                    target, new_date, new_method, user_id
+                ),
             )
         except TransactionNotFoundError:
             return "No encontré esa transacción para actualizar."
@@ -987,6 +990,39 @@ class TransactionToolkit:
             f"✏️ Actualicé: {updated.description} — ${updated.amount} "
             f"({updated.category}, {updated.transaction_date}{method})."
         )
+
+    async def _recomputed_budget_date(
+        self,
+        target: Transaction,
+        new_date: date | None,
+        new_method: PaymentMethod | None,
+        user_id: UserId,
+    ) -> date | None:
+        """Budget date after an update, by the same rule as registration.
+
+        ``None`` means "leave budget_date untouched": nothing date/method-related
+        changed, an installment row's date did not change, or it is linked to a card
+        that no longer exists (don't guess).
+        """
+        if new_date is None and new_method is None:
+            return None
+        if INSTALLMENT_SUFFIX_RE.search(target.description):
+            # An installment's budget month is its own date.
+            return new_date
+        effective_date = new_date or target.transaction_date
+        effective_method = new_method or target.payment_method
+        on_card = (
+            target.transaction_type == TransactionType.EXPENSE
+            and target.card_id is not None
+            and effective_method != PaymentMethod.EFECTIVO
+        )
+        if not on_card:
+            return effective_date
+        if self._cards is None:
+            return None
+        cards = await self._cards.list_cards(user_id)
+        card = next((c for c in cards if c.id == target.card_id), None)
+        return None if card is None else budget_date_for(card, effective_date)
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
         # A list of descriptors deletes several specific gastos at once.
@@ -1216,20 +1252,6 @@ def _to_date(value: Any) -> date:
         except ValueError:
             return current_today()
     return current_today()
-
-
-def _credit_budget_date(card: CreditCard | None, transaction_date: date) -> date:
-    """Budget/impact date for a charge.
-
-    For a credit charge, the payment date of the statement that contains it
-    (derived from the card's cutoff/payment cycle) — so a purchase after the
-    cutoff lands on the month it is actually paid. For cash/debit (no card),
-    the purchase date itself.
-    """
-    if card is None:
-        return transaction_date
-    _, cycle_end = compute_cycle(card.cutoff_day, transaction_date)
-    return next_payment_date(card.payment_day, cycle_end)
 
 
 def _budget_month_label(value: date) -> str:

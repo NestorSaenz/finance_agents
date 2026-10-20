@@ -8,7 +8,12 @@ from pydantic import ValidationError
 
 from app.core.exceptions import NoActiveTurnError
 from app.shared.turn import TurnContext, bound_turn
-from app.src.cards.models import CardScheduleChange, CreditCard, ScheduleChangeOutcome
+from app.src.cards.models import (
+    BudgetDateSync,
+    CardScheduleChange,
+    CreditCard,
+    ScheduleChangeOutcome,
+)
 from app.src.cards.services.schedule_change_service import CardScheduleChangeService
 from app.src.pending.constants import PENDING_ACTION_TTL
 from app.src.pending.services.pending_action_service import PendingActionService
@@ -266,3 +271,29 @@ class TestConfirm:
     ) -> None:
         with pytest.raises(NoActiveTurnError):
             await service.confirm("u1")
+
+
+class TestConfirmPassesTheResync:
+    async def test_confirm_returns_the_sync_from_change_schedule(
+        self, service: CardScheduleChangeService, cards: InMemoryCardService
+    ) -> None:
+        cards.sync = BudgetDateSync(updated=4, failed=1)
+        with bound_turn(_turn("t1")):
+            await service.propose(_card(), "u1", 20, None)
+        with bound_turn(_turn("t2")):
+            result = await service.confirm("u1")
+
+        assert result.outcome is ScheduleChangeOutcome.APPLIED
+        assert result.sync == BudgetDateSync(updated=4, failed=1)
+
+    async def test_confirm_keeps_none_when_resync_failed(
+        self, service: CardScheduleChangeService, cards: InMemoryCardService
+    ) -> None:
+        cards.sync = None
+        with bound_turn(_turn("t1")):
+            await service.propose(_card(), "u1", 20, None)
+        with bound_turn(_turn("t2")):
+            result = await service.confirm("u1")
+
+        assert result.outcome is ScheduleChangeOutcome.APPLIED
+        assert result.sync is None

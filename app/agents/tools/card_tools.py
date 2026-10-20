@@ -18,6 +18,7 @@ from app.shared.periods import is_valid_period, period_label, resolve_period
 from app.shared.types import UserId
 from app.src.cards.interfaces import CardScheduleChangeServiceABC, CreditCardServiceABC
 from app.src.cards.models import (
+    BudgetDateSync,
     CardPaymentCreate,
     CardScheduleChange,
     CreditCard,
@@ -451,7 +452,7 @@ class CardToolkit:
         changes, schedule_changed = _update_changes(result.before, result.after)
         if not changes:
             return f"La tarjeta {result.after.name} ya tenía esos datos; no hubo cambios."
-        note = f" {_FROZEN_CHARGES_NOTE}" if schedule_changed else ""
+        note = f" {_resync_note(result.sync)}" if schedule_changed else ""
         return f"✏️ Actualicé tu tarjeta {result.after.name}: {'; '.join(changes)}.{note}"
 
     async def _delete(self, args: dict[str, Any], user_id: UserId) -> str:
@@ -466,10 +467,26 @@ class CardToolkit:
         return f"🗑️ Eliminé tu tarjeta {deleted.name}. Su historial de gastos se conserva."
 
 
-_FROZEN_CHARGES_NOTE = (
-    "Los cargos ya registrados conservan el mes de presupuesto que se les asignó con "
-    "el día de corte/pago anterior."
+_RESYNCED_NOTE = (
+    "Recalculé {count} cargo(s) pendiente(s) con las nuevas fechas; "
+    "los estados ya vencidos conservan su mes."
 )
+_PARTIAL_RESYNC_NOTE = (
+    "Recalculé {updated} cargo(s); {failed} no se pudieron actualizar y conservan su mes anterior."
+)
+_NOTHING_TO_RESYNC_NOTE = "No había cargos pendientes por recalcular."
+_RESYNC_FAILED_NOTE = "No pude recalcular los cargos pendientes; conservan su mes anterior."
+
+
+def _resync_note(sync: BudgetDateSync | None) -> str:
+    """What happened to the card's pending charges after a schedule change."""
+    if sync is None or (sync.updated == 0 and sync.failed > 0):
+        return _RESYNC_FAILED_NOTE
+    if sync.failed > 0:
+        return _PARTIAL_RESYNC_NOTE.format(updated=sync.updated, failed=sync.failed)
+    if sync.updated > 0:
+        return _RESYNCED_NOTE.format(count=sync.updated)
+    return _NOTHING_TO_RESYNC_NOTE
 
 
 _SCHEDULE_UNAVAILABLE = (
