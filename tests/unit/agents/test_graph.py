@@ -1,9 +1,11 @@
 """Unit tests for the FinanceGPT graph: routing helpers and end-to-end wiring."""
 
 import json
+from typing import Any
 
 from app.agents.graph import create_financegpt_graph, route_to_agent
 from app.agents.state import build_initial_state
+from app.shared.interfaces.llm import LLMResponse, ToolCall
 from tests.fakes import FakeEmbeddingClient, FakeLLM, FakeToolkit, FakeVectorStore
 
 
@@ -74,7 +76,7 @@ class TestGraphEndToEnd:
 
     async def test_register_intent_routes_through_tool_agent(self) -> None:
         graph, _, _ = _build_test_graph(
-            final_text="Registré tu gasto de pizza.", intent="register"
+            final_text="Gasto de pizza recibido.", intent="register"
         )
         state = build_initial_state(message="gasté 50 en pizza", user_id="u1")
 
@@ -82,6 +84,40 @@ class TestGraphEndToEnd:
 
         assert result["detected_intent"] == "register"
         # The tool agent produced the final assistant message and terminated.
+        assert result["messages"][-1].content == "Gasto de pizza recibido."
+
+    async def test_claim_survives_when_a_write_tool_ran(self) -> None:
+        class WritingLLM(FakeLLM):
+            """First round asks for register_transaction; then claims the write."""
+
+            def __init__(self) -> None:
+                super().__init__("Registré tu gasto de pizza.")
+                self._rounds = 0
+
+            async def generate_with_tools(  # type: ignore[no-untyped-def]
+                self, messages, tools, config=None
+            ) -> LLMResponse:
+                self._rounds += 1
+                if self._rounds == 1:
+                    call = ToolCall(id="1", name="register_transaction", arguments={})
+                    return LLMResponse(content="", model="fake", tool_calls=[call])
+                return LLMResponse(content=self._content, model="fake")
+
+        class WriteToolkit(FakeToolkit):
+            async def dispatch(self, name: str, arguments: dict[str, Any], user_id: str) -> str:
+                return "✅ Registré: pizza $50.000"
+
+        graph = create_financegpt_graph(
+            llm_simple=FakeLLM(json.dumps({"intent": "register", "complexity": "simple"})),
+            llm_complex=WritingLLM(),
+            embedding_client=FakeEmbeddingClient(),
+            vector_store=FakeVectorStore(category="restaurantes"),
+            toolkit=WriteToolkit(),
+        )
+        state = build_initial_state(message="gasté 50 en pizza", user_id="u1")
+
+        result = await graph.ainvoke(state, config={"configurable": {"thread_id": "tw"}})
+
         assert result["messages"][-1].content == "Registré tu gasto de pizza."
 
     async def test_off_topic_is_declined_at_the_gate(self) -> None:

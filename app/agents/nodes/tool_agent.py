@@ -18,7 +18,13 @@ from app.agents.context import (
     prior_context,
     user_context_block,
 )
-from app.agents.nodes.tool_agent_constants import TOOL_AGENT_SYSTEM_PROMPT
+from app.agents.nodes.action_claims import (
+    DISPATCH_ERROR_PREFIX,
+    enforce_truthful_reply,
+    is_write_attempt,
+    is_write_refused,
+)
+from app.agents.nodes.tool_agent_constants import NO_HISTORY_BLOCK, TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
 from app.core.logging import get_logger
@@ -163,23 +169,57 @@ async def _run_tool_loop(
 
     # Bind the SAME day the prompt carries so every tool dispatched below reads it
     # via current_today() — without threading it through dispatch (security contract).
+    # A write counts as applied once a mutating tool ran and reported it; a claim in a
+    # turn where NO tool ran at all is invented and gets replaced (see action_claims).
+    write_attempted = False
+    write_refused = False
+    tools_called: list[str] = []
+    history_text = "\n".join(message.content for message in history)
+    assistant_text = "\n".join(
+        message.content for message in history if message.role == MessageRole.ASSISTANT
+    )
     with bound_today(day):
         for _ in range(MAX_TOOL_ROUNDS):
             response = await llm.generate_with_tools(messages, toolkit.schemas, config)
 
             if not response.tool_calls:
-                return response.content.strip() or "¿En qué puedo ayudarte con tus finanzas?"
+                text = response.content.strip() or "¿En qué puedo ayudarte con tus finanzas?"
+                return enforce_truthful_reply(
+                    text,
+                    write_attempted=write_attempted,
+                    write_refused=write_refused,
+                    tools_called=tools_called,
+                    history_text=history_text,
+                    history_claims_text=assistant_text,
+                )
 
             # Execute every tool the model asked for this round, concurrently.
             results = await asyncio.gather(
                 *[_safe_dispatch(toolkit, call, user_id) for call in response.tool_calls]
             )
+            write_attempted |= any(
+                is_write_attempt(call.name, result)
+                for call, result in zip(response.tool_calls, results, strict=True)
+            )
+            write_refused |= any(
+                is_write_refused(call.name, result)
+                for call, result in zip(response.tool_calls, results, strict=True)
+            )
+            tools_called.extend(call.name for call in response.tool_calls)
             logger.info("Tool round", tools=[call.name for call in response.tool_calls])
             messages.append(_tool_call_note(response.tool_calls))
             messages.append(_tool_results_message(response.tool_calls, results))
 
         # Rounds exhausted: force a final plain-text answer from what we gathered.
-        return await _force_answer(llm, user_message, messages, config)
+        forced = await _force_answer(llm, user_message, messages, config)
+        return enforce_truthful_reply(
+            forced,
+            write_attempted=write_attempted,
+            write_refused=write_refused,
+            tools_called=tools_called,
+            history_text=history_text,
+            history_claims_text=assistant_text,
+        )
 
 
 def _history_block(history: list[Message]) -> str:
@@ -191,7 +231,7 @@ def _history_block(history: list[Message]) -> str:
     actionable turn.
     """
     if not history:
-        return ""
+        return NO_HISTORY_BLOCK
     lines = [
         f"{'Safi' if message.role == MessageRole.ASSISTANT else 'Usuario'}: {message.content}"
         for message in history
@@ -267,7 +307,7 @@ async def _safe_dispatch(toolkit: Toolkit, call: ToolCall, user_id: str) -> str:
             result = await toolkit.dispatch(call.name, call.arguments, user_id)
         except ValueError as e:
             logger.warning("Tool dispatch error", tool=call.name, error=str(e))
-            message = f"No pude ejecutar la herramienta solicitada: {e}"
+            message = f"{DISPATCH_ERROR_PREFIX}: {e}"
             record_tool_span(span, output=message, error=str(e))
             return message
         logger.info("Tool result", tool=call.name, result=result[:200])

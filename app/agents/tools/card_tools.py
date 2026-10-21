@@ -7,7 +7,7 @@ NEVER part of the tool schema. Cards are referenced by NAME (no ids exposed).
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -36,6 +36,10 @@ REMOVE_CARD_PAYMENT_TOOL = "remove_card_payment"
 UPDATE_CARD_TOOL = "update_card"
 CONFIRM_CARD_CHANGE_TOOL = "confirm_card_change"
 DELETE_CARD_TOOL = "delete_card"
+
+# Result prefixes of a schedule change that was only PROPOSED (nothing applied yet).
+PROPOSAL_PREFIX: Final = "PROPUESTA (aún NO aplicada)"
+ALREADY_PROPOSED_PREFIX: Final = "Ya está propuesto"
 
 CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
@@ -428,11 +432,11 @@ class CardToolkit:
         summary = _proposal_summary(heading, proposal.change)
         if proposal.already_pending:
             return (
-                f"Ya está propuesto: {summary}. Si el usuario ya aceptó, llama a "
+                f"{ALREADY_PROPOSED_PREFIX}: {summary}. Si el usuario ya aceptó, llama a "
                 "confirm_card_change; si no, pregúntale «¿Lo cambio?»."
             )
         return (
-            f"PROPUESTA (aún NO aplicada): {summary}. "
+            f"{PROPOSAL_PREFIX}: {summary}. "
             "Pregunta al usuario «¿Lo cambio?». Si en su próximo mensaje acepta, "
             "llama a confirm_card_change."
         )

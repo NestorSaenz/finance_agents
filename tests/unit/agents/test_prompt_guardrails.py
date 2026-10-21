@@ -28,6 +28,16 @@ class TestAntiHallucinationGuardrail:
             assert "alcance" in prompt.lower()
 
 
+class TestNoInventedProposalGuardrail:
+    def test_prompt_has_no_literal_data_the_model_can_copy(self) -> None:
+        for literal in ("199.966", "57.000", "Néstor"):
+            assert literal not in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_bare_confirmation_without_a_proposal_confirms_nothing(self) -> None:
+        assert '"sí"/"dale"/"regístralos" suelto NO confirma nada' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA digas que registraste" in TOOL_AGENT_SYSTEM_PROMPT
+
+
 def _update_card_description() -> str:
     schema = next(s for s in CARD_TOOL_SCHEMAS if s["function"]["name"] == "update_card")
     function = schema["function"]

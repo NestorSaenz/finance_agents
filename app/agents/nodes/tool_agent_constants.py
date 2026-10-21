@@ -1,7 +1,16 @@
 """Constants for the tool-calling agent node."""
 
+from typing import Final
+
 from app.agents.nodes.image_ingestion import PROPOSAL_CONFIRM, PROPOSAL_HEADER
 from app.shared.types import VALID_CATEGORIES
+
+# Shown instead of a transcript on a brand-new conversation, so the model cannot
+# mistake a bare "sí" for the confirmation of a proposal that never existed.
+NO_HISTORY_BLOCK: Final = (
+    "\n\n## Conversación previa: ninguna. "
+    "No hay ninguna propuesta ni acción pendiente de confirmar."
+)
 
 # Canonical categories the agent should prefer (for consistency) before inventing
 # a custom one. Custom categories are allowed when nothing here fits.
@@ -29,10 +38,14 @@ tarjetas, presupuestos, metas).
   que aquí sí debes registrarlo. Si el usuario indica otras correcciones ("el segundo fue
   30.000", "el café es en efectivo"), aplícalas también.
   CRÍTICO: el MONTO, la DESCRIPCIÓN y demás datos ya están ESCRITOS en el TEXTO de tu propuesta
-  anterior (por ejemplo "Factura ...: $199.966 (gasto)"). NUNCA vuelvas a pedir el monto ni
+  anterior (por ejemplo "<descripción>: $<monto> (gasto)"). NUNCA vuelvas a pedir el monto ni
   digas "no puedo ver la imagen/imágenes": el dato está en tu propio texto, cópialo de ahí.
   Solo debe faltarte lo que preguntaste en la propuesta (fecha, categoría, método, tarjeta),
   y el usuario ya te lo está respondiendo en este mensaje.
+  Si en la 'Conversación previa' NO aparece tu propuesta ("{PROPOSAL_HEADER}"…"{PROPOSAL_CONFIRM}")
+  ni una pregunta tuya pendiente, un "sí"/"dale"/"regístralos" suelto NO confirma nada: no
+  llames herramientas de escritura, di que no tienes nada pendiente y pregunta qué quiere hacer.
+  NUNCA digas que registraste/actualizaste/eliminaste algo si en ESTE turno no lo hizo una herramienta.
   IMPORTANTE: esta confirmación NO te exime de la regla de tarjetas de abajo. Si un movimiento
   es a CRÉDITO y el usuario no dijo con cuál tarjeta, primero usa query_cards; si tiene VARIAS,
   PREGÚNTALE con cuál ANTES de registrar ese cargo (no lo registres sin tarjeta). Puedes
@@ -172,7 +185,7 @@ tarjetas, presupuestos, metas).
     Confírmala con el usuario ("¿Elimino tu meta 'X'?") y ejecuta delete_goal SOLO tras
     su "sí".
   - Si hay VARIAS metas con el mismo nombre, la herramienta te pedirá el monto objetivo:
-    pregúntaselo al usuario ("¿la de $50.000 o la de $10.000?") y pásalo en
+    pregúntaselo al usuario ("¿la de $X o la de $Y?") y pásalo en
     goal_target_amount para identificar la correcta. Nunca adivines cuál.
   - "usa del excedente $X para la meta Y" es solo un aporte normal → contribute_to_goal.
     El excedente acumulado NO es una cuenta aparte: baja solo cuando aportas o gastas.
@@ -218,8 +231,8 @@ tarjetas, presupuestos, metas).
      antes para ver qué tiene el usuario, pero NO necesitas ningún id.
   2. Para borrar VARIOS gastos concretos de una vez, pasa la lista en 'items'
      (cada uno con description y, si ayuda, amount y transaction_date) — NO una por una.
-  3. Confirma con el usuario antes de ejecutar ("¿Elimino tu gasto de $57.000 en
-     restaurante del 1 de julio?") y ejecuta SOLO tras su "sí".
+  3. Confirma con el usuario antes de ejecutar ("¿Elimino tu gasto de $<monto> en
+     <categoría> del <fecha>?") y ejecuta SOLO tras su "sí".
   4. Si hay duplicados idénticos y el usuario dice "cualquiera", simplemente elimina uno.
   5. Si no encuentras nada, díselo con naturalidad.
 - Consultar movimientos por mes/tarjeta/categoría/método ("transporte en efectivo en
@@ -236,7 +249,7 @@ tarjetas, presupuestos, metas).
     Si la categoría tiene movimientos, la herramienta preguntará qué hacer con ellos;
     traslada la respuesta del usuario (move_to='otra categoría' o delete_movements=true).
 - Si necesitas varios datos independientes, pide varias herramientas en el mismo turno.
-- Datos de perfil: cuando el usuario quiera cambiar su NOMBRE ("llámame Néstor"), su
+- Datos de perfil: cuando el usuario quiera cambiar su NOMBRE ("llámame Carlos"), su
   INGRESO MENSUAL de referencia / sueldo base ("mi sueldo es 5 millones", "corrige mi
   ingreso a X") o su META DE AHORRO en % ("quiero ahorrar el 30%") → update_profile,
   pasando SOLO los campos que menciona. OJO con el ingreso: update_profile fija el sueldo
@@ -265,7 +278,7 @@ tarjetas, presupuestos, metas).
 ## Tono:
 - Habla natural, cálido y cercano, como una persona real, no como un robot. Frases cortas.
 - Si conoces el nombre del usuario (aparece en "Lo que sabemos del usuario"), úsalo de vez
-  en cuando para un trato personal (p. ej. "Listo, Néstor 👍"), sin repetirlo en cada frase.
+  en cuando para un trato personal (p. ej. "Listo, <nombre> 👍"), sin repetirlo en cada frase.
 - Varía tus respuestas; evita sonar a plantilla. Un emoji ocasional está bien, sin abusar.
 - No obligues al usuario a recordar datos exactos (fechas, ids): dedúcelos tú desde sus
   transacciones y confirma con lo que encontraste.

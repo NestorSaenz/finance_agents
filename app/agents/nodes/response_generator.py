@@ -9,6 +9,7 @@ writes its own answer, so this node no longer synthesizes analysis/plans.
 from langchain_core.messages import AIMessage
 
 from app.agents.context import prior_context, user_context_block
+from app.agents.nodes.action_claims import enforce_truthful_reply
 from app.agents.nodes.response_generator_constants import (
     CATEGORIZATION_TEMPLATE,
     GENERAL_TEMPLATE,
@@ -52,6 +53,15 @@ async def response_generator_node(
         logger.error("LLM generation failed", error=str(e))
         response_text = _build_fallback_response(state)
 
+    # This node has no tools: any claim of a completed write here is false.
+    response_text = enforce_truthful_reply(
+        response_text,
+        write_attempted=False,
+        history_text="\n".join(message.content for message in history),
+        history_claims_text="\n".join(
+            message.content for message in history if message.role == MessageRole.ASSISTANT
+        ),
+    )
     logger.info("Response generated", response_length=len(response_text))
     return {"messages": [AIMessage(content=response_text)], "should_respond": False}
 

@@ -4,11 +4,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+import structlog.testing
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.context import category_context_block
-from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, tool_agent_node
+from app.agents.nodes.action_claims import FALSE_CLAIM_REPLY
+from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, _history_block, tool_agent_node
 from app.agents.state import build_initial_state
+from app.agents.tools.card_tools import PROPOSAL_PREFIX
 from app.agents.tools.transaction_tools import TransactionToolkit
 from app.shared.clock import current_today, local_today
 from app.shared.interfaces.llm import LLMResponse, MessageRole, ToolCall
@@ -388,6 +391,161 @@ class TestToolAgentTurnFailedFlag:
 
         assert result["turn_failed"] is True
         assert result["messages"][-1].content.startswith("Lo siento, no pude completar")
+
+
+CLAIM_TEXT = (
+    "¡Listo! Registré tus gastos: Factura de servicios públicos: $199.966 "
+    "(servicios, en efectivo)"
+)
+
+
+class ResultToolkit:
+    """Toolkit whose every tool returns a fixed result."""
+
+    def __init__(self, result: str) -> None:
+        self._result = result
+
+    @property
+    def schemas(self) -> list[dict[str, Any]]:
+        return []
+
+    async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
+        return self._result
+
+
+class NamedResultsToolkit:
+    """register_transaction applies; delete_transaction finds nothing."""
+
+    @property
+    def schemas(self) -> list[dict[str, Any]]:
+        return []
+
+    async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
+        return "✅ Registré: pizza" if name == "register_transaction" else "No encontré ese gasto."
+
+
+def _call(name: str) -> LLMResponse:
+    return LLMResponse(
+        content="", model="fake", tool_calls=[ToolCall(id="1", name=name, arguments={})]
+    )
+
+
+class ClaimingForcedLLM(ScriptedToolLLM):
+    """Scripted tool rounds; the forced final answer always claims a write."""
+
+    async def generate(self, messages, config=None):  # type: ignore[no-untyped-def]
+        return LLMResponse(content=CLAIM_TEXT, model="fake")
+
+
+class TestTruthfulReplyGuard:
+    async def _reply(self, llm: ScriptedToolLLM, toolkit: Any) -> str:
+        state = build_initial_state(message="sí", user_id="u1")
+        result = await tool_agent_node(state, llm, toolkit)
+        return str(result["messages"][-1].content)
+
+    async def test_claim_without_any_tool_call_is_replaced(self) -> None:
+        reply = await self._reply(ScriptedToolLLM([_text(CLAIM_TEXT)]), FakeToolkitStub())
+
+        assert reply == FALSE_CLAIM_REPLY
+
+    async def test_recount_from_history_without_tools_is_kept(self) -> None:
+        history = [
+            HumanMessage(content="gasté 25.000 en Uber"),
+            AIMessage(content="Listo, registré tu Uber de $25.000"),
+        ]
+        state = build_initial_state(message="¿registraste el Uber?", user_id="u1", history=history)
+        llm = ScriptedToolLLM([_text("Sí, registré tu Uber de $25.000")])
+
+        result = await tool_agent_node(state, llm, FakeToolkitStub())
+
+        assert result["messages"][-1].content == "Sí, registré tu Uber de $25.000"
+
+    async def test_user_only_write_claim_in_history_does_not_back_a_reply(self) -> None:
+        history = [
+            HumanMessage(content="registré 50 en comida"),
+            AIMessage(content="¿Lo pagaste en efectivo o con tarjeta?"),
+        ]
+        state = build_initial_state(message="sí", user_id="u1", history=history)
+        llm = ScriptedToolLLM([_text("Listo, registré tu gasto.")])
+
+        result = await tool_agent_node(state, llm, FakeToolkitStub())
+
+        assert result["messages"][-1].content == FALSE_CLAIM_REPLY
+
+    async def test_invented_figures_with_history_are_replaced(self) -> None:
+        history = [HumanMessage(content="hola"), AIMessage(content="¡Hola!")]
+        state = build_initial_state(message="sí", user_id="u1", history=history)
+
+        result = await tool_agent_node(state, ScriptedToolLLM([_text(CLAIM_TEXT)]), FakeToolkitStub())
+
+        assert result["messages"][-1].content == FALSE_CLAIM_REPLY
+
+    async def test_claim_after_a_register_call_is_kept(self) -> None:
+        llm = ScriptedToolLLM([_call("register_transaction"), _text(CLAIM_TEXT)])
+
+        reply = await self._reply(llm, ResultToolkit("Gasto guardado"))
+
+        assert reply == CLAIM_TEXT
+
+    async def test_claim_after_a_read_only_call_is_kept_and_logged(self) -> None:
+        # Honest recount: "¿registraste el Uber?" -> find_movements -> "Sí, registré...".
+        llm = ScriptedToolLLM([_call("find_movements"), _text(CLAIM_TEXT)])
+
+        with structlog.testing.capture_logs() as logs:
+            reply = await self._reply(llm, ResultToolkit("1 movimiento"))
+
+        assert reply == CLAIM_TEXT
+        assert any(entry["event"] == "Possible false write claim" for entry in logs)
+
+    async def test_claim_after_a_proposal_only_result_is_replaced(self) -> None:
+        llm = ScriptedToolLLM([_call("update_card"), _text("Actualicé el corte")])
+
+        reply = await self._reply(llm, ResultToolkit(f"{PROPOSAL_PREFIX}: corte 19 → 20"))
+
+        assert reply == FALSE_CLAIM_REPLY
+
+    async def test_claim_after_a_not_found_write_is_replaced(self) -> None:
+        llm = ScriptedToolLLM([_call("delete_transaction"), _text("Eliminé tu gasto")])
+
+        reply = await self._reply(llm, ResultToolkit("No encontré esa transacción."))
+
+        assert reply == FALSE_CLAIM_REPLY
+
+    async def test_one_applied_and_one_refused_write_keeps_the_text(self) -> None:
+        both = LLMResponse(
+            content="",
+            model="fake",
+            tool_calls=[
+                ToolCall(id="1", name="register_transaction", arguments={}),
+                ToolCall(id="2", name="delete_transaction", arguments={}),
+            ],
+        )
+        llm = ScriptedToolLLM([both, _text("Registré el primero")])
+
+        reply = await self._reply(llm, NamedResultsToolkit())
+
+        assert reply == "Registré el primero"
+
+    async def test_forced_answer_after_reads_is_kept(self) -> None:
+        # Always asks for a read-only tool -> rounds exhausted -> forced answer.
+        reply = await self._reply(ClaimingForcedLLM([_call("query_cards")]), ResultToolkit("ok"))
+
+        assert reply == CLAIM_TEXT
+
+    async def test_forced_answer_after_a_write_is_kept(self) -> None:
+        llm = ClaimingForcedLLM([_call("register_transaction")])
+
+        reply = await self._reply(llm, ResultToolkit("Gasto guardado"))
+
+        assert reply == CLAIM_TEXT
+
+
+class TestHistoryBlock:
+    def test_empty_history_states_nothing_is_pending(self) -> None:
+        block = _history_block([])
+
+        assert "ninguna propuesta" in block
+        assert "Conversación previa: ninguna" in block
 
 
 class FakeToolkitStub:

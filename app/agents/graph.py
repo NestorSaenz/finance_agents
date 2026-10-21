@@ -128,16 +128,7 @@ def get_compiled_graph() -> "CompiledStateGraph":
     Imported lazily so that constructing the clients (which need API keys) is
     deferred to the first chat request instead of happening at import time.
     """
-    from app.agents.tools.analysis_tools import AnalysisToolkit
-    from app.agents.tools.budget_tools import BudgetToolkit
-    from app.agents.tools.card_tools import CardToolkit
-    from app.agents.tools.category_tools import CategoryToolkit
-    from app.agents.tools.composite_toolkit import CompositeToolkit
-    from app.agents.tools.goal_tools import GoalToolkit
-    from app.agents.tools.movement_tools import MovementToolkit
-    from app.agents.tools.profile_tools import ProfileToolkit
-    from app.agents.tools.recurring_tools import RecurringToolkit
-    from app.agents.tools.transaction_tools import TransactionToolkit
+    from app.agents.tools.registry import ToolServices, build_composite_toolkit
     from app.shared.dependencies import (
         get_database,
         get_embedding_client,
@@ -202,18 +193,18 @@ def get_compiled_graph() -> "CompiledStateGraph":
         RecurringRepository(db), transaction_service, card_service, user_profile_service
     )
     movement_finder = MovementFinder(transaction_service, card_service, goal_service)
-    toolkit = CompositeToolkit(
-        [
-            TransactionToolkit(transaction_service, cards=card_service, budgets=budget_service),
-            BudgetToolkit(budget_service),
-            GoalToolkit(goal_service),
-            CardToolkit(card_service, card_schedule_service),
-            AnalysisToolkit(analysis_service),
-            CategoryToolkit(transaction_service, budget_service),
-            RecurringToolkit(recurring_service, cards=card_service),
-            ProfileToolkit(user_profile_service),
-            MovementToolkit(movement_finder),
-        ]
+    toolkit = build_composite_toolkit(
+        ToolServices(
+            transactions=transaction_service,
+            budgets=budget_service,
+            goals=goal_service,
+            cards=card_service,
+            card_schedule=card_schedule_service,
+            analysis=analysis_service,
+            recurring=recurring_service,
+            profile=user_profile_service,
+            movements=movement_finder,
+        )
     )
 
     return create_financegpt_graph(
