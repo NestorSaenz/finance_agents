@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_CHAT_PER_MINUTE: int = 10  # Burst guard: every turn (text or image).
     RATE_LIMIT_CHAT_PER_DAY: int = 100  # Daily text turns.
-    RATE_LIMIT_IMAGES_PER_DAY: int = 10  # Daily image turns (heavier: Gemini vision).
+    RATE_LIMIT_IMAGES_PER_DAY: int = 30  # Daily image turns (heavier: Gemini vision).
 
     BACKEND_CORS_ORIGINS: Annotated[list[AnyUrl] | str, BeforeValidator(parse_cors)] = []
 

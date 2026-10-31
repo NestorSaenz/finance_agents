@@ -425,6 +425,15 @@ class _OverLimitRepo(RateLimitRepositoryABC):
         return 999
 
 
+class _DailyOverRepo(RateLimitRepositoryABC):
+    """Rate-limit repo stub: the minute window is fine, every daily window is over."""
+
+    async def increment(
+        self, user_id: str, bucket: RateLimitBucket, window_start: object
+    ) -> int:
+        return 1 if bucket == RateLimitBucket.CHAT_MINUTE else 999
+
+
 class TestChatRateLimiting:
     def test_over_limit_returns_429_with_friendly_message(
         self, client_with_fake_graph: TestClient
@@ -446,6 +455,30 @@ class TestChatRateLimiting:
         assert body["error"] == "RATE_LIMIT_EXCEEDED"
         assert "demasiados mensajes" in body["message"]
         assert response.headers["Retry-After"]  # tells the client when to retry
+
+    def test_image_over_daily_limit_returns_429_with_image_message(
+        self, client_with_fake_graph: TestClient
+    ) -> None:
+        service: RateLimitServiceABC = RateLimitService(
+            _DailyOverRepo(),
+            per_minute=10,
+            per_day=10_000,
+            images_per_day=0,
+            enabled=True,
+        )
+        app.dependency_overrides[get_rate_limit_service] = lambda: service
+        image_b64 = base64.b64encode(b"fake-image-bytes").decode()
+
+        response = client_with_fake_graph.post(
+            CHAT_URL,
+            json={"message": "", "image": image_b64, "image_mime_type": "image/png"},
+        )
+
+        assert response.status_code == 429
+        body = response.json()
+        assert body["error"] == "RATE_LIMIT_EXCEEDED"
+        assert "imágenes por día" in body["message"]
+        assert response.headers["Retry-After"]
 
     def test_within_limit_still_returns_200(
         self, client_with_fake_graph: TestClient

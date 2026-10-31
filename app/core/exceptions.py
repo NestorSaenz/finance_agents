@@ -16,7 +16,9 @@ Usage:
 """
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
+
+from app.shared.types import RateLimitBucket
 
 # =============================================================================
 # Base Exceptions
@@ -448,14 +450,43 @@ class RegistrationError(DomainError):
 # =============================================================================
 
 
+_SECONDS_PER_HOUR: Final[int] = 3600
+_RATE_LIMIT_MINUTE_MESSAGE: Final[str] = (
+    "Has enviado demasiados mensajes; espera un momento y vuelve a intentarlo."
+)
+_RATE_LIMIT_IMAGE_DAY_TEMPLATE: Final[str] = (
+    "Llegaste al límite de {limit} imágenes por día. Podrás enviar más {when}."
+)
+_RATE_LIMIT_CHAT_DAY_TEMPLATE: Final[str] = (
+    "Llegaste al límite de {limit} mensajes por día. Podrás escribir de nuevo {when}."
+)
+_WHEN_MINUTES: Final[str] = "en unos minutos"
+
+
+def _retry_when(retry_after: int) -> str:
+    """Spanish wait wording: "en unos minutos" under an hour, else "en unas N horas"."""
+    if retry_after < _SECONDS_PER_HOUR:
+        return _WHEN_MINUTES
+    hours = -(-retry_after // _SECONDS_PER_HOUR)  # ceiling division
+    return "en una hora" if hours == 1 else f"en unas {hours} horas"
+
+
+def _rate_limit_message(bucket: str, limit: int, retry_after: int) -> str:
+    """The user-facing message for the bucket that was exceeded."""
+    when = _retry_when(retry_after)
+    if bucket == RateLimitBucket.IMAGE_DAY:
+        return _RATE_LIMIT_IMAGE_DAY_TEMPLATE.format(limit=limit, when=when)
+    if bucket == RateLimitBucket.CHAT_DAY:
+        return _RATE_LIMIT_CHAT_DAY_TEMPLATE.format(limit=limit, when=when)
+    return _RATE_LIMIT_MINUTE_MESSAGE
+
+
 class RateLimitExceededError(ApplicationError):
     """Raised when a user exceeds their allowed chat rate for a bucket."""
 
     def __init__(self, bucket: str, limit: int, retry_after: int) -> None:
         super().__init__(
-            message=(
-                "Has enviado demasiados mensajes; espera un momento y vuelve a intentarlo."
-            ),
+            message=_rate_limit_message(bucket, limit, retry_after),
             code="RATE_LIMIT_EXCEEDED",
             details={"bucket": bucket, "limit": limit, "retry_after": retry_after},
         )
