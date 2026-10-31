@@ -15,58 +15,49 @@ from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
-from app.agents.tools.analysis_tools import ANALYZE_FINANCES_TOOL, SPENDING_TREND_TOOL
-from app.agents.tools.budget_tools import (
-    CREATE_BUDGET_TOOL,
-    DELETE_BUDGET_TOOL,
-    QUERY_BUDGETS_TOOL,
-    UPDATE_BUDGET_TOOL,
-)
-from app.agents.tools.card_tools import (
+from app.agents.tools.names import (
     ALREADY_PROPOSED_PREFIX,
+    ANALYZE_FINANCES_TOOL,
+    ANALYZE_SPENDING_TOOL,
     CONFIRM_CARD_CHANGE_TOOL,
+    CONTRIBUTE_GOAL_TOOL,
+    CREATE_BUDGET_TOOL,
     CREATE_CARD_TOOL,
+    CREATE_GOAL_TOOL,
+    CREATE_RECURRING_TOOL,
+    DELETE_BUDGET_TOOL,
+    DELETE_BY_FILTER_TOOL,
     DELETE_CARD_TOOL,
+    DELETE_GOAL_TOOL,
+    DELETE_RECURRING_TOOL,
+    DELETE_TRANSACTION_TOOL,
+    FIND_MOVEMENTS_TOOL,
+    LIST_RECURRING_TOOL,
+    MANAGE_CATEGORY_TOOL,
+    PAUSE_GOAL_TOOL,
+    PAUSE_RECURRING_TOOL,
     PAY_CARD_TOOL,
     PROPOSAL_PREFIX,
+    QUERY_BUDGETS_TOOL,
     QUERY_CARDS_TOOL,
-    REMOVE_CARD_PAYMENT_TOOL,
-    UPDATE_CARD_TOOL,
-)
-from app.agents.tools.category_tools import MANAGE_CATEGORY_TOOL
-from app.agents.tools.goal_tools import (
-    CONTRIBUTE_GOAL_TOOL,
-    CREATE_GOAL_TOOL,
-    DELETE_GOAL_TOOL,
-    PAUSE_GOAL_TOOL,
     QUERY_GOALS_TOOL,
-    REMOVE_CONTRIBUTION_TOOL,
-    RESUME_GOAL_TOOL,
-    SET_GOAL_AMOUNT_TOOL,
-    UPDATE_GOAL_TOOL,
-    WITHDRAW_GOAL_TOOL,
-)
-from app.agents.tools.movement_tools import FIND_MOVEMENTS_TOOL
-from app.agents.tools.profile_tools import (
-    SET_CURRENCY_TOOL,
-    SET_TIMEZONE_TOOL,
-    UPDATE_PROFILE_TOOL,
-)
-from app.agents.tools.recurring_tools import (
-    CREATE_RECURRING_TOOL,
-    DELETE_RECURRING_TOOL,
-    LIST_RECURRING_TOOL,
-    PAUSE_RECURRING_TOOL,
-    RESUME_RECURRING_TOOL,
-    UPDATE_RECURRING_TOOL,
-)
-from app.agents.tools.transaction_tools import (
-    ANALYZE_SPENDING_TOOL,
-    DELETE_BY_FILTER_TOOL,
-    DELETE_TRANSACTION_TOOL,
     QUERY_TRANSACTIONS_TOOL,
     REGISTER_TRANSACTION_TOOL,
+    REMOVE_CARD_PAYMENT_TOOL,
+    REMOVE_CONTRIBUTION_TOOL,
+    RESUME_GOAL_TOOL,
+    RESUME_RECURRING_TOOL,
+    SET_CURRENCY_TOOL,
+    SET_GOAL_AMOUNT_TOOL,
+    SET_TIMEZONE_TOOL,
+    SPENDING_TREND_TOOL,
+    UPDATE_BUDGET_TOOL,
+    UPDATE_CARD_TOOL,
+    UPDATE_GOAL_TOOL,
+    UPDATE_PROFILE_TOOL,
+    UPDATE_RECURRING_TOOL,
     UPDATE_TRANSACTION_TOOL,
+    WITHDRAW_GOAL_TOOL,
 )
 from app.core.logging import get_logger
 

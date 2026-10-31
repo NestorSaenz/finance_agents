@@ -4,6 +4,7 @@ These tests pin the anti-hallucination and scope instructions in place so a
 future prompt edit cannot silently drop them.
 """
 
+from app.agents.nodes.image_ingestion import PROPOSAL_HEADER
 from app.agents.nodes.response_generator_constants import RESPONSE_SYSTEM_PROMPT
 from app.agents.nodes.tool_agent_constants import TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.tools.card_tools import CARD_TOOL_SCHEMAS
@@ -36,6 +37,28 @@ class TestNoInventedProposalGuardrail:
     def test_bare_confirmation_without_a_proposal_confirms_nothing(self) -> None:
         assert '"sí"/"dale"/"regístralos" suelto NO confirma nada' in TOOL_AGENT_SYSTEM_PROMPT
         assert "NUNCA digas que registraste" in TOOL_AGENT_SYSTEM_PROMPT
+
+
+class TestFileProposalRules:
+    def test_registers_only_the_lines_under_the_proposal_header(self) -> None:
+        assert f'DESPUÉS de "{PROPOSAL_HEADER}"' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA las registres" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_corrections_apply_to_exceptions_and_never_ask_category_per_line(self) -> None:
+        assert "el segundo es mercado" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA preguntes una categoría por línea" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_card_payment_lines_go_through_pay_card_never_income(self) -> None:
+        assert "Pago a tarjeta" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "pay_card(card_name, amount, payment_date)" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_naming_the_card_resolves_the_pending_question(self) -> None:
+        assert '"es de Nu"' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "no repitas una" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_marker_header_is_the_single_source_of_truth(self) -> None:
+        assert PROPOSAL_HEADER == "Faltan por registrar:"
+        assert PROPOSAL_HEADER in TOOL_AGENT_SYSTEM_PROMPT
 
 
 def _update_card_description() -> str:

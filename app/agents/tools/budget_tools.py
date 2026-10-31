@@ -12,6 +12,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.tools.names import (
+    CREATE_BUDGET_TOOL,
+    DELETE_BUDGET_TOOL,
+    QUERY_BUDGETS_TOOL,
+    UPDATE_BUDGET_TOOL,
+)
 from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
@@ -21,10 +27,6 @@ from app.src.budgets.models import BudgetCreate, BudgetStatus
 
 logger = get_logger(__name__)
 
-CREATE_BUDGET_TOOL = "create_budget"
-QUERY_BUDGETS_TOOL = "query_budgets"
-UPDATE_BUDGET_TOOL = "update_budget"
-DELETE_BUDGET_TOOL = "delete_budget"
 
 BUDGET_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {

@@ -14,6 +14,18 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.tools.names import (
+    CONTRIBUTE_GOAL_TOOL,
+    CREATE_GOAL_TOOL,
+    DELETE_GOAL_TOOL,
+    PAUSE_GOAL_TOOL,
+    QUERY_GOALS_TOOL,
+    REMOVE_CONTRIBUTION_TOOL,
+    RESUME_GOAL_TOOL,
+    SET_GOAL_AMOUNT_TOOL,
+    UPDATE_GOAL_TOOL,
+    WITHDRAW_GOAL_TOOL,
+)
 from app.core.exceptions import GoalWithdrawalExceedsBalanceError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
@@ -24,16 +36,6 @@ from app.src.goals.models import Goal, GoalCreate, GoalProgress
 
 logger = get_logger(__name__)
 
-CREATE_GOAL_TOOL = "create_goal"
-QUERY_GOALS_TOOL = "query_goals"
-CONTRIBUTE_GOAL_TOOL = "contribute_to_goal"
-WITHDRAW_GOAL_TOOL = "withdraw_from_goal"
-SET_GOAL_AMOUNT_TOOL = "set_goal_amount"
-REMOVE_CONTRIBUTION_TOOL = "remove_goal_contribution"
-UPDATE_GOAL_TOOL = "update_goal"
-DELETE_GOAL_TOOL = "delete_goal"
-PAUSE_GOAL_TOOL = "pause_goal"
-RESUME_GOAL_TOOL = "resume_goal"
 
 GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {

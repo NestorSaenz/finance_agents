@@ -5,7 +5,7 @@ used across the application for transactions, categories, and currencies.
 """
 
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TypeAlias
 
 
@@ -117,6 +117,21 @@ class MovementKind(str, Enum):
     CARD_PAYMENT = "card_payment"
     GOAL_CONTRIBUTION = "goal_contribution"
     GOAL_WITHDRAWAL = "goal_withdrawal"
+
+
+class IngestionIntent(StrEnum):
+    """What the user wants done with an attached statement/receipt."""
+
+    VERIFY = "verify"  # "valida que estén registrados": compare, then offer the missing
+    REGISTER = "register"  # "registra esto" (default): propose what to save
+
+
+class StatementLineKind(StrEnum):
+    """Kind of a line read from a statement: which ledger it should live in."""
+
+    EXPENSE = "expense"
+    INCOME = "income"
+    CARD_PAYMENT = "card_payment"  # a payment TO the card ("Gracias por tu pago")
 
 
 # Type aliases for domain clarity

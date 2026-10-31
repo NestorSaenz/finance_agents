@@ -13,6 +13,14 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
+from app.agents.tools.names import (
+    CREATE_RECURRING_TOOL,
+    DELETE_RECURRING_TOOL,
+    LIST_RECURRING_TOOL,
+    PAUSE_RECURRING_TOOL,
+    RESUME_RECURRING_TOOL,
+    UPDATE_RECURRING_TOOL,
+)
 from app.core.exceptions import IncomeCannotBeCreditError
 from app.core.logging import get_logger
 from app.shared.types import PaymentMethod, TransactionType, UserId, normalize_category
@@ -28,12 +36,6 @@ from app.src.recurring.models import (
 
 logger = get_logger(__name__)
 
-CREATE_RECURRING_TOOL = "create_recurring"
-LIST_RECURRING_TOOL = "list_recurring"
-UPDATE_RECURRING_TOOL = "update_recurring"
-DELETE_RECURRING_TOOL = "delete_recurring"
-PAUSE_RECURRING_TOOL = "pause_recurring"
-RESUME_RECURRING_TOOL = "resume_recurring"
 
 # Asked (deterministically) when a recurring expense has no payment method AND the
 # user has cards — mirrors transaction_tools.ASK_PAYMENT_METHOD_MESSAGE. Without

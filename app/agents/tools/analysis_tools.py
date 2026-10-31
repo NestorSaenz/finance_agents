@@ -9,6 +9,10 @@ from decimal import Decimal
 from typing import Any
 
 from app.agents.nodes.analyst_constants import get_category_label
+from app.agents.tools.names import (
+    ANALYZE_FINANCES_TOOL,
+    SPENDING_TREND_TOOL,
+)
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.periods import period_label
@@ -23,8 +27,6 @@ from app.src.analysis.models import CardLine, FinancialSnapshot, MonthlyTotals
 
 logger = get_logger(__name__)
 
-ANALYZE_FINANCES_TOOL = "analyze_finances"
-SPENDING_TREND_TOOL = "spending_trend"
 
 ANALYSIS_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {

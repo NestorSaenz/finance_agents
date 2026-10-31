@@ -8,3 +8,7 @@ from typing import Final
 MIN_TREND_MONTHS: Final[int] = 2
 MAX_TREND_MONTHS: Final[int] = 12
 DEFAULT_TREND_MONTHS: Final[int] = 6
+
+# A statement line matches a record whose transaction_date is within this many days
+# (banks post a purchase a day or two after it was made; users log it when they remember).
+RECONCILE_WINDOW_DAYS: Final[int] = 3

@@ -1,11 +1,12 @@
 """Domain models for the holistic financial analysis."""
 
 from datetime import date
+from datetime import date as Day  # the ``date`` field below shadows the type in its class
 from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.shared.types import Category, MovementKind
+from app.shared.types import Category, MovementKind, StatementLineKind
 
 
 class CategoryLine(BaseModel):
@@ -106,3 +107,28 @@ class MonthlyTotals(BaseModel):
     income: Decimal
     expenses: Decimal
     balance: Decimal  # income - expenses
+
+
+class StatementLine(BaseModel):
+    """One line read from a statement/receipt, to compare with the user's records."""
+
+    description: str
+    amount: Decimal
+    date: Day | None = None  # None: the document gave no date (never reconciled)
+    kind: StatementLineKind
+    card: str | None = None
+
+
+class ReconciledLine(BaseModel):
+    """A statement line found in the user's records, and the record it matched."""
+
+    line: StatementLine
+    matched_label: str
+    matched_date: date
+
+
+class ReconciliationResult(BaseModel):
+    """Statement lines split into already-registered and still-missing."""
+
+    matched: list[ReconciledLine] = []
+    missing: list[StatementLine] = []

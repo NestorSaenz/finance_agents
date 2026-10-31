@@ -7,10 +7,21 @@ NEVER part of the tool schema. Cards are referenced by NAME (no ids exposed).
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any, Final
+from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.tools.names import (
+    ALREADY_PROPOSED_PREFIX,
+    CONFIRM_CARD_CHANGE_TOOL,
+    CREATE_CARD_TOOL,
+    DELETE_CARD_TOOL,
+    PAY_CARD_TOOL,
+    PROPOSAL_PREFIX,
+    QUERY_CARDS_TOOL,
+    REMOVE_CARD_PAYMENT_TOOL,
+    UPDATE_CARD_TOOL,
+)
 from app.core.exceptions import CardNotFoundError, DatabaseError, NoActiveTurnError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
@@ -29,17 +40,6 @@ from app.src.cards.models import (
 
 logger = get_logger(__name__)
 
-CREATE_CARD_TOOL = "create_card"
-QUERY_CARDS_TOOL = "query_cards"
-PAY_CARD_TOOL = "pay_card"
-REMOVE_CARD_PAYMENT_TOOL = "remove_card_payment"
-UPDATE_CARD_TOOL = "update_card"
-CONFIRM_CARD_CHANGE_TOOL = "confirm_card_change"
-DELETE_CARD_TOOL = "delete_card"
-
-# Result prefixes of a schedule change that was only PROPOSED (nothing applied yet).
-PROPOSAL_PREFIX: Final = "PROPUESTA (aún NO aplicada)"
-ALREADY_PROPOSED_PREFIX: Final = "Ya está propuesto"
 
 CARD_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {

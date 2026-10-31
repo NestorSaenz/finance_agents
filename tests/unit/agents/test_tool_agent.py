@@ -9,7 +9,12 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.context import category_context_block
 from app.agents.nodes.action_claims import FALSE_CLAIM_REPLY
-from app.agents.nodes.tool_agent import MAX_TOOL_ROUNDS, _history_block, tool_agent_node
+from app.agents.nodes.tool_agent import (
+    DUPLICATE_WRITE_RESULT,
+    MAX_TOOL_ROUNDS,
+    _history_block,
+    tool_agent_node,
+)
 from app.agents.state import build_initial_state
 from app.agents.tools.card_tools import PROPOSAL_PREFIX
 from app.agents.tools.transaction_tools import TransactionToolkit
@@ -130,6 +135,26 @@ def _register_call() -> LLMResponse:
     )
 
 
+def _query_call() -> LLMResponse:
+    return LLMResponse(
+        content="",
+        model="fake",
+        tool_calls=[ToolCall(id="q", name="query_transactions", arguments={})],
+    )
+
+
+class RecordingToolLLM(ScriptedToolLLM):
+    """Scripted LLM that also keeps a snapshot of the messages of every round."""
+
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        super().__init__(responses)
+        self.seen: list[list[Any]] = []
+
+    async def generate_with_tools(self, messages, tools, config=None):  # type: ignore[no-untyped-def]
+        self.seen.append(list(messages))
+        return await super().generate_with_tools(messages, tools, config)
+
+
 def _text(content: str) -> LLMResponse:
     return LLMResponse(content=content, model="fake")
 
@@ -233,18 +258,107 @@ class TestToolAgentNode:
         assert result["messages"][-1].content == "Registré y consulté."
 
     async def test_stops_at_max_rounds_and_forces_answer(self) -> None:
-        # LLM that always asks for a tool -> the loop must stop at the cap and
-        # force a final plain answer (runaway-cost backstop).
+        # LLM that always asks for a (read-only) tool -> the loop must stop at the cap
+        # and force a final plain answer (runaway-cost backstop).
         service = FakeTxService()
         toolkit = TransactionToolkit(service)
-        llm = ScriptedToolLLM([_register_call()])  # reused every round
+        llm = ScriptedToolLLM([_query_call()])  # reused every round
         state = build_initial_state(message="loop", user_id="u1")
 
         result = await tool_agent_node(state, llm, toolkit)
 
         # Tool dispatched exactly MAX_TOOL_ROUNDS times, then a forced answer.
-        assert len(service.created) == MAX_TOOL_ROUNDS
+        assert len(service.list_calls) == MAX_TOOL_ROUNDS
         assert result["messages"][-1].content == "(forced answer)"  # FakeLLM.generate
+
+    async def test_identical_write_in_a_later_round_runs_once(self) -> None:
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        llm = RecordingToolLLM([_register_call(), _register_call(), _text("Listo, registré tu pizza.")])
+        state = build_initial_state(message="gasté 50 en pizza", user_id="u1")
+
+        result = await tool_agent_node(state, llm, toolkit)
+
+        assert len(service.created) == 1  # the repeat in round 2 never reached the service
+        assert DUPLICATE_WRITE_RESULT in llm.seen[-1][-1].content  # the model was told
+        assert "No la ejecuté otra vez" in llm.seen[-1][-1].content
+        assert "pregúntale si quiere el segundo" in llm.seen[-1][-1].content
+        # The first (real) write still counts for the false-claim guard: not replaced.
+        assert result["messages"][-1].content == "Listo, registré tu pizza."
+
+    async def test_refused_write_is_retried_not_skipped(self) -> None:
+        calls: list[str] = []
+
+        class RefusingToolkit:
+            @property
+            def schemas(self) -> list[dict[str, Any]]:
+                return []
+
+            async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
+                calls.append(name)
+                return "No pude registrar la transacción: faltan datos."
+
+        llm = ScriptedToolLLM([_register_call(), _register_call(), _text("No pude registrarlo.")])
+        state = build_initial_state(message="gasté 50 en pizza", user_id="u1")
+
+        await tool_agent_node(state, llm, RefusingToolkit())
+
+        assert calls == ["register_transaction", "register_transaction"]  # nothing applied
+
+    async def test_runaway_identical_write_is_applied_once_then_forced_answer(self) -> None:
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        llm = ScriptedToolLLM([_register_call()])  # the model re-sends it every round
+        state = build_initial_state(message="loop", user_id="u1")
+
+        result = await tool_agent_node(state, llm, toolkit)
+
+        assert len(service.created) == 1
+        assert result["messages"][-1].content == "(forced answer)"
+
+    async def test_identical_writes_in_the_same_round_both_run(self) -> None:
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        two_equal = LLMResponse(
+            content="", model="fake", tool_calls=[_register_call().tool_calls[0]] * 2
+        )
+        llm = ScriptedToolLLM([two_equal, _text("Registré los dos.")])
+        state = build_initial_state(message="dos cargos iguales", user_id="u1")
+
+        await tool_agent_node(state, llm, toolkit)
+
+        assert len(service.created) == 2  # two equal charges in one statement are legitimate
+
+    async def test_write_with_different_args_in_a_later_round_runs(self) -> None:
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        other = LLMResponse(
+            content="",
+            model="fake",
+            tool_calls=[
+                ToolCall(
+                    id="2",
+                    name="register_transaction",
+                    arguments={"amount": 60, "description": "pizza", "transaction_type": "expense"},
+                )
+            ],
+        )
+        llm = ScriptedToolLLM([_register_call(), other, _text("Registré las dos.")])
+        state = build_initial_state(message="dos pizzas", user_id="u1")
+
+        await tool_agent_node(state, llm, toolkit)
+
+        assert [t.amount for t, _ in service.created] == [Decimal("50"), Decimal("60")]
+
+    async def test_read_only_tools_are_never_skipped(self) -> None:
+        service = FakeTxService()
+        toolkit = TransactionToolkit(service)
+        llm = ScriptedToolLLM([_query_call(), _query_call(), _text("Estos son tus gastos.")])
+        state = build_initial_state(message="mis gastos", user_id="u1")
+
+        await tool_agent_node(state, llm, toolkit)
+
+        assert len(service.list_calls) == 2
 
     async def test_no_tool_call_returns_text_directly(self) -> None:
         toolkit = TransactionToolkit(FakeTxService())

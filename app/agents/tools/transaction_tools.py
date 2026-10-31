@@ -22,6 +22,14 @@ from app.agents.nodes.analyst_utils import (
     detect_patterns,
     top_expenses,
 )
+from app.agents.tools.names import (
+    ANALYZE_SPENDING_TOOL,
+    DELETE_BY_FILTER_TOOL,
+    DELETE_TRANSACTION_TOOL,
+    QUERY_TRANSACTIONS_TOOL,
+    REGISTER_TRANSACTION_TOOL,
+    UPDATE_TRANSACTION_TOOL,
+)
 from app.core.exceptions import IncomeCannotBeCreditError, TransactionNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
@@ -47,14 +55,8 @@ from app.src.transactions.models import Transaction, TransactionCreate
 
 logger = get_logger(__name__)
 
-REGISTER_TRANSACTION_TOOL = "register_transaction"
-QUERY_TRANSACTIONS_TOOL = "query_transactions"
-ANALYZE_SPENDING_TOOL = "analyze_spending"
-UPDATE_TRANSACTION_TOOL = "update_transaction"
-DELETE_TRANSACTION_TOOL = "delete_transaction"
 # Named 'delete_by_filter' (not 'delete_movements') to avoid colliding with
 # manage_category's boolean 'delete_movements' param, which confuses tool routing.
-DELETE_BY_FILTER_TOOL = "delete_by_filter"
 
 # Transactions fetched (one page) to aggregate; ample for personal-finance volumes.
 ANALYZE_FETCH_LIMIT = 500

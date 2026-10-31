@@ -7,9 +7,11 @@ time — never from the model.
 """
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import date
+from typing import Final, NamedTuple
 
 from langchain_core.messages import AIMessage
 
@@ -20,6 +22,7 @@ from app.agents.context import (
 )
 from app.agents.nodes.action_claims import (
     DISPATCH_ERROR_PREFIX,
+    MUTATING_TOOLS,
     enforce_truthful_reply,
     is_write_attempt,
     is_write_refused,
@@ -39,6 +42,14 @@ logger = get_logger(__name__)
 # or more tools. Independent tools within a round run concurrently; dependent
 # ones span rounds. 4 is ample for personal-finance requests.
 MAX_TOOL_ROUNDS = 4
+
+# Result for a write the model re-sent (same tool and args) in a LATER round of the
+# same turn: it is not executed again, so a model that loops cannot duplicate records.
+DUPLICATE_WRITE_RESULT: Final = (
+    "No la ejecuté otra vez: ya hiciste exactamente esta operación en este turno. Si el "
+    "usuario pidió registrarla dos veces, díselo y pregúntale si quiere el segundo; si no, "
+    "responde sin repetirla."
+)
 
 # Fetches the user's existing categories so the agent can reuse them (injected
 # via binding, like llm/toolkit). Optional: tests and simple wiring may omit it.
@@ -178,6 +189,7 @@ async def _run_tool_loop(
     assistant_text = "\n".join(
         message.content for message in history if message.role == MessageRole.ASSISTANT
     )
+    executed_writes: set[tuple[str, str]] = set()  # mutating calls run in earlier rounds
     with bound_today(day):
         for _ in range(MAX_TOOL_ROUNDS):
             response = await llm.generate_with_tools(messages, toolkit.schemas, config)
@@ -194,18 +206,19 @@ async def _run_tool_loop(
                 )
 
             # Execute every tool the model asked for this round, concurrently.
-            results = await asyncio.gather(
-                *[_safe_dispatch(toolkit, call, user_id) for call in response.tool_calls]
-            )
+            outcome = await _dispatch_round(toolkit, response.tool_calls, user_id, executed_writes)
+            results = outcome.results
+            # Only calls that really ran count: a skipped repeat is not a new write (the
+            # earlier identical call already counted).
             write_attempted |= any(
                 is_write_attempt(call.name, result)
-                for call, result in zip(response.tool_calls, results, strict=True)
+                for call, result in zip(outcome.ran, outcome.ran_results, strict=True)
             )
             write_refused |= any(
                 is_write_refused(call.name, result)
-                for call, result in zip(response.tool_calls, results, strict=True)
+                for call, result in zip(outcome.ran, outcome.ran_results, strict=True)
             )
-            tools_called.extend(call.name for call in response.tool_calls)
+            tools_called.extend(call.name for call in outcome.ran)
             logger.info("Tool round", tools=[call.name for call in response.tool_calls])
             messages.append(_tool_call_note(response.tool_calls))
             messages.append(_tool_results_message(response.tool_calls, results))
@@ -291,6 +304,48 @@ async def _force_answer(
     except Exception as e:  # noqa: BLE001 - best-effort final answer.
         logger.error("Tool final answer generation failed", error=str(e))
     return "Reuní la información pero no pude redactar la respuesta. ¿Puedes reformular?"
+
+
+class _RoundOutcome(NamedTuple):
+    results: list[str]  # one per requested call, in order (skipped repeats included)
+    ran: list[ToolCall]  # the calls that were actually executed
+    ran_results: list[str]
+
+
+def _call_key(call: ToolCall) -> tuple[str, str]:
+    """Identity of a call for repeat detection: tool name + canonical (sorted) args."""
+    return call.name, json.dumps(call.arguments, sort_keys=True, default=str)
+
+
+async def _dispatch_round(
+    toolkit: Toolkit,
+    calls: list[ToolCall],
+    user_id: str,
+    executed_writes: set[tuple[str, str]],
+) -> _RoundOutcome:
+    """Run one round's calls concurrently, skipping writes already run in an EARLIER round.
+
+    Identical writes inside the SAME round all run (a statement can hold two equal
+    charges); only a repeat in a later round is replaced by ``DUPLICATE_WRITE_RESULT``.
+    Read-only tools are never skipped. Only writes that APPLIED are recorded for later
+    rounds: a refused or failed call may legitimately be retried and gets the same answer.
+    """
+    is_repeat = [
+        call.name in MUTATING_TOOLS and _call_key(call) in executed_writes for call in calls
+    ]
+    for call, repeated in zip(calls, is_repeat, strict=True):
+        if repeated:
+            logger.warning("Skipped repeated write in the same turn", tool=call.name)
+    ran = [call for call, repeated in zip(calls, is_repeat, strict=True) if not repeated]
+    ran_results = list(await asyncio.gather(*[_safe_dispatch(toolkit, c, user_id) for c in ran]))
+    executed_writes.update(
+        _call_key(call)
+        for call, result in zip(ran, ran_results, strict=True)
+        if is_write_attempt(call.name, result)
+    )
+    fresh = iter(ran_results)
+    results = [DUPLICATE_WRITE_RESULT if repeated else next(fresh) for repeated in is_repeat]
+    return _RoundOutcome(results, ran, ran_results)
 
 
 async def _safe_dispatch(toolkit: Toolkit, call: ToolCall, user_id: str) -> str:

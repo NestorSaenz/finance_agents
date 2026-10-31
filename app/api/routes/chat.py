@@ -23,6 +23,7 @@ from app.core.logging import get_logger
 from app.core.observability import get_trace_callbacks
 from app.shared.dependencies import LLMVisionDep
 from app.shared.turn import TurnContext
+from app.src.analysis.dependencies import StatementReconcilerDep
 from app.src.auth.dependencies import CurrentUserId
 from app.src.chat.dependencies import ChatMemoryServiceDep
 from app.src.chat.models import ChatMessage
@@ -45,9 +46,11 @@ MAX_IMAGE_BYTES: Final[int] = 8 * 1024 * 1024  # 8 MB (decoded)
 MAX_IMAGE_BASE64_CHARS: Final[int] = 12 * 1024 * 1024  # ~12 MB of base64 text
 
 
-def get_ingestion_service(llm: LLMVisionDep) -> ImageIngestionServiceABC:
-    """Provide the image ingestion service, wired to a vision-capable LLM."""
-    return ImageIngestionService(llm)
+def get_ingestion_service(
+    llm: LLMVisionDep, reconciler: StatementReconcilerDep
+) -> ImageIngestionServiceABC:
+    """Provide the image ingestion service: a vision LLM plus the records reconciler."""
+    return ImageIngestionService(llm, reconciler)
 
 
 IngestionDep = Annotated[ImageIngestionServiceABC, Depends(get_ingestion_service)]
@@ -265,7 +268,9 @@ async def _handle_image(
     # The accompanying note ("estos son de mi tarjeta Nu") tells the extractor the
     # payment method/card, so it doesn't get asked again at registration.
     note = request.message.strip()
-    proposal = await ingestion.propose(image_bytes, mime_type, user_context, note)
+    proposal = await ingestion.propose(
+        image_bytes, mime_type, user_id, user_context=user_context, user_note=note
+    )
 
     # Persist the turn so the user's confirmation next message can register the batch
     # (the tool agent reads the proposal from history). Best-effort.

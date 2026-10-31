@@ -15,6 +15,8 @@ from app.shared.interfaces.database import QueryConfig, QueryResult
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, LLMResponse, Message
 from app.shared.turn import TurnContext
 from app.shared.types import CardId, UserId
+from app.src.analysis.interfaces import StatementReconcilerABC
+from app.src.analysis.models import ReconciliationResult, StatementLine
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.cards.models import (
     BudgetDateSync,
@@ -189,6 +191,28 @@ class FakePendingActionService(PendingActionServiceABC):
         self.keep_current.append(keep_current)
         if self._error is not None:
             raise self._error
+
+
+class FakeStatementReconciler(StatementReconcilerABC):
+    """Reconciler stub: answers with a canned result (or raises), recording its calls.
+
+    With no canned ``result`` every line is reported missing (nothing registered yet).
+    """
+
+    def __init__(
+        self, result: ReconciliationResult | None = None, error: Exception | None = None
+    ) -> None:
+        self._result = result
+        self._error = error
+        self.calls: list[tuple[UserId, list[StatementLine]]] = []
+
+    async def reconcile(
+        self, user_id: UserId, lines: list[StatementLine]
+    ) -> ReconciliationResult:
+        self.calls.append((user_id, lines))
+        if self._error is not None:
+            raise self._error
+        return self._result or ReconciliationResult(missing=lines)
 
 
 class InMemoryCardService(CreditCardServiceABC):

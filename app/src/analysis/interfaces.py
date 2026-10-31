@@ -6,7 +6,13 @@ from decimal import Decimal
 
 from app.shared.types import UserId
 
-from .models import FinancialSnapshot, MonthlyTotals, MovementCandidate
+from .models import (
+    FinancialSnapshot,
+    MonthlyTotals,
+    MovementCandidate,
+    ReconciliationResult,
+    StatementLine,
+)
 
 
 class AnalysisServiceABC(ABC):
@@ -65,4 +71,19 @@ class MovementFinderServiceABC(ABC):
         (searched over all history, bounded only by each service's fetch limit);
         a date alone scopes to that calendar month. At least one filter should be
         given (an all-empty query returns everything recent).
+        """
+
+
+class StatementReconcilerABC(ABC):
+    """Contract for comparing statement lines with the user's registered data."""
+
+    @abstractmethod
+    async def reconcile(
+        self, user_id: UserId, lines: list[StatementLine]
+    ) -> ReconciliationResult:
+        """Split ``lines`` into already-registered and missing.
+
+        Reads transactions and card payments over the lines' date range (plus a
+        small tolerance) and matches them one-to-one by kind, exact amount and
+        nearby date. Read-only; empty ``lines`` yields an empty result.
         """

@@ -11,6 +11,9 @@ is never part of the schema nor read from the model's arguments.
 
 from typing import Any
 
+from app.agents.tools.names import (
+    MANAGE_CATEGORY_TOOL,
+)
 from app.core.logging import get_logger
 from app.shared.types import UserId, normalize_category
 from app.src.budgets.interfaces import BudgetServiceABC
@@ -18,7 +21,6 @@ from app.src.transactions.interfaces import TransactionServiceABC
 
 logger = get_logger(__name__)
 
-MANAGE_CATEGORY_TOOL = "manage_category"
 
 CATEGORY_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {

@@ -11,6 +11,9 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
 
+from app.agents.tools.names import (
+    FIND_MOVEMENTS_TOOL,
+)
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.types import MovementKind, UserId
@@ -19,7 +22,6 @@ from app.src.analysis.models import MovementCandidate
 
 logger = get_logger(__name__)
 
-FIND_MOVEMENTS_TOOL = "find_movements"
 
 # Cap on candidates listed back (the count still reflects everything found).
 _DISPLAY_LIMIT: Final[int] = 15

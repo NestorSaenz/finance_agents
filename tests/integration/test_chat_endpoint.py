@@ -95,12 +95,19 @@ class StubIngestion:
     def __init__(self) -> None:
         self.calls: list[tuple[bytes, str]] = []
         self.notes: list[str] = []
+        self.user_ids: list[str] = []
 
     async def propose(
-        self, image: bytes, mime_type: str, user_context: str = "", user_note: str = ""
+        self,
+        image: bytes,
+        mime_type: str,
+        user_id: str,
+        user_context: str = "",
+        user_note: str = "",
     ) -> str:
         self.calls.append((image, mime_type))
         self.notes.append(user_note)
+        self.user_ids.append(user_id)
         return INGESTION_REPLY
 
 
@@ -190,6 +197,7 @@ class TestChatEndpoint:
         )
 
         assert stub.notes[-1] == "estos son de mi tarjeta Nu"
+        assert stub.user_ids[-1]  # the authenticated user reaches the reconciliation
 
     def test_pdf_triggers_ingestion_flow(self, client_with_fake_graph: TestClient) -> None:
         pdf_b64 = base64.b64encode(b"%PDF-1.4 fake").decode()

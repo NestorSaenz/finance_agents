@@ -15,6 +15,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.tools.names import (
+    SET_CURRENCY_TOOL,
+    SET_TIMEZONE_TOOL,
+    UPDATE_PROFILE_TOOL,
+)
 from app.core.exceptions import InvalidCurrencyError, InvalidTimezoneError
 from app.core.logging import get_logger
 from app.shared.types import UserId
@@ -23,9 +28,6 @@ from app.src.users.models import UserProfile, UserProfileUpdate
 
 logger = get_logger(__name__)
 
-SET_CURRENCY_TOOL = "set_currency"
-SET_TIMEZONE_TOOL = "set_timezone"
-UPDATE_PROFILE_TOOL = "update_profile"
 
 # A wrong currency corrupts every displayed amount, so the prompt must CONFIRM
 # the code with the user before calling this; the schema only carries the code.
