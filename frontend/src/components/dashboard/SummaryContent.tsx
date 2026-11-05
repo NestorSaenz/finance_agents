@@ -244,7 +244,11 @@ export function SummaryContent({
           title="Cómo voy en cada categoría"
           subtitle="Incluye tus gastos fijos y las compras a crédito según el mes en que las pagas. El aviso llega cuando tus gastos variables se acercan al tope o te pasas."
         >
-          <BudgetProgress data={budget} transactions={budgetTransactions} />
+          <BudgetProgress
+            data={budget}
+            transactions={budgetTransactions}
+            monthlyIncome={referenceIncome}
+          />
         </Section>
       )}
 

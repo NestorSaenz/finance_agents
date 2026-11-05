@@ -80,6 +80,13 @@ export function formatMoney(
   return formatterFor(currency).format(amount);
 }
 
+const percentFormatter = new Intl.NumberFormat("es", { maximumFractionDigits: 1 });
+
+/** A percentage (already ×100, e.g. 88.5) in Spanish format: "88,5%". */
+export function formatPercent(pct: number): string {
+  return `${percentFormatter.format(pct)}%`;
+}
+
 /** Format an ISO date (YYYY-MM-DD) as a short "3 jul" label. */
 export function formatDayMonth(iso: string): string {
   const date = new Date(`${iso}T00:00:00`);

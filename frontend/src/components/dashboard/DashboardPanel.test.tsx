@@ -175,6 +175,9 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("Alimentación")).toBeInTheDocument();
     // Income gauge uses the profile reference income.
     expect(screen.getByText("Gastos vs ingresos")).toBeInTheDocument();
+    // 5.000 of the 10.000.000 base income = 0,05% -> shown as 0,1%.
+    expect(screen.getByText(/Tus topes suman/).textContent).toContain("de tu ingreso");
+    expect(screen.getByText(/% de tu ingreso$/)).toBeInTheDocument();
   });
 
   it("requests transactions by budget_date alongside budget status", async () => {

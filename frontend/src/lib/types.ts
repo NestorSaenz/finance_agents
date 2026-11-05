@@ -65,7 +65,14 @@ export interface SpendingSummary {
 }
 
 export interface BudgetStatusItem {
-  budget: { id: string; name: string; category: string | null; amount: string };
+  budget: {
+    id: string;
+    name: string;
+    category: string | null;
+    amount: string;
+    /** Additive: older payloads omit it (backend default is monthly). */
+    period_type?: "weekly" | "monthly" | "yearly";
+  };
   spent: string;
   /** Part of `spent` that comes from recurring (fixed) expenses. Additive: older
    *  backends omit it. */

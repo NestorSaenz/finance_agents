@@ -4,10 +4,12 @@ import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { useMoney } from "@/context/CurrencyContext";
-import { categoryLabel } from "@/lib/format";
+import { budgetIncomeShare } from "@/lib/budgets";
+import { categoryLabel, formatPercent } from "@/lib/format";
 import type { BudgetStatusItem, BudgetStatusList, Transaction } from "@/lib/types";
 
 import { BudgetCategoryDetail } from "./BudgetCategoryDetail";
+import { BudgetIncomeSummary } from "./BudgetIncomeSummary";
 
 /** Colour a progress bar by spending vs the limit.
  *
@@ -39,9 +41,12 @@ interface BudgetProgressProps {
    *  shown, never recomputes it. Empty outside "este_mes" (budgets are current-
    *  period only, so there's nothing to expand there anyway). */
   transactions: Transaction[];
+  /** Base monthly income from the profile. Percentages of income are shown only
+   *  when this is > 0. */
+  monthlyIncome?: number;
 }
 
-export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
+export function BudgetProgress({ data, transactions, monthlyIncome }: BudgetProgressProps) {
   // One category's detail expands at a time (mirrors CardStatus's accordion).
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -65,6 +70,11 @@ export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
     [transactions],
   );
 
+  const share = useMemo(
+    () => budgetIncomeShare(data.statuses, monthlyIncome),
+    [data.statuses, monthlyIncome],
+  );
+
   if (data.statuses.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-line bg-surface p-4 text-center text-sm text-muted">
@@ -76,10 +86,12 @@ export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
 
   return (
     <div className="flex flex-col gap-3">
+      {share && <BudgetIncomeSummary share={share} />}
       {data.statuses.map((s) => (
         <BudgetRow
           key={s.budget.id}
           status={s}
+          incomePct={share?.pctById.get(s.budget.id)}
           rows={s.budget.category ? (byCategory.get(s.budget.category) ?? []) : allExpenseRows}
           isOpen={openId === s.budget.id}
           onToggle={() =>
@@ -94,10 +106,13 @@ export function BudgetProgress({ data, transactions }: BudgetProgressProps) {
 function BudgetRow({
   status: s,
   rows,
+  incomePct,
   isOpen,
   onToggle,
 }: {
   status: BudgetStatusItem;
+  /** % of base income this tope takes (undefined → not shown). */
+  incomePct?: number;
   rows: Transaction[];
   isOpen: boolean;
   onToggle: () => void;
@@ -151,6 +166,11 @@ function BudgetRow({
       <div className="mt-1">
         <Bar pct={pct} className={tone.bar} />
       </div>
+      {incomePct !== undefined && (
+        <p className="mt-0.5 text-[11px] tabular-nums text-muted">
+          {formatPercent(incomePct)} de tu ingreso
+        </p>
+      )}
 
       {hasDetail && isOpen && (
         <BudgetCategoryDetail

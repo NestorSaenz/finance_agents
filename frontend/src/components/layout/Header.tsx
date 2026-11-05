@@ -34,6 +34,7 @@ export function Header({ onNewChat, onOpenDashboard }: HeaderProps) {
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={onOpenDashboard}
+            aria-label="Abrir resumen"
             className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-slate-100 hover:text-ink"
           >
             <BarChart3 className="h-4 w-4" aria-hidden />

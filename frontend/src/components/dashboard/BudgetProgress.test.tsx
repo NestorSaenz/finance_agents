@@ -200,4 +200,64 @@ describe("BudgetProgress", () => {
     );
     expect(screen.getByText(/Aún no tienes topes definidos/i)).toBeInTheDocument();
   });
+
+  describe("share of income", () => {
+    const twoBudgets = list([
+      budgetItem({
+        budget: { id: "b1", name: "T", category: "transporte", amount: "3493000" },
+      }),
+      budgetItem({
+        budget: { id: "b2", name: "M", category: "mercado", amount: "1500000" },
+      }),
+    ]);
+
+    it("shows the total line and a percentage per tope", () => {
+      renderBudgets({ data: twoBudgets, monthlyIncome: 14350000 });
+      const summary = screen.getByText(/Tus topes suman/);
+      expect(summary.textContent).toMatch(/4[.,]993[.,]000/);
+      expect(summary.textContent).toContain("34,8%");
+      expect(screen.getByText("24,3% de tu ingreso")).toBeInTheDocument();
+      expect(screen.getByText("10,5% de tu ingreso")).toBeInTheDocument();
+    });
+
+    it("shows no percentages when income is missing or zero", () => {
+      const { unmount } = renderBudgets({ data: twoBudgets });
+      expect(screen.queryByText(/de tu ingreso/)).toBeNull();
+      unmount();
+      renderBudgets({ data: twoBudgets, monthlyIncome: 0 });
+      expect(screen.queryByText(/de tu ingreso/)).toBeNull();
+    });
+
+    it("lists the overall tope apart and leaves weekly ones without percentage", () => {
+      renderBudgets({
+        monthlyIncome: 1000000,
+        data: list([
+          budgetItem({
+            budget: { id: "c", name: "C", category: "otros", amount: "100000" },
+          }),
+          budgetItem({
+            budget: { id: "o", name: "General", category: null, amount: "800000" },
+          }),
+          budgetItem({
+            budget: {
+              id: "w",
+              name: "Semanal",
+              category: "mercado",
+              amount: "50000",
+              period_type: "weekly",
+            },
+          }),
+        ]),
+      });
+      expect(screen.getByText(/Tus topes suman/).textContent).toContain("10%");
+      expect(screen.getByText(/Tope general/).textContent).toContain("80%");
+      // Only the monthly category tope and the overall one carry a row percentage.
+      expect(screen.getAllByText(/^\d+(,\d)?% de tu ingreso$/)).toHaveLength(2);
+    });
+
+    it("adds a calm note when topes exceed the income", () => {
+      renderBudgets({ data: twoBudgets, monthlyIncome: 1000000 });
+      expect(screen.getByText(/más que tu ingreso base/)).toBeInTheDocument();
+    });
+  });
 });
