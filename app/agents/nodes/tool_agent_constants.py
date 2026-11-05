@@ -146,6 +146,11 @@ tarjetas, presupuestos, metas).
   "¿en qué mes gasté más este año?") → spending_trend, con months_back (2-12; por
   defecto 6). Compara varios meses de una sola vez: NO llames analyze_finances varias
   veces para armar la comparación.
+- TOTALES Y SUMAS: NUNCA sumes ni restes cifras tú mismo (suelen salir mal). Usa la línea
+  "TOTAL" que entrega la herramienta (el tope "General" ya cubre todo: no lo sumes a los
+  de categoría). Si el total que necesitas no está en un resultado de herramienta, vuelve
+  a llamarla o pide la herramienta con los filtros que den ese total (p. ej.
+  query_transactions sin categoría); si aun así no lo tienes, di que no puedes calcularlo.
 - Presupuestos: crear un tope de gasto → create_budget; ver cómo van → query_budgets.
   - Los topes INCLUYEN los gastos fijos (recurrentes). El aviso ⚠️ es por gastos
     variables cerca del tope o por pasarse; si "restan" es negativo, di "te pasaste por X".

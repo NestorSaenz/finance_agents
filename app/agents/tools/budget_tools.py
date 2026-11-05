@@ -7,8 +7,10 @@ at dispatch time and is NEVER part of the tool schema nor read from the model's
 arguments.
 """
 
+import asyncio
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -22,10 +24,19 @@ from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.types import BudgetPeriod, UserId, normalize_category
+from app.src.budgets.constants import MAX_PAGE_SIZE
 from app.src.budgets.interfaces import BudgetServiceABC
-from app.src.budgets.models import BudgetCreate, BudgetStatus
+from app.src.budgets.models import Budget, BudgetCreate, BudgetStatus
 
 logger = get_logger(__name__)
+
+# Status reads per query run concurrently, bounded so a big list can't flood the DB pool.
+_STATUS_CONCURRENCY: Final[int] = 8
+_PERIOD_LABELS: Final[dict[BudgetPeriod, str]] = {
+    BudgetPeriod.WEEKLY: "semanal",
+    BudgetPeriod.MONTHLY: "mensual",
+    BudgetPeriod.YEARLY: "anual",
+}
 
 
 BUDGET_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -175,22 +186,54 @@ class BudgetToolkit:
             f"({scope}, {created.period_type.value})."
         )
 
+    async def _list_all(self, user_id: UserId) -> tuple[list[Budget], int]:
+        """Every active budget (paging through the service) and the service's total count."""
+        budgets: list[Budget] = []
+        page = 1
+        while True:
+            items, total = await self._service.list_budgets(
+                user_id, page=page, page_size=MAX_PAGE_SIZE
+            )
+            budgets.extend(items)
+            if not items or len(budgets) >= total:
+                return budgets, total
+            page += 1
+
+    async def _status_or_none(
+        self, budget: Budget, user_id: UserId, gate: asyncio.Semaphore
+    ) -> BudgetStatus | None:
+        """The budget's status, or ``None`` when it could not be read (logged)."""
+        async with gate:
+            try:
+                return await self._service.get_budget_status(
+                    budget.id, user_id, as_of=current_today()
+                )
+            except Exception as e:  # noqa: BLE001 - one budget failing shouldn't drop the rest.
+                logger.warning("Budget status failed", budget_id=budget.id, error=str(e))
+                return None
+
     async def _query(self, user_id: UserId) -> str:
-        budgets, total = await self._service.list_budgets(user_id, page=1, page_size=20)
+        budgets, total = await self._list_all(user_id)
         if not budgets:
             return "No tienes presupuestos configurados."
 
-        lines: list[str] = []
-        for budget in budgets:
-            try:
-                status = await self._service.get_budget_status(
-                    budget.id, user_id, as_of=current_today()
-                )
-                lines.append(_format_status(status))
-            except Exception as e:  # noqa: BLE001 - one budget failing shouldn't drop the rest.
-                logger.warning("Budget status failed", budget_id=budget.id, error=str(e))
-                lines.append(f"- {budget.name}: límite ${budget.amount}")
-        return f"{total} presupuesto(s):\n" + "\n".join(lines)
+        gate = asyncio.Semaphore(_STATUS_CONCURRENCY)
+        # gather keeps the input order, so failed budgets stay where they were listed.
+        statuses = await asyncio.gather(
+            *[self._status_or_none(budget, user_id, gate) for budget in budgets]
+        )
+        entries = list(zip(budgets, statuses, strict=True))
+        lines = [
+            _format_status(status) if status else f"- {budget.name}: límite ${budget.amount}"
+            for budget, status in entries
+        ]
+        report = [f"{total} presupuesto(s):", *lines, *_format_totals(entries)]
+        if len(budgets) != total:
+            report.append(
+                f"Ojo: solo pude leer {len(budgets)} de {total} presupuestos; los totales no "
+                "los incluyen todos."
+            )
+        return "\n".join(report)
 
     async def _update(self, args: dict[str, Any], user_id: UserId) -> str:
         reference = str(args.get("reference", "")).strip()
@@ -224,6 +267,64 @@ class BudgetToolkit:
         except BudgetNotFoundError:
             return "No encontré ese presupuesto (quizás ya no existe)."
         return f"🗑️ Eliminé el presupuesto {deleted.name}."
+
+
+_Entry = tuple[Budget, BudgetStatus | None]
+
+
+def _plural(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _format_totals(entries: list[_Entry]) -> list[str]:
+    """TOTAL lines, summed here in Decimal so the model never adds amounts itself.
+
+    One group per (currency, period): amounts of different periods or currencies are
+    never mixed. Inside a group only the CATEGORY budgets are totalled: the overall
+    ("general") budget already covers every expense, so adding it would double count;
+    it is shown on its own line. A budget whose status failed still counts in the
+    topes; its spending is unknown, so ``gastado``/``restan`` cover the others only.
+    """
+    groups: dict[tuple[str, BudgetPeriod], list[_Entry]] = defaultdict(list)
+    for entry in entries:
+        budget = entry[0]
+        groups[(budget.currency.value, budget.period_type)].append(entry)
+
+    lines: list[str] = []
+    for (currency, period), group in groups.items():
+        label = "" if len(groups) == 1 else f" {_PERIOD_LABELS[period]} ({currency})"
+        by_category = [e for e in group if e[0].category]
+        if by_category:
+            lines.append(_category_total(by_category, label))
+        lines.extend(_general_line(e, label) for e in group if not e[0].category)
+    return lines
+
+
+def _category_total(group: list[_Entry], label: str) -> str:
+    topes = sum((b.amount for b, _ in group), Decimal("0"))
+    known = [s for _, s in group if s is not None]
+    unavailable = [b for b, s in group if s is None]
+    spent = sum((s.spent for s in known), Decimal("0"))
+    remaining = sum((s.remaining for s in known), Decimal("0"))
+    left = f"restan ${remaining}" if remaining >= 0 else f"te pasaste por ${-remaining}"
+    count = _plural(len(group), "presupuesto", "presupuestos")
+    over = sum(1 for s in known if s.remaining < 0)
+    # The net "restan" hides overspent budgets, so say how many went over.
+    overspent = f" ({_plural(over, 'pasado', 'pasados')})" if over else ""
+    head = f"TOTAL{label} (por categoría): topes ${topes}"
+    if not unavailable:
+        return f"{head} · gastado ${spent} · {left} ({count}){overspent}"
+    names = ", ".join(b.name for b in unavailable)
+    return (
+        f"{head} ({count}) · gastado ${spent} · {left} "
+        f"(solo de los {len(known)} con datos; sin datos de gasto: {names}){overspent}"
+    )
+
+
+def _general_line(entry: _Entry, label: str) -> str:
+    budget, status = entry
+    spent = f"gastado ${status.spent}" if status else "sin datos de gasto"
+    return f"General{label}: tope ${budget.amount} · {spent}"
 
 
 def _format_status(status: BudgetStatus) -> str:

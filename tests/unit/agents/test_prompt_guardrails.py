@@ -39,6 +39,16 @@ class TestNoInventedProposalGuardrail:
         assert "NUNCA digas que registraste" in TOOL_AGENT_SYSTEM_PROMPT
 
 
+class TestNoMentalArithmeticGuardrail:
+    def test_totals_come_from_the_tool_never_from_the_model(self) -> None:
+        assert "NUNCA sumes ni restes cifras tú mismo" in TOOL_AGENT_SYSTEM_PROMPT
+        assert 'línea\n  "TOTAL" que entrega la herramienta' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "con los filtros que den ese total" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "query_transactions sin categoría" in TOOL_AGENT_SYSTEM_PROMPT
+        assert 'tope "General" ya cubre todo' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "no puedes calcularlo" in TOOL_AGENT_SYSTEM_PROMPT
+
+
 class TestFileProposalRules:
     def test_registers_only_the_lines_under_the_proposal_header(self) -> None:
         assert f'DESPUÉS de "{PROPOSAL_HEADER}"' in TOOL_AGENT_SYSTEM_PROMPT
