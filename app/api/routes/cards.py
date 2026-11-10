@@ -1,11 +1,11 @@
 """Credit-card endpoints: register cards, list status, record payments."""
 
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Query
 
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.periods import resolve_period
 from app.src.auth.dependencies import CurrentUserId
 from app.src.cards.dependencies import CreditCardServiceDep
@@ -91,7 +91,7 @@ async def register_card_payment(
     user_id: CurrentUserId,
 ) -> CreditCardStatusResponse:
     """Record a payment toward a card, returning the card's updated status."""
-    payment_date = request.payment_date or datetime.now(UTC).date()
+    payment_date = request.payment_date or current_today()
     await service.register_payment(
         card_id,
         user_id,

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.shared.types import CurrencyType, GoalStatus, GoalType
+from app.shared.types import CurrencyType, GoalPlanKind, GoalStatus, GoalType
 
 from .constants import DEFAULT_PRIORITY
 
@@ -88,3 +88,81 @@ class GoalProgress(BaseModel):
     months_remaining: int | None
     required_monthly_contribution: Decimal | None
     on_track: bool
+
+
+class GoalPlan(BaseModel):
+    """A persisted savings-plan row for a goal and month (see migration 018).
+
+    ``month`` is always the first day of the month. A ``RECURRING`` row means
+    "from this month on, X per month"; an ``OVERRIDE`` row means "in this month
+    exactly X" (0 = this month I don't plan). Resolution of a month's plan lives
+    in ``planning.resolve_plan``.
+    """
+
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    id: str
+    goal_id: str
+    user_id: str
+    month: date
+    planned_amount: Decimal
+    kind: GoalPlanKind
+
+
+class GoalMonthContribution(BaseModel):
+    """GROSS amounts contributed to a goal within one month.
+
+    ``saved`` sums the positive aportes of the month and ``withdrawn`` the absolute
+    value of its retiros, so a withdrawal never cancels an aporte out.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    goal_id: str
+    month: date
+    saved: Decimal
+    withdrawn: Decimal
+
+
+class GoalPlanStatus(BaseModel):
+    """A goal's plan vs what was actually contributed in one month.
+
+    ``planned`` is what the user planned; ``effective_planned`` caps it at what the
+    goal still lacked at the start of the month (a bigger plan is accepted, but
+    ``remaining`` never asks for more than the goal can take). Amounts stay in the
+    goal's own currency (no conversion).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    goal_id: str
+    goal_name: str
+    currency: CurrencyType
+    month: date
+    planned: Decimal
+    effective_planned: Decimal
+    contributed_gross: Decimal
+    withdrawn: Decimal
+    remaining: Decimal
+    percentage: float
+    is_met: bool
+    goal_completed: bool
+
+
+class GoalMonthLine(BaseModel):
+    """One goal in one month of the month-by-month history.
+
+    ``planned`` is ``None`` when the goal had no plan that month (distinct from a
+    planned ``0``). ``cumulative`` is the goal's saved amount at the month's end.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    goal_id: str
+    goal_name: str
+    currency: CurrencyType
+    month: date
+    planned: Decimal | None
+    saved: Decimal
+    withdrawn: Decimal
+    cumulative: Decimal

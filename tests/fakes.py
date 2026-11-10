@@ -11,10 +11,11 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
+from app.core.exceptions import DatabaseQueryError
 from app.shared.interfaces.database import QueryConfig, QueryResult
 from app.shared.interfaces.llm import LLMConfig, LLMInterface, LLMResponse, Message
 from app.shared.turn import TurnContext
-from app.shared.types import CardId, UserId
+from app.shared.types import CardId, GoalId, GoalPlanKind, UserId
 from app.src.analysis.interfaces import StatementReconcilerABC
 from app.src.analysis.models import ReconciliationResult, StatementLine
 from app.src.cards.interfaces import CreditCardServiceABC
@@ -28,6 +29,8 @@ from app.src.cards.models import (
     CreditCardStatus,
     ScheduleUpdate,
 )
+from app.src.goals.interfaces import GoalContributionRepositoryABC, GoalPlanRepositoryABC
+from app.src.goals.models import GoalContribution, GoalPlan
 from app.src.pending.interfaces import PendingActionRepositoryABC, PendingActionServiceABC
 from app.src.pending.models import PendingAction
 from app.src.pending.types import PendingActionKind
@@ -391,6 +394,111 @@ class FakeDatabase:
     async def execute_rpc(self, function_name: str, params: dict[str, Any]) -> QueryResult:
         self.rpc_calls.append((function_name, params))
         return QueryResult(data=list(self.rpc_result), count=len(self.rpc_result))
+
+
+class RpcFailingDatabase(FakeDatabase):
+    """``FakeDatabase`` whose RPCs fail (as when the Postgres function isn't deployed)."""
+
+    async def execute_rpc(self, function_name: str, params: dict[str, Any]) -> QueryResult:
+        self.rpc_calls.append((function_name, params))
+        raise DatabaseQueryError("rpc", "function does not exist")
+
+
+class InMemoryGoalPlanRepository(GoalPlanRepositoryABC):
+    """Plan rows kept in memory, keyed like the table's UNIQUE(goal, month, kind)."""
+
+    def __init__(self, plans: list[GoalPlan] | None = None) -> None:
+        self.rows: dict[tuple[str, date, GoalPlanKind], GoalPlan] = {
+            (p.goal_id, p.month, p.kind): p for p in plans or []
+        }
+        self._next_id = 1
+
+    async def list_for_user(self, user_id: UserId) -> list[GoalPlan]:
+        return sorted((p for p in self.rows.values() if p.user_id == user_id), key=lambda p: p.month)
+
+    async def list_for_goal(self, user_id: UserId, goal_id: GoalId) -> list[GoalPlan]:
+        return [p for p in await self.list_for_user(user_id) if p.goal_id == goal_id]
+
+    async def upsert(
+        self, user_id: UserId, goal_id: GoalId, month: date, kind: GoalPlanKind, amount: Decimal
+    ) -> GoalPlan:
+        key = (goal_id, month, kind)
+        existing = self.rows.get(key)
+        plan = GoalPlan(
+            id=existing.id if existing else f"plan-{self._next_id}",
+            goal_id=goal_id,
+            user_id=user_id,
+            month=month,
+            planned_amount=amount,
+            kind=kind,
+        )
+        self._next_id += 1
+        self.rows[key] = plan
+        return plan
+
+    async def delete(
+        self, user_id: UserId, goal_id: GoalId, month: date, kind: GoalPlanKind
+    ) -> None:
+        self.rows.pop((goal_id, month, kind), None)
+
+
+class InMemoryContributionLedger(GoalContributionRepositoryABC):
+    """Dated contributions kept in memory (positive aportes, negative retiros)."""
+
+    def __init__(self, rows: list[GoalContribution] | None = None) -> None:
+        self.rows: list[GoalContribution] = list(rows or [])
+
+    def add(self, goal_id: str, amount: Decimal, day: date, user_id: str = "u1") -> None:
+        self.rows.append(
+            GoalContribution(
+                id=f"c-{len(self.rows) + 1}",
+                goal_id=goal_id,
+                user_id=user_id,
+                amount=amount,
+                contribution_date=day,
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+
+    async def create(
+        self, goal_id: GoalId, user_id: UserId, amount: Decimal, contribution_date: date
+    ) -> GoalContribution:
+        self.add(goal_id, amount, contribution_date, user_id)
+        return self.rows[-1]
+
+    async def sums_up_to(self, user_id: UserId, as_of: date) -> dict[str, Decimal]:
+        totals: dict[str, Decimal] = {}
+        for c in self.rows:
+            if c.user_id == user_id and c.contribution_date <= as_of:
+                totals[c.goal_id] = totals.get(c.goal_id, Decimal("0")) + c.amount
+        return totals
+
+    async def sum_for_goal(self, user_id: UserId, goal_id: GoalId) -> Decimal:
+        return sum(
+            (c.amount for c in self.rows if c.user_id == user_id and c.goal_id == goal_id),
+            start=Decimal("0"),
+        )
+
+    async def sum_in_period(self, user_id: UserId, start: date, end: date) -> Decimal:
+        return sum(
+            (c.amount for c in await self.list_in_period(user_id, start, end)),
+            start=Decimal("0"),
+        )
+
+    async def list_in_period(
+        self, user_id: UserId, period_start: date, period_end: date
+    ) -> list[GoalContribution]:
+        return [
+            c
+            for c in self.rows
+            if c.user_id == user_id and period_start <= c.contribution_date <= period_end
+        ]
+
+    async def list_for_goal(self, user_id: UserId, goal_id: GoalId) -> list[GoalContribution]:
+        return [c for c in self.rows if c.user_id == user_id and c.goal_id == goal_id]
+
+    async def delete(self, contribution_id: str, user_id: UserId) -> None:
+        self.rows = [c for c in self.rows if c.id != contribution_id]
 
 
 def make_transaction_row(**overrides: Any) -> dict[str, Any]:

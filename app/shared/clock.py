@@ -7,8 +7,9 @@ stored IANA timezone) and binds it to a ``ContextVar`` so every tool dispatched 
 that turn reads the same day, without threading the value through ``dispatch``
 (which keeps its ``(name, args, user_id)`` security contract intact).
 
-Outside a bound turn (background jobs, tests) ``current_today()`` falls back to
-UTC, so importing this never depends on a request being in flight.
+Outside a bound turn (REST requests, background jobs, tests) ``current_today()``
+falls back to the day in ``DEFAULT_TIMEZONE`` (Colombia), so importing this never
+depends on a request being in flight.
 """
 
 from collections.abc import Iterator
@@ -18,6 +19,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Final
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,7 +30,7 @@ STATEMENT_FUTURE_TOLERANCE: Final[timedelta] = timedelta(days=7)
 STATEMENT_MAX_AGE: Final[timedelta] = timedelta(days=90)
 
 # The user's local "today" for the current chat turn. ``None`` when no turn is
-# bound, so readers fall back to UTC (see ``current_today``).
+# bound, so readers fall back to ``DEFAULT_TIMEZONE`` (see ``current_today``).
 _LOCAL_TODAY: ContextVar[date | None] = ContextVar("local_today", default=None)
 
 
@@ -74,8 +76,14 @@ def bound_today(day: date) -> Iterator[None]:
 
 
 def current_today() -> date:
-    """Return the turn's bound local today, or UTC today outside a bound turn."""
-    return _LOCAL_TODAY.get() or datetime.now(UTC).date()
+    """Return "today" for the current request.
+
+    Precedence: the turn's bound local day (``bound_today``, resolved from the user's
+    profile timezone), else the app's default calendar day, ``DEFAULT_TIMEZONE``
+    (Colombia). Never the UTC day: between 19:00 and 24:00 in Bogotá UTC is already
+    tomorrow, which would flip a month or a card cycle one day early.
+    """
+    return _LOCAL_TODAY.get() or local_today(settings.DEFAULT_TIMEZONE)
 
 
 def resolve_statement_date(extracted: date, today: date) -> date:

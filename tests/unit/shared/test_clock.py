@@ -1,5 +1,6 @@
 """Unit tests for the request-scoped local-today clock."""
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 import pytest
@@ -11,6 +12,7 @@ from app.shared.clock import (
     local_today,
     resolve_statement_date,
 )
+from tests.conftest import BOGOTA_LATE_NIGHT
 
 
 def test_local_date_resolves_the_date_in_the_given_timezone() -> None:
@@ -47,17 +49,29 @@ def test_local_today_falls_back_to_utc_on_none() -> None:
     assert local_today(None) == datetime.now(UTC).date()
 
 
-def test_bound_today_sets_and_resets() -> None:
+def test_bound_today_sets_and_resets(freeze_now: Callable[[datetime], None]) -> None:
+    freeze_now(BOGOTA_LATE_NIGHT)
     frozen = date(2026, 8, 11)
-    assert current_today() != frozen or current_today() == datetime.now(UTC).date()
     with bound_today(frozen):
         assert current_today() == frozen
-    # After the block the binding is gone: back to UTC today.
-    assert current_today() == datetime.now(UTC).date()
+    # After the block the binding is gone: back to the default (Bogotá) day.
+    assert current_today() == date(2026, 10, 31)
 
 
-def test_current_today_outside_bind_is_utc_today() -> None:
-    assert current_today() == datetime.now(UTC).date()
+def test_current_today_outside_bind_is_the_bogota_day_not_utc(
+    freeze_now: Callable[[datetime], None],
+) -> None:
+    freeze_now(BOGOTA_LATE_NIGHT)  # 04:30Z on Nov 1 == 23:30 on Oct 31 in Bogotá
+
+    assert current_today() == date(2026, 10, 31)
+    assert BOGOTA_LATE_NIGHT.astimezone(UTC).date() == date(2026, 11, 1)  # UTC would differ
+
+
+def test_bound_today_wins_over_the_default(freeze_now: Callable[[datetime], None]) -> None:
+    freeze_now(BOGOTA_LATE_NIGHT)
+
+    with bound_today(date(2026, 11, 1)):  # e.g. a user in Tokyo
+        assert current_today() == date(2026, 11, 1)
 
 
 def test_bound_today_nests_and_restores_outer() -> None:

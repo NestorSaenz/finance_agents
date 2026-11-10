@@ -5,13 +5,17 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from app.shared.types import GoalId, UserId
+from app.shared.types import GoalId, GoalPlanClearMode, GoalPlanKind, GoalPlanScope, UserId
 
 from .models import (
     Goal,
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalMonthContribution,
+    GoalMonthLine,
+    GoalPlan,
+    GoalPlanStatus,
     GoalProgress,
 )
 
@@ -103,6 +107,52 @@ class GoalContributionRepositoryABC(ABC):
         """Delete a single contribution (scoped by ``user_id``)."""
 
 
+class GoalPlanRepositoryABC(ABC):
+    """Contract for goal-plan persistence (data access only)."""
+
+    @abstractmethod
+    async def list_for_user(self, user_id: UserId) -> list[GoalPlan]:
+        """Return every plan row of the user (all goals), oldest month first."""
+
+    @abstractmethod
+    async def list_for_goal(self, user_id: UserId, goal_id: GoalId) -> list[GoalPlan]:
+        """Return a goal's plan rows, oldest month first."""
+
+    @abstractmethod
+    async def upsert(
+        self,
+        user_id: UserId,
+        goal_id: GoalId,
+        month: date,
+        kind: GoalPlanKind,
+        amount: Decimal,
+    ) -> GoalPlan:
+        """Create or update the ``(goal, month, kind)`` row and return it.
+
+        ``month`` must already be the first day of the month.
+        """
+
+    @abstractmethod
+    async def delete(
+        self, user_id: UserId, goal_id: GoalId, month: date, kind: GoalPlanKind
+    ) -> None:
+        """Delete the ``(goal, month, kind)`` row (a no-op when it does not exist)."""
+
+
+class ContributionMonthsProviderABC(ABC):
+    """Contract for the gross contributed amounts per goal and month."""
+
+    @abstractmethod
+    async def monthly_totals(
+        self, user_id: UserId, start: date, end: date
+    ) -> list[GoalMonthContribution]:
+        """Return gross ``saved``/``withdrawn`` per ``(goal, month)`` within ``[start, end]``.
+
+        Months with no movement produce no entry. Grouped by the month of each
+        contribution's date; sorted by goal then month.
+        """
+
+
 class GoalServiceABC(ABC):
     """Contract for goal use cases (business logic)."""
 
@@ -139,7 +189,9 @@ class GoalServiceABC(ABC):
     ) -> Goal:
         """Record a dated contribution, completing the goal if the target is reached.
 
-        ``contribution_date`` defaults to today when omitted.
+        ``contribution_date`` defaults to the caller's local today (``current_today()``:
+        the turn's bound day, else the ``DEFAULT_TIMEZONE`` day); the REST route passes
+        the user's local date explicitly.
         """
 
     @abstractmethod
@@ -249,4 +301,69 @@ class GoalServiceABC(ABC):
         reads as parked). Resuming re-derives ACTIVE/COMPLETED from the saved
         amount vs the target. Idempotent: pausing a paused goal (or resuming an
         active one) is a harmless no-op.
+        """
+
+    @abstractmethod
+    async def set_plan(
+        self,
+        user_id: UserId,
+        goal_id: GoalId,
+        amount: Decimal,
+        month: date,
+        scope: GoalPlanScope,
+    ) -> Decimal | None:
+        """Plan ``amount`` for a goal in ``month`` and return that month's plan afterwards.
+
+        ``month`` is normalized to its first day. ``SOLO_MES`` writes an override
+        for that month only; ``DESDE_MES`` writes a recurring from that month on
+        (dropping that month's override so it takes effect). Past and future months
+        are allowed. Raises ``InvalidAmountError`` for a negative amount and
+        ``GoalNotFoundError`` when the goal is missing.
+        """
+
+    @abstractmethod
+    async def clear_plan(
+        self,
+        user_id: UserId,
+        goal_id: GoalId,
+        month: date,
+        mode: GoalPlanClearMode,
+    ) -> Decimal | None:
+        """Clear a goal's plan for ``month`` and return that month's plan afterwards.
+
+        ``SIN_PLAN``: this month I don't plan (override of 0). ``VOLVER_AL_GENERAL``:
+        drop the month's override so the recurring applies again. ``TERMINAR``: stop
+        planning from this month on (recurring of 0). Raises ``GoalNotFoundError``.
+        """
+
+    @abstractmethod
+    async def get_plan_status(
+        self,
+        user_id: UserId,
+        period_start: date,
+        period_end: date,
+        today: date | None = None,
+    ) -> list[GoalPlanStatus]:
+        """Return plan vs contributed for the single month of ``[period_start, period_end]``.
+
+        Includes ACTIVE goals planning more than 0 that month, and COMPLETED goals
+        that received contributions in it. PAUSED/CANCELLED goals are left out of the
+        current and future months (``today`` defaults to ``current_today()``), while
+        past months keep their plans. Raises ``InvalidPlanPeriodError`` when the
+        range spans more than one month.
+        """
+
+    @abstractmethod
+    async def get_monthly_history(
+        self,
+        user_id: UserId,
+        months: int = 6,
+        to_month: date | None = None,
+        today: date | None = None,
+    ) -> list[GoalMonthLine]:
+        """Return plan vs contributed per goal and month, ``months`` months before
+        ``to_month`` plus ``to_month`` itself (default: the current month).
+
+        Future months only appear for goals that have a plan in them. Lines are
+        ordered by goal, then month.
         """

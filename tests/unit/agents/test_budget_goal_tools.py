@@ -1,6 +1,6 @@
 """Unit tests for the budget and goal toolkits + the composite toolkit."""
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -9,10 +9,13 @@ from app.agents.tools.budget_tools import BudgetToolkit
 from app.agents.tools.composite_toolkit import CompositeToolkit
 from app.agents.tools.goal_tools import GoalToolkit
 from app.core.exceptions import GoalWithdrawalExceedsBalanceError
+from app.shared.clock import current_today
 from app.shared.types import (
     BudgetPeriod,
     CategoryType,
     CurrencyType,
+    GoalPlanClearMode,
+    GoalPlanScope,
     GoalStatus,
     GoalType,
 )
@@ -24,6 +27,8 @@ from app.src.goals.models import (
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalMonthLine,
+    GoalPlanStatus,
     GoalProgress,
 )
 
@@ -181,6 +186,43 @@ class FakeGoalService(GoalServiceABC):
     ) -> Goal:
         self.set_amounts.append((goal_id, user_id, amount, on_date))
         return _goal(id=goal_id, current_amount=amount)
+
+    async def set_plan(
+        self,
+        user_id: str,
+        goal_id: str,
+        amount: Decimal,
+        month: date,
+        scope: GoalPlanScope,
+    ) -> Decimal | None:
+        return amount
+
+    async def clear_plan(
+        self,
+        user_id: str,
+        goal_id: str,
+        month: date,
+        mode: GoalPlanClearMode,
+    ) -> Decimal | None:
+        return None
+
+    async def get_plan_status(
+        self,
+        user_id: str,
+        period_start: date,
+        period_end: date,
+        today: date | None = None,
+    ) -> list[GoalPlanStatus]:
+        return []
+
+    async def get_monthly_history(
+        self,
+        user_id: str,
+        months: int = 6,
+        to_month: date | None = None,
+        today: date | None = None,
+    ) -> list[GoalMonthLine]:
+        return []
 
     async def contributed_in_period(
         self, user_id: str, period_start: date, period_end: date
@@ -391,7 +433,7 @@ class TestGoalToolkit:
         )
         goal_id, user_id, amount, when = service.contributions[0]
         assert goal_id == "g9" and user_id == "u1" and amount == Decimal("5000")
-        assert when == datetime.now(UTC).date()  # defaults to today
+        assert when == current_today()  # defaults to the local (Bogotá) today
         assert "30000" in result  # 25000 + 5000
 
     async def test_contribute_honors_stated_date(self) -> None:
@@ -571,7 +613,7 @@ class TestGoalToolkit:
         )
         goal_id, user_id, amount, when = service.withdrawals[0]
         assert goal_id == "g9" and user_id == "u1" and amount == Decimal("5000")
-        assert when == datetime.now(UTC).date()  # defaults to today
+        assert when == current_today()  # defaults to the local (Bogotá) today
         assert "🏦" in result and "20000" in result  # 25000 - 5000
         assert "disponible" in result.lower()
 
@@ -616,7 +658,7 @@ class TestGoalToolkit:
         )
         goal_id, user_id, amount, when = service.set_amounts[0]
         assert goal_id == "g9" and user_id == "u1" and amount == Decimal("40000")
-        assert when == datetime.now(UTC).date()  # defaults to today
+        assert when == current_today()  # defaults to the local (Bogotá) today
         assert "✅" in result and "40000" in result
 
     async def test_set_goal_amount_honors_stated_date(self) -> None:

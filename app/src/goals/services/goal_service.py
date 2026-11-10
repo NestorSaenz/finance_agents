@@ -1,19 +1,40 @@
 """Goal use cases (business logic), including progress and contributions."""
 
-from datetime import UTC, date, datetime
+from collections import defaultdict
+from collections.abc import Sequence
+from datetime import date, timedelta
 from decimal import Decimal
+from itertools import accumulate, islice
 
+from app.core.config import settings
 from app.core.exceptions import (
     GoalNotFoundError,
     GoalWithdrawalExceedsBalanceError,
     InvalidAmountError,
+    InvalidPlanPeriodError,
 )
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.serialization import decimal_to_db
-from app.shared.types import GoalId, GoalStatus, UserId
+from app.shared.types import (
+    GoalId,
+    GoalPlanClearMode,
+    GoalPlanKind,
+    GoalPlanScope,
+    GoalStatus,
+    UserId,
+)
 
+from ..constants import (
+    DEFAULT_HISTORY_MONTHS,
+    MAX_HISTORY_MONTHS,
+    MAX_PLANNED_AMOUNT,
+    PLAN_AMOUNT_QUANTUM,
+)
 from ..interfaces import (
+    ContributionMonthsProviderABC,
     GoalContributionRepositoryABC,
+    GoalPlanRepositoryABC,
     GoalRepositoryABC,
     GoalServiceABC,
 )
@@ -22,7 +43,19 @@ from ..models import (
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalMonthContribution,
+    GoalMonthLine,
+    GoalPlan,
+    GoalPlanStatus,
     GoalProgress,
+)
+from ..planning import (
+    add_months,
+    first_of_month,
+    goal_created_month,
+    last_of_month,
+    month_range,
+    resolve_plan,
 )
 
 logger = get_logger(__name__)
@@ -35,9 +68,13 @@ class GoalService(GoalServiceABC):
         self,
         repository: GoalRepositoryABC,
         contributions: GoalContributionRepositoryABC,
+        plans: GoalPlanRepositoryABC,
+        months: ContributionMonthsProviderABC,
     ) -> None:
         self._repository = repository
         self._contributions = contributions
+        self._plans = plans
+        self._months = months
 
     async def create_goal(self, goal: GoalCreate, user_id: UserId) -> Goal:
         return await self._repository.create(goal, user_id)
@@ -80,7 +117,7 @@ class GoalService(GoalServiceABC):
         goal = await self.get_goal(goal_id, user_id)
 
         await self._contributions.create(
-            goal_id, user_id, amount, contribution_date or _today()
+            goal_id, user_id, amount, contribution_date or current_today()
         )
 
         # Recompute ``current_amount`` from the ledger (never ``current ± amount``)
@@ -269,17 +306,177 @@ class GoalService(GoalServiceABC):
             goal_id, user_id, {"status": new_status.value}
         )
 
+    async def set_plan(
+        self,
+        user_id: UserId,
+        goal_id: GoalId,
+        amount: Decimal,
+        month: date,
+        scope: GoalPlanScope,
+    ) -> Decimal | None:
+        planned = _validated_plan_amount(amount)
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        target = first_of_month(month)
+        _ensure_not_before_creation(goal, target)
+
+        if scope == GoalPlanScope.DESDE_MES:
+            # "From this month on" replaces what was planned ahead: later recurrings
+            # would otherwise keep winning, and this month's override would shadow the
+            # new one. Later overrides are specific months and stay. Delete first so a
+            # failed write leaves the previous plan intact.
+            rows = await self._plans.list_for_goal(user_id, goal_id)
+            await self._delete_rows(
+                user_id,
+                [
+                    p
+                    for p in rows
+                    if (p.kind == GoalPlanKind.RECURRING and p.month > target)
+                    or (p.kind == GoalPlanKind.OVERRIDE and p.month == target)
+                ],
+            )
+            await self._plans.upsert(user_id, goal_id, target, GoalPlanKind.RECURRING, planned)
+        else:
+            await self._plans.upsert(user_id, goal_id, target, GoalPlanKind.OVERRIDE, planned)
+
+        logger.info("Goal plan set", goal_id=goal_id, user_id=user_id, scope=scope.value)
+        return await self._plan_for_month(goal, user_id, target)
+
+    async def clear_plan(
+        self,
+        user_id: UserId,
+        goal_id: GoalId,
+        month: date,
+        mode: GoalPlanClearMode,
+    ) -> Decimal | None:
+        goal = await self.get_goal(goal_id, user_id)  # existence/ownership check
+        target = first_of_month(month)
+        _ensure_not_before_creation(goal, target)
+
+        if mode == GoalPlanClearMode.SIN_PLAN:
+            await self._plans.upsert(
+                user_id, goal_id, target, GoalPlanKind.OVERRIDE, Decimal("0")
+            )
+        elif mode == GoalPlanClearMode.TERMINAR:
+            # Stop planning from this month on: nothing planned ahead may survive.
+            rows = await self._plans.list_for_goal(user_id, goal_id)
+            await self._delete_rows(
+                user_id,
+                [
+                    p
+                    for p in rows
+                    if (p.kind == GoalPlanKind.RECURRING and p.month > target)
+                    or (p.kind == GoalPlanKind.OVERRIDE and p.month >= target)
+                ],
+            )
+            await self._plans.upsert(
+                user_id, goal_id, target, GoalPlanKind.RECURRING, Decimal("0")
+            )
+        else:  # VOLVER_AL_GENERAL
+            await self._plans.delete(user_id, goal_id, target, GoalPlanKind.OVERRIDE)
+
+        logger.info("Goal plan cleared", goal_id=goal_id, user_id=user_id, mode=mode.value)
+        return await self._plan_for_month(goal, user_id, target)
+
+    async def get_plan_status(
+        self,
+        user_id: UserId,
+        period_start: date,
+        period_end: date,
+        today: date | None = None,
+    ) -> list[GoalPlanStatus]:
+        plans = self._plans
+        provider = self._months
+        month = first_of_month(period_start)
+        if first_of_month(period_end) != month:
+            raise InvalidPlanPeriodError("the period must fall within a single month")
+        current_month = first_of_month(today or current_today())
+
+        goals = await self._list_all_goals(user_id)
+        all_plans = _plans_by_goal(await plans.list_for_user(user_id))
+        totals = {
+            t.goal_id: t
+            for t in await provider.monthly_totals(user_id, month, last_of_month(month))
+        }
+        # What each goal held when the month began: caps a plan at what was still missing.
+        opening = await self._contributions.sums_up_to(user_id, month - timedelta(days=1))
+
+        statuses = (
+            _build_status(
+                goal,
+                month,
+                resolve_plan(
+                    all_plans.get(goal.id, []), month, _created_month(goal)
+                ),
+                totals.get(goal.id),
+                opening.get(goal.id, Decimal("0")),
+                is_current_or_future=month >= current_month,
+            )
+            for goal in goals
+        )
+        return [status for status in statuses if status is not None]
+
+    async def get_monthly_history(
+        self,
+        user_id: UserId,
+        months: int = DEFAULT_HISTORY_MONTHS,
+        to_month: date | None = None,
+        today: date | None = None,
+    ) -> list[GoalMonthLine]:
+        if not 1 <= months <= MAX_HISTORY_MONTHS:
+            raise InvalidPlanPeriodError(f"months must be between 1 and {MAX_HISTORY_MONTHS}")
+        plans = self._plans
+        provider = self._months
+        current_month = first_of_month(today or current_today())
+        end_month = first_of_month(to_month) if to_month else current_month
+        start_month = add_months(end_month, -months)
+        window = month_range(start_month, end_month)
+
+        goals = await self._list_all_goals(user_id)
+        all_plans = _plans_by_goal(await plans.list_for_user(user_id))
+        totals = {
+            (t.goal_id, t.month): t
+            for t in await provider.monthly_totals(user_id, start_month, last_of_month(end_month))
+        }
+        opening = await self._contributions.sums_up_to(user_id, start_month - timedelta(days=1))
+
+        return [
+            line
+            for goal in goals
+            for line in _goal_history(
+                goal,
+                window,
+                all_plans.get(goal.id, []),
+                totals,
+                opening.get(goal.id, Decimal("0")),
+                current_month,
+            )
+        ]
+
     async def get_progress(
         self, goal_id: GoalId, user_id: UserId, as_of: date | None = None
     ) -> GoalProgress:
         goal = await self.get_goal(goal_id, user_id)
-        return _build_progress(goal, as_of or _today())
+        return _build_progress(goal, as_of or current_today())
 
     async def list_contributions(
         self, goal_id: GoalId, user_id: UserId
     ) -> list[GoalContribution]:
         await self.get_goal(goal_id, user_id)  # existence/ownership check
         return await self._contributions.list_for_goal(user_id, goal_id)
+
+    async def _delete_rows(self, user_id: UserId, rows: Sequence[GoalPlan]) -> None:
+        """Delete plan rows one by one (the adapter only filters by equality)."""
+        for row in rows:
+            await self._plans.delete(user_id, row.goal_id, row.month, row.kind)
+
+    async def _list_all_goals(self, user_id: UserId) -> list[Goal]:
+        total = await self._repository.count(user_id)
+        return await self._repository.list_page(user_id, limit=max(total, 1), offset=0)
+
+    async def _plan_for_month(self, goal: Goal, user_id: UserId, month: date) -> Decimal | None:
+        """Resolve a goal's plan for ``month`` from its stored rows."""
+        rows = await self._plans.list_for_goal(user_id, goal.id)
+        return resolve_plan(rows, month, _created_month(goal))
 
     async def _recompute_cache(self, goal: Goal, user_id: UserId) -> Goal:
         """Persist ``current_amount = sum(all contributions)`` and re-derive status.
@@ -374,5 +571,121 @@ def _required_monthly(remaining: Decimal, months_remaining: int | None) -> Decim
     return (remaining / Decimal(months_remaining)).quantize(Decimal("0.01"))
 
 
-def _today() -> date:
-    return datetime.now(UTC).date()
+def _created_month(goal: Goal) -> date:
+    """The month a goal was created in, on the app's default-timezone calendar."""
+    return goal_created_month(goal.created_at, settings.DEFAULT_TIMEZONE)
+
+
+def _ensure_not_before_creation(goal: Goal, month: date) -> None:
+    """Reject planning a month earlier than the goal's creation month."""
+    if month < _created_month(goal):
+        raise InvalidPlanPeriodError(
+            f"{month.isoformat()[:7]} es anterior a la fecha en que se creó la meta: "
+            "no se puede planear antes de crear la meta"
+        )
+
+
+def _validated_plan_amount(amount: Decimal) -> Decimal:
+    """Return ``amount`` rounded to cents, or raise ``InvalidAmountError``.
+
+    A plan may be 0 ("don't plan") but never negative, non-finite or beyond what
+    the NUMERIC(12, 2) column can store.
+    """
+    if not amount.is_finite() or amount < 0:
+        raise InvalidAmountError(float(amount), "Plan amount must be zero or positive")
+    if amount > MAX_PLANNED_AMOUNT:
+        raise InvalidAmountError(float(amount), "Plan amount is too large")
+    return amount.quantize(PLAN_AMOUNT_QUANTUM)
+
+
+def _plans_by_goal(plans: Sequence[GoalPlan]) -> dict[str, list[GoalPlan]]:
+    """Group plan rows by goal id."""
+    grouped: dict[str, list[GoalPlan]] = defaultdict(list)
+    for plan in plans:
+        grouped[plan.goal_id].append(plan)
+    return grouped
+
+
+def _build_status(
+    goal: Goal,
+    month: date,
+    planned: Decimal | None,
+    totals: GoalMonthContribution | None,
+    opening: Decimal,
+    *,
+    is_current_or_future: bool,
+) -> GoalPlanStatus | None:
+    """Evaluate a goal's plan for ``month``, or ``None`` when it doesn't belong in it.
+
+    Left out: goals without a plan (or a plan of 0) in the month; PAUSED/CANCELLED
+    goals in the current and future months (pause has no history, so past months
+    keep their plans); goals already complete at the start of the month that got
+    no contribution in it.
+    """
+    saved = totals.saved if totals else Decimal("0")
+    withdrawn = totals.withdrawn if totals else Decimal("0")
+
+    if planned is None or planned <= 0:
+        return None
+    if is_current_or_future and goal.status in (GoalStatus.PAUSED, GoalStatus.CANCELLED):
+        return None
+    # Already complete when the month began and nothing went in: nothing to plan. Judged
+    # from the balance at that month, not from the goal's status today.
+    if opening >= goal.target_amount and saved <= 0:
+        return None
+
+    # A plan bigger than what the goal still lacked is accepted, but "faltan" never
+    # asks for more than the goal can take.
+    effective = min(planned, max(goal.target_amount - opening, Decimal("0")))
+    remaining = max(effective - saved, Decimal("0"))
+    percentage = 100.0 if effective == 0 else round(float(saved / effective * 100), 2)
+    return GoalPlanStatus(
+        goal_id=goal.id,
+        goal_name=goal.name,
+        currency=goal.currency,
+        month=month,
+        planned=planned,
+        effective_planned=effective,
+        contributed_gross=saved,
+        withdrawn=withdrawn,
+        remaining=remaining,
+        percentage=percentage,
+        is_met=remaining == 0,
+        goal_completed=opening + saved - withdrawn >= goal.target_amount,
+    )
+
+
+def _goal_history(
+    goal: Goal,
+    window: Sequence[date],
+    plans: Sequence[GoalPlan],
+    totals: dict[tuple[str, date], GoalMonthContribution],
+    opening: Decimal,
+    current_month: date,
+) -> list[GoalMonthLine]:
+    """Build a goal's month lines over ``window`` (oldest first).
+
+    A month is listed when the goal had movement in it, a plan for it, or it is a
+    past/current month from the goal's creation on; future months need a plan.
+    """
+    created = _created_month(goal)
+    movements = [totals.get((goal.id, month)) for month in window]
+    nets = ((m.saved - m.withdrawn) if m else Decimal("0") for m in movements)
+    cumulatives = islice(accumulate(nets, initial=opening), 1, None)
+
+    return [
+        GoalMonthLine(
+            goal_id=goal.id,
+            goal_name=goal.name,
+            currency=goal.currency,
+            month=month,
+            planned=planned,
+            saved=movement.saved if movement else Decimal("0"),
+            withdrawn=movement.withdrawn if movement else Decimal("0"),
+            cumulative=cumulative,
+        )
+        for month, movement, cumulative in zip(window, movements, cumulatives, strict=True)
+        for planned in [resolve_plan(plans, month, created)]
+        if movement is not None or planned is not None or created <= month <= current_month
+    ]
+

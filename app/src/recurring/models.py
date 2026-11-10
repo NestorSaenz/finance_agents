@@ -5,12 +5,13 @@ rent, a subscription). A daily job materializes the due ones into real
 transactions via the transaction service; the template only carries the schedule.
 """
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.shared.clock import current_today
 from app.shared.types import Category, PaymentMethod, TransactionType
 
 
@@ -22,10 +23,6 @@ class RecurringFrequency(StrEnum):
     """
 
     MONTHLY = "monthly"
-
-
-def _today() -> date:
-    return datetime.now(UTC).date()
 
 
 class RecurringCreate(BaseModel):
@@ -44,7 +41,7 @@ class RecurringCreate(BaseModel):
     card_id: str | None = None  # credit card this charge belongs to (if any)
     frequency: RecurringFrequency = RecurringFrequency.MONTHLY
     day_of_month: int = Field(..., ge=1, le=31, description="Day of month (1-31)")
-    next_run_date: date = Field(default_factory=_today)
+    next_run_date: date = Field(default_factory=current_today)
     active: bool = True
 
     @model_validator(mode="after")

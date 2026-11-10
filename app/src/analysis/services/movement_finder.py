@@ -9,10 +9,11 @@ confirm and route deletion to the right tool. Read-only: it never mutates.
 """
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Final
 
+from app.shared.clock import current_today
 from app.shared.text_match import contains_normalized, names_match
 from app.shared.types import MovementKind, TransactionType, UserId
 from app.src.cards.interfaces import CreditCardServiceABC
@@ -54,7 +55,7 @@ class MovementFinder(MovementFinderServiceABC):
         text: str | None = None,
         today: date | None = None,
     ) -> list[MovementCandidate]:
-        reference = today or datetime.now(UTC).date()
+        reference = today or current_today()
         start, end = _search_window(amount, on_date, text, reference)
 
         # Independent reads → fetch concurrently (latency ≈ the slowest, not the

@@ -12,6 +12,8 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import TypeVar
 
+from app.shared.clock import current_today
+
 E = TypeVar("E", bound=Enum)
 
 
@@ -44,8 +46,8 @@ def parse_date(value: object) -> date:
         try:
             return date.fromisoformat(value[:10])
         except ValueError:
-            return datetime.now(UTC).date()
-    return datetime.now(UTC).date()
+            return current_today()
+    return current_today()
 
 
 def parse_optional_date(value: object) -> date | None:

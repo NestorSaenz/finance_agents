@@ -1,12 +1,21 @@
 """Goal endpoints: CRUD, contributions, and progress tracking."""
 
+from datetime import date
 from decimal import Decimal
+from typing import Final
 
-from fastapi import APIRouter, Query
+import httpx
+from fastapi import APIRouter, Path, Query
+from postgrest.exceptions import APIError
 
+from app.core.config import settings
+from app.core.exceptions import DatabaseError
 from app.core.logging import get_logger
-from app.shared.periods import resolve_period
+from app.shared.clock import local_today
+from app.shared.periods import TODO, resolve_period
+from app.shared.types import GoalPlanClearMode, UserId
 from app.src.auth.dependencies import CurrentUserId
+from app.src.goals.constants import DEFAULT_HISTORY_MONTHS, MAX_HISTORY_MONTHS
 from app.src.goals.dependencies import GoalServiceDep
 from app.src.goals.dto import (
     GoalContributeRequest,
@@ -14,15 +23,43 @@ from app.src.goals.dto import (
     GoalContributionsResponse,
     GoalCreateRequest,
     GoalListResponse,
+    GoalMonthlyHistoryResponse,
+    GoalPlanRequest,
+    GoalPlanResponse,
+    GoalPlanStatusListResponse,
     GoalProgressResponse,
     GoalResponse,
     GoalUpdateRequest,
 )
 from app.src.goals.models import GoalCreate
+from app.src.goals.planning import month_key
+from app.src.users.dependencies import UserProfileServiceDep
 
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# A profile read that fails must not block a contribution: fall back to the app timezone.
+_PROFILE_FAILURES: Final = (DatabaseError, APIError, httpx.HTTPError)
+
+# A month as YYYY-MM (year 1000+, month 01-12) and the reporting periods that include it.
+# No lookaheads: pydantic validates patterns with a regex engine that doesn't support them.
+_MONTH_PATTERN: Final = r"^[1-9]\d{3}-(0[1-9]|1[0-2])$"
+_PERIOD_PATTERN: Final = r"^(este_mes|mes_pasado|todo|[1-9]\d{3}-(0[1-9]|1[0-2]))$"
+
+
+async def _user_today(profiles: UserProfileServiceDep, user_id: UserId) -> date:
+    """Today on the USER's calendar (profile timezone), never the server's UTC day.
+
+    Near midnight in Colombia the UTC date is already tomorrow, which would date an
+    aporte made at 23:06 on the 30th as the 1st.
+    """
+    try:
+        timezone = (await profiles.get_profile(user_id)).timezone
+    except _PROFILE_FAILURES as e:
+        logger.warning("Could not load profile timezone", user_id=user_id, error=str(e))
+        timezone = None
+    return local_today((timezone or "").strip() or settings.DEFAULT_TIMEZONE)
 
 
 @router.post("", response_model=GoalResponse)
@@ -95,6 +132,58 @@ async def list_goal_contributions(
     )
 
 
+@router.get("/plan-status", response_model=GoalPlanStatusListResponse)
+async def get_goal_plan_status(
+    service: GoalServiceDep,
+    profiles: UserProfileServiceDep,
+    user_id: CurrentUserId,
+    period: str = Query(
+        default="este_mes",
+        pattern=_PERIOD_PATTERN,
+        description="Month to evaluate: 'este_mes', 'mes_pasado', a month 'YYYY-MM' or "
+        "'todo' (no plan block: returns an empty list)",
+    ),
+) -> GoalPlanStatusListResponse:
+    """Plan vs contributed per goal for a month (totals grouped by currency).
+
+    Declared BEFORE ``/{goal_id}`` so the literal ``/plan-status`` path isn't
+    swallowed by the goal-id path parameter.
+    """
+    if period == TODO:
+        return GoalPlanStatusListResponse.from_domain([])
+    today = await _user_today(profiles, user_id)
+    start, end = resolve_period(period, today)
+    statuses = await service.get_plan_status(user_id, start, end, today)
+    return GoalPlanStatusListResponse.from_domain(statuses)
+
+
+@router.get("/monthly", response_model=GoalMonthlyHistoryResponse)
+async def get_goal_monthly_history(
+    service: GoalServiceDep,
+    profiles: UserProfileServiceDep,
+    user_id: CurrentUserId,
+    months: int = Query(
+        default=DEFAULT_HISTORY_MONTHS,
+        ge=1,
+        le=MAX_HISTORY_MONTHS,
+        description="How many months before the chosen month to include (it is included too)",
+    ),
+    to: str | None = Query(
+        default=None,
+        pattern=_MONTH_PATTERN,
+        description="Last month of the window as 'YYYY-MM'; defaults to the current month",
+    ),
+) -> GoalMonthlyHistoryResponse:
+    """Month-by-month plan vs contributed per goal (future months only if planned).
+
+    Declared BEFORE ``/{goal_id}`` (see ``/plan-status``).
+    """
+    today = await _user_today(profiles, user_id)
+    to_month = resolve_period(to, today)[0] if to else None
+    lines = await service.get_monthly_history(user_id, months, to_month, today)
+    return GoalMonthlyHistoryResponse.from_domain(lines)
+
+
 @router.get("/{goal_id}", response_model=GoalResponse)
 async def get_goal(
     goal_id: str,
@@ -110,10 +199,13 @@ async def get_goal(
 async def get_goal_progress(
     goal_id: str,
     service: GoalServiceDep,
+    profiles: UserProfileServiceDep,
     user_id: CurrentUserId,
 ) -> GoalProgressResponse:
     """Get a goal's progress, including the required monthly contribution."""
-    progress = await service.get_progress(goal_id, user_id)
+    progress = await service.get_progress(
+        goal_id, user_id, as_of=await _user_today(profiles, user_id)
+    )
     return GoalProgressResponse.from_domain(progress)
 
 
@@ -122,12 +214,15 @@ async def contribute_to_goal(
     goal_id: str,
     request: GoalContributeRequest,
     service: GoalServiceDep,
+    profiles: UserProfileServiceDep,
     user_id: CurrentUserId,
 ) -> GoalResponse:
-    """Add an amount to a goal, completing it automatically when reached."""
-    goal = await service.contribute(
-        goal_id, user_id, request.amount, request.contribution_date
-    )
+    """Add an amount to a goal, completing it automatically when reached.
+
+    Without a ``contribution_date`` the aporte is dated TODAY in the user's timezone.
+    """
+    contribution_date = request.contribution_date or await _user_today(profiles, user_id)
+    goal = await service.contribute(goal_id, user_id, request.amount, contribution_date)
     return GoalResponse.from_domain(goal)
 
 
@@ -158,3 +253,41 @@ async def delete_goal(
     """Delete a goal and return the removed goal (404 if it does not exist)."""
     goal = await service.delete_goal(goal_id, user_id)
     return GoalResponse.from_domain(goal)
+
+
+@router.put("/{goal_id}/plans/{month}", response_model=GoalPlanResponse)
+async def set_goal_plan(
+    goal_id: str,
+    request: GoalPlanRequest,
+    service: GoalServiceDep,
+    user_id: CurrentUserId,
+    month: str = Path(pattern=_MONTH_PATTERN, description="Month as YYYY-MM"),
+) -> GoalPlanResponse:
+    """Plan how much to save toward a goal in a month (only that month, or from it on)."""
+    month_start = resolve_period(month)[0]
+    planned = await service.set_plan(
+        user_id, goal_id, request.amount, month_start, request.scope
+    )
+    return GoalPlanResponse(
+        goal_id=goal_id, month=month_key(month_start), planned_amount=planned
+    )
+
+
+@router.delete("/{goal_id}/plans/{month}", response_model=GoalPlanResponse)
+async def clear_goal_plan(
+    goal_id: str,
+    service: GoalServiceDep,
+    user_id: CurrentUserId,
+    month: str = Path(pattern=_MONTH_PATTERN, description="Month as YYYY-MM"),
+    mode: GoalPlanClearMode = Query(
+        default=GoalPlanClearMode.VOLVER_AL_GENERAL,
+        description="'sin_plan' (don't plan this month), 'volver_al_general' (drop the "
+        "month's own plan) or 'terminar' (stop planning from this month on)",
+    ),
+) -> GoalPlanResponse:
+    """Clear a goal's plan for a month; returns the plan that applies afterwards."""
+    month_start = resolve_period(month)[0]
+    planned = await service.clear_plan(user_id, goal_id, month_start, mode)
+    return GoalPlanResponse(
+        goal_id=goal_id, month=month_key(month_start), planned_amount=planned
+    )

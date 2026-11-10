@@ -1,10 +1,11 @@
 """Budget use cases (business logic), including alert evaluation."""
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
 from app.core.exceptions import BudgetNotFoundError
 from app.core.logging import get_logger
+from app.shared.clock import current_today
 from app.shared.text_match import names_match, normalize
 from app.shared.types import BudgetId, UserId, normalize_category
 
@@ -47,7 +48,7 @@ class BudgetService(BudgetServiceABC):
         self, budget_id: BudgetId, user_id: UserId, as_of: date | None = None
     ) -> BudgetStatus:
         budget = await self.get_budget(budget_id, user_id)
-        return await self._build_status(budget, as_of or _today())
+        return await self._build_status(budget, as_of or current_today())
 
     async def get_active_alerts(
         self, user_id: UserId, as_of: date | None = None
@@ -58,7 +59,7 @@ class BudgetService(BudgetServiceABC):
     async def get_all_status(
         self, user_id: UserId, as_of: date | None = None
     ) -> list[BudgetStatus]:
-        reference = as_of or _today()
+        reference = as_of or current_today()
         budgets = await self._repository.list_active(user_id)
         return [await self._build_status(b, reference) for b in budgets]
 
@@ -162,6 +163,3 @@ class BudgetService(BudgetServiceABC):
             alert_triggered=alert_triggered,
         )
 
-
-def _today() -> date:
-    return datetime.now(UTC).date()

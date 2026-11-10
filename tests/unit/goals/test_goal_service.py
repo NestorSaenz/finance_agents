@@ -11,13 +11,16 @@ from app.core.exceptions import (
     GoalWithdrawalExceedsBalanceError,
     InvalidAmountError,
 )
+from app.shared.clock import bound_today
 from app.shared.types import CurrencyType, GoalId, GoalStatus, GoalType, UserId
 from app.src.goals.interfaces import (
     GoalContributionRepositoryABC,
     GoalRepositoryABC,
 )
 from app.src.goals.models import Goal, GoalContribution, GoalCreate
+from app.src.goals.services.contribution_months_provider import ContributionMonthsProvider
 from app.src.goals.services.goal_service import GoalService
+from tests.fakes import InMemoryGoalPlanRepository, RpcFailingDatabase
 
 
 def _goal(
@@ -161,7 +164,13 @@ def _service(
     repo: FakeGoalRepository,
     contribs: FakeGoalContributionRepository | None = None,
 ) -> GoalService:
-    return GoalService(repo, contribs or FakeGoalContributionRepository())
+    contributions = contribs or FakeGoalContributionRepository()
+    return GoalService(
+        repo,
+        contributions,
+        InMemoryGoalPlanRepository(),
+        ContributionMonthsProvider(RpcFailingDatabase(), contributions),  # type: ignore[arg-type]
+    )
 
 
 class TestGetGoal:
@@ -207,15 +216,26 @@ class TestContribute:
 
         assert contribs.created == [("goal-1", "u1", Decimal("5000"), date(2026, 6, 15))]
 
-    async def test_defaults_contribution_date_to_today(self) -> None:
+    async def test_default_contribution_date_is_the_bound_local_day_not_utc(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("25000")))
         contribs = FakeGoalContributionRepository()
         service = _service(repo, contribs)
 
-        await service.contribute("goal-1", "u1", Decimal("5000"))
+        # The turn's local day (23:06 on Sep 30 in Bogotá) while UTC is already Oct 1.
+        with bound_today(date(2026, 9, 30)):
+            await service.contribute("goal-1", "u1", Decimal("5000"))
 
         _goal_id, _user, _amount, when = contribs.created[0]
-        assert when == datetime.now(UTC).date()
+        assert when == date(2026, 9, 30)
+
+    async def test_default_progress_reference_is_the_bound_local_day(self) -> None:
+        goal = _goal(current=Decimal("25000"), target_date=date(2026, 10, 15))
+        service = _service(FakeGoalRepository(goal=goal), FakeGoalContributionRepository())
+
+        with bound_today(date(2026, 9, 30)):
+            progress = await service.get_progress("goal-1", "u1")
+
+        assert progress.months_remaining == 1  # from Sep 30; the UTC day (Oct 1) gives 0
 
     async def test_completes_when_target_reached(self) -> None:
         repo = FakeGoalRepository(goal=_goal(current=Decimal("95000")))

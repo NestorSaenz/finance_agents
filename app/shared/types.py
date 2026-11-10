@@ -95,6 +95,32 @@ class GoalType(str, Enum):
     OTHER = "other"
 
 
+class GoalPlanKind(StrEnum):
+    """Kind of a goal savings-plan row (see migration 018).
+
+    - ``RECURRING``: "from month M on, X per month" (carries forward).
+    - ``OVERRIDE``: "in month M exactly X" (0 = this month I don't plan).
+    """
+
+    RECURRING = "recurring"
+    OVERRIDE = "override"
+
+
+class GoalPlanScope(StrEnum):
+    """How far a plan change reaches."""
+
+    SOLO_MES = "solo_mes"  # only the given month (an override)
+    DESDE_MES = "desde_mes"  # from the given month onward (a recurring)
+
+
+class GoalPlanClearMode(StrEnum):
+    """How a goal's plan is cleared for a month."""
+
+    SIN_PLAN = "sin_plan"  # this month I don't plan (override of 0)
+    VOLVER_AL_GENERAL = "volver_al_general"  # drop the override; the recurring applies again
+    TERMINAR = "terminar"  # stop planning from this month on (recurring of 0)
+
+
 class RiskTolerance(str, Enum):
     """User risk tolerance for investments."""
 

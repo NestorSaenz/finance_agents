@@ -1,6 +1,6 @@
 """Credit-card use cases: cycle evaluation, balance and payments."""
 
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Final, NamedTuple
@@ -82,7 +82,7 @@ class CreditCardService(CreditCardServiceABC):
         period_start: date | None = None,
         period_end: date | None = None,
     ) -> list[CreditCardStatus]:
-        reference = as_of or _today()
+        reference = as_of or current_today()
         cards = await self._repository.list_active(user_id)
         return [
             await self._build_status(card, reference, period_start, period_end)
@@ -95,7 +95,7 @@ class CreditCardService(CreditCardServiceABC):
         card = await self._repository.get_by_id(card_id, user_id)
         if card is None:
             raise CardNotFoundError(card_id)
-        return await self._build_status(card, as_of or _today())
+        return await self._build_status(card, as_of or current_today())
 
     async def total_paid_up_to(self, user_id: UserId, as_of: date) -> Decimal:
         return await self._payments.total_paid_up_to(user_id, as_of)
@@ -328,6 +328,3 @@ def _statement_figures(
         upcoming.statement_start, upcoming.statement_end, None, unpaid_up_to_last_cutoff
     )
 
-
-def _today() -> date:
-    return datetime.now(UTC).date()

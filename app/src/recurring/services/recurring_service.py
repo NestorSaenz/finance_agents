@@ -319,8 +319,8 @@ class RecurringService(RecurringServiceABC):
 
 
 def _today() -> date:
-    # The request-scoped local day of the user in the current chat turn (UTC
-    # outside a bound turn, e.g. the REST create path), so day-of-month schedules
+    # The request-scoped local day of the user in the current chat turn (the
+    # DEFAULT_TIMEZONE day outside a bound turn, e.g. the REST create path), so day-of-month schedules
     # fire on the user's local calendar day.
     return current_today()
 

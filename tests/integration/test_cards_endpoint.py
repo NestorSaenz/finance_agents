@@ -1,6 +1,6 @@
 """Integration tests for the /cards endpoints (service overridden)."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -21,6 +21,7 @@ from app.src.cards.models import (
     CreditCardStatus,
     ScheduleUpdate,
 )
+from tests.conftest import BOGOTA_LATE_NIGHT
 
 BASE_URL = "/api/v1/cards"
 
@@ -58,6 +59,7 @@ def _status() -> CreditCardStatus:
 class StubCardService(CreditCardServiceABC):
     def __init__(self, found: bool = True) -> None:
         self.found = found
+        self.payment_dates: list[date] = []
 
     async def create_card(self, card: CreditCardCreate, user_id: UserId) -> CreditCard:
         return _card()
@@ -83,6 +85,7 @@ class StubCardService(CreditCardServiceABC):
     ) -> CardPayment:
         if not self.found:
             raise CardNotFoundError(card_id)
+        self.payment_dates.append(payment.payment_date)
         return CardPayment(
             id="pay-1",
             user_id=user_id,
@@ -225,3 +228,31 @@ class TestCards:
             assert response.status_code == 404
         finally:
             next(gen, None)
+
+
+class TestPaymentDefaultDate:
+    def test_payment_without_date_uses_the_bogota_day_not_utc(
+        self, freeze_now: Callable[[datetime], None]
+    ) -> None:
+        freeze_now(BOGOTA_LATE_NIGHT)  # 04:30Z on Nov 1 == 23:30 on Oct 31 in Bogotá
+        service = StubCardService()
+
+        for client in _client(service):
+            assert client.post(f"{BASE_URL}/card-1/payments", json={"amount": 1000}).status_code == 200
+
+        assert service.payment_dates == [date(2026, 10, 31)]
+
+    def test_payment_with_explicit_date_keeps_it(
+        self, freeze_now: Callable[[datetime], None]
+    ) -> None:
+        freeze_now(BOGOTA_LATE_NIGHT)
+        service = StubCardService()
+
+        for client in _client(service):
+            response = client.post(
+                f"{BASE_URL}/card-1/payments",
+                json={"amount": 1000, "payment_date": "2026-09-01"},
+            )
+            assert response.status_code == 200
+
+        assert service.payment_dates == [date(2026, 9, 1)]

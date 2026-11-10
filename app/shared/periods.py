@@ -7,8 +7,10 @@ summary, analysis engine, etc. agree. Accepts the named periods
 
 import calendar
 import re
-from datetime import MAXYEAR, MINYEAR, UTC, date, datetime, timedelta
+from datetime import MAXYEAR, MINYEAR, date, timedelta
 from typing import Final, Literal
+
+from app.shared.clock import current_today
 
 # Named reporting periods accepted by the API (reuse in route query params).
 PeriodName = Literal["este_mes", "mes_pasado", "todo"]
@@ -46,7 +48,7 @@ def _parse_month(period: str) -> tuple[int, int] | None:
 
 def resolve_period(period: str, today: date | None = None) -> tuple[date, date]:
     """Return the (start, end) date range for a named period or a ``YYYY-MM`` month."""
-    reference = today or datetime.now(UTC).date()
+    reference = today or current_today()
     # Both "este_mes" and "todo" end at the last day of the current month, not at
     # today: capping at today hides transactions dated later in the month (e.g. a
     # bill dated the 15th while today is the 4th), which would read as zero spending.
@@ -82,7 +84,7 @@ def recent_months(count: int, today: date | None = None) -> list[str]:
     Each entry feeds ``resolve_period``/``period_label`` unchanged, so a
     month-by-month report reuses the same windows a single-month query uses.
     """
-    reference = today or datetime.now(UTC).date()
+    reference = today or current_today()
     # Month index since year 0 makes the arithmetic a plain range, with no
     # December/January wrap-around special case.
     last = reference.year * 12 + reference.month - 1

@@ -247,6 +247,17 @@ class GoalWithdrawalExceedsBalanceError(DomainError):
         )
 
 
+class InvalidPlanPeriodError(DomainError):
+    """Raised when a goal-plan period (month window) is not valid."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            message=f"Invalid goal plan period: {reason}",
+            code="INVALID_PLAN_PERIOD",
+            details={"reason": reason},
+        )
+
+
 # =============================================================================
 # Application Errors - Recurring
 # =============================================================================
