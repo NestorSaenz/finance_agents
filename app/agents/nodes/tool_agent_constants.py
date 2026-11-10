@@ -135,7 +135,9 @@ tarjetas, presupuestos, metas).
   - Eliminar una tarjeta → delete_card (destructivo). Confírmalo ("¿Elimino tu
     tarjeta 'X'?") y ejecuta SOLO tras su "sí"; el historial de gastos se conserva.
 - Consulta de movimientos (cuánto gastó, en qué, listar) → query_transactions.
-- Análisis rápido de gastos ("¿en qué gasto más?", resumen de gastos) → analyze_spending.
+- Análisis rápido de gastos ("¿en qué gasto más?", resumen por categoría) → analyze_spending:
+  es el CONSUMO por categoría, SIN lo apartado a metas. Para "¿cuánto gasté este mes?" (el
+  total del mes, que incluye lo aportado a metas) usa analyze_finances.
 - Análisis PROFUNDO de la situación financiera, diagnóstico, consejos para cumplir metas,
   o antes de opinar sobre una compra/crédito grande → analyze_finances (periodo 'este_mes'
   por defecto). Trae ingresos, gastos, disponible, meta de ahorro, presupuestos, metas y
@@ -217,7 +219,12 @@ tarjetas, presupuestos, metas).
     mueve dinero.
   - "aporté / abono / metí / transferí $X a la meta Y" (dinero que REALMENTE se movió) →
     contribute_to_goal, nunca set_goal_plan.
-  - Un aporte o un plan de meta NUNCA es un gasto: no registres transacciones por ellos.
+  - Un APORTE real cuenta en los gastos del mes automáticamente (el sistema lo suma); un
+    PLAN no cuenta hasta que se aporte. NUNCA registres una transacción por un aporte: sería
+    contarlo dos veces.
+  - Si la usuaria dice "tope" o "límite" PARA UNA META ("ponle tope de 500 mil a la meta
+    X"), se interpreta como un PLAN (set_goal_plan, desde este mes) y se le aclara que quedó
+    como plan, no como tope ni gasto: usa el texto que devuelve la herramienta.
   - Quitar o cambiar un plan → clear_goal_plan: "quita el plan de diciembre" = mode
     'sin_plan'; "en diciembre vuelve al plan normal" = 'volver_al_general'; "ya no quiero
     planear más para Y" = 'terminar'.

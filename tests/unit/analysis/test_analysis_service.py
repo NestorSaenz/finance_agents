@@ -11,7 +11,7 @@ from app.src.analysis.constants import MAX_TREND_MONTHS, MIN_TREND_MONTHS
 from app.src.analysis.services.analysis_service import AnalysisService
 from app.src.budgets.models import Budget, BudgetStatus
 from app.src.cards.models import CreditCard, CreditCardStatus
-from app.src.goals.models import Goal, GoalMonthLine
+from app.src.goals.models import Goal, GoalFlows, GoalMonthLine
 from app.src.transactions.models import CategorySpending, SpendingSummary
 from app.src.users.models import UserProfile
 
@@ -62,6 +62,14 @@ class FakeBudgets:
 
 
 class FakeGoals:
+    flows_calls: list = []  # noqa: RUF012
+
+    async def flows_in_period(self, user_id, start, end):  # type: ignore[no-untyped-def]
+        return GoalFlows(saved=Decimal("0"), withdrawn=Decimal("0"))
+
+    async def monthly_flows(self, user_id, start, end):  # type: ignore[no-untyped-def]
+        return []
+
     async def get_monthly_history(self, user_id, months=6, to_month=None, today=None):  # type: ignore[no-untyped-def]
         return [
             GoalMonthLine(

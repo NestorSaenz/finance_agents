@@ -12,11 +12,12 @@ from typing import Any
 from app.agents.nodes.analyst_constants import get_category_label
 from app.agents.tools.names import (
     ANALYZE_FINANCES_TOOL,
+    PLAN_TOTAL_LABEL,
     SPENDING_TREND_TOOL,
 )
 from app.core.logging import get_logger
 from app.shared.clock import current_today
-from app.shared.periods import period_label
+from app.shared.periods import TODO, period_label
 from app.shared.types import CurrencyType, UserId
 from app.src.analysis.constants import (
     DEFAULT_TREND_MONTHS,
@@ -151,8 +152,13 @@ def _format_trend(months: list[MonthlyTotals]) -> str:
         if month.income == 0 and month.expenses == 0:
             lines.append(f"- {label}: sin movimientos")
         else:
+            saved = (
+                f" (incluye apartado a metas {_money(month.goal_saved)})"
+                if month.goal_saved > 0
+                else ""
+            )
             lines.append(
-                f"- {label}: gastos {_money(month.expenses)}"
+                f"- {label}: gastos {_money(month.expenses)}{saved}"
                 f"{_change_note(month.expenses, previous.expenses) if previous else ''}"
                 f", ingresos {_money(month.income)}, balance {_money(month.balance)}"
             )
@@ -185,7 +191,7 @@ def _payment_split_lines(s: FinancialSnapshot) -> list[str]:
         f"crédito {_money(s.credit_expenses)} ({share(s.credit_expenses):.0f}%)",
         f"efectivo/débito {_money(s.cash_expenses)} ({share(s.cash_expenses):.0f}%)",
     ]
-    return [f"GASTOS POR MÉTODO DE PAGO: {'; '.join(parts)}"]
+    return [f"GASTOS POR MÉTODO DE PAGO (consumo): {'; '.join(parts)}"]
 
 
 def _card_summary(c: CardLine) -> str:
@@ -222,7 +228,7 @@ def _goal_plan_totals(goals: list[GoalLine]) -> list[str]:
             saved[g.currency] += g.contributed_this_period
     several = len(planned) > 1
     return [
-        "TOTAL PLAN METAS (no es gasto ni tope)"
+        PLAN_TOTAL_LABEL
         + (f" [{currency.value}]" if several else "")
         + f": planificado {_money(planned[currency])} · aportado {_money(saved[currency])}"
         for currency in planned
@@ -244,9 +250,29 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
         )
     else:
         lines.append(f"INGRESOS: {_money(s.total_income)}")
-    lines.append(f"GASTOS: {_money(s.total_expenses)}")
+    # Spending = consumption + what was set aside into goals (that cash is no longer
+    # available). The sums are made here so the model never adds them.
+    total_spent = s.total_expenses + s.goal_saved
+    span = "PERÍODO" if s.period == TODO else "MES"
+    lines.append(
+        f"GASTOS DEL {span}: {_money(total_spent)} (consumo {_money(s.total_expenses)} "
+        f"+ apartado a metas {_money(s.goal_saved)})"
+    )
+    if s.goal_withdrawn > 0:
+        lines.append(f"VOLVIÓ DE METAS: {_money(s.goal_withdrawn)}")
     lines.extend(_payment_split_lines(s))
     lines.append(f"DISPONIBLE (ingresos - gastos): {_money(s.disposable)}")
+    if s.disposable < 0:
+        # Adding a negative "disponible" would read as a (misleading) negative saving.
+        lines.append(
+            f"AHORRO DEL {span}: apartado a metas {_money(s.goal_saved)} "
+            f"(gastaste más de lo que ingresó: {_money(-s.disposable)})"
+        )
+    else:
+        lines.append(
+            f"AHORRO DEL {span}: apartado a metas {_money(s.goal_saved)} + disponible "
+            f"{_money(s.disposable)} = {_money(s.goal_saved + s.disposable)}"
+        )
     if s.savings_target_amount is not None and s.savings_target_pct is not None:
         lines.append(
             f"META DE AHORRO: {s.savings_target_pct:.0f}% = "
@@ -259,7 +285,7 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
             f"({c.percentage:.0f}%)"
             for c in s.by_category
         )
-        lines.append(f"GASTOS POR CATEGORÍA: {cats}")
+        lines.append(f"GASTOS POR CATEGORÍA (consumo): {cats}")
 
     if s.budgets:
         buds = "; ".join(

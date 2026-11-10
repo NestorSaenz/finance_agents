@@ -10,6 +10,7 @@ from .models import (
     FinancialSnapshot,
     MonthlyTotals,
     MovementCandidate,
+    PeriodSpending,
     ReconciliationResult,
     StatementLine,
 )
@@ -26,6 +27,16 @@ class AnalysisServiceABC(ABC):
 
         ``today`` anchors the period boundaries to the user's local day; ``None``
         keeps the service pure and falls back to UTC (its default reference).
+        """
+
+    @abstractmethod
+    async def period_spending(
+        self, user_id: UserId, start: date, end: date
+    ) -> PeriodSpending:
+        """Consumption summary of ``[start, end]`` plus the money set aside into goals.
+
+        Goal savings only count from ``GOALS_COUNT_AS_SPENDING_FROM`` on; the
+        consumption summary is returned untouched.
         """
 
     @abstractmethod

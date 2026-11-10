@@ -12,6 +12,7 @@ from .models import (
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalFlows,
     GoalMonthContribution,
     GoalMonthLine,
     GoalPlan,
@@ -234,6 +235,22 @@ class GoalServiceABC(ABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
         """Return the total contributed to all goals within ``[period_start, period_end]``."""
+
+    @abstractmethod
+    async def flows_in_period(
+        self, user_id: UserId, start: date, end: date
+    ) -> GoalFlows:
+        """Return the GROSS ``saved``/``withdrawn`` moved to goals within ``[start, end]``.
+
+        Bounds inclusive. ``saved`` is the sum of the positive aportes and
+        ``withdrawn`` the sum of the absolute value of the retiros (never netted).
+        """
+
+    @abstractmethod
+    async def monthly_flows(
+        self, user_id: UserId, start: date, end: date
+    ) -> list[GoalMonthContribution]:
+        """Return the gross flows per goal and month within ``[start, end]`` (one query)."""
 
     @abstractmethod
     async def list_contributions_in_period(

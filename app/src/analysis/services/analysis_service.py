@@ -1,6 +1,7 @@
 """Holistic financial analysis: read-only cross-module aggregation."""
 
 import asyncio
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from typing import Final
@@ -8,6 +9,7 @@ from typing import Final
 import httpx
 from postgrest.exceptions import APIError
 
+from app.core.config import settings
 from app.core.exceptions import FinanceGPTError
 from app.core.logging import get_logger
 from app.shared.periods import ESTE_MES, recent_months, resolve_period
@@ -15,7 +17,7 @@ from app.shared.types import UserId
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.goals.interfaces import GoalServiceABC
-from app.src.goals.models import GoalMonthLine
+from app.src.goals.models import GoalFlows, GoalMonthLine
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.users.interfaces import UserProfileServiceABC
 
@@ -28,6 +30,7 @@ from ..models import (
     FinancialSnapshot,
     GoalLine,
     MonthlyTotals,
+    PeriodSpending,
 )
 
 logger = get_logger(__name__)
@@ -41,6 +44,11 @@ _GOALS_PAGE: int = 50
 
 # "Accumulated surplus" sums over all history, so its window opens at the epoch.
 _EPOCH: date = date(1970, 1, 1)
+
+
+async def _no_flows() -> GoalFlows:
+    """No goal flows count (the whole period is before the cutoff)."""
+    return GoalFlows(saved=Decimal("0"), withdrawn=Decimal("0"))
 
 
 class AnalysisService(AnalysisServiceABC):
@@ -68,11 +76,9 @@ class AnalysisService(AnalysisServiceABC):
 
         # These reads are independent, so fetch them concurrently instead of
         # paying five sequential round-trips.
-        summary, profile, budget_statuses, goals_page, card_statuses, goal_months = (
+        spending, profile, budget_statuses, goals_page, card_statuses, goal_months = (
             await asyncio.gather(
-                self._transactions.get_spending_summary(
-                    user_id, period_start=start, period_end=end
-                ),
+                self.period_spending(user_id, start, end),
                 self._profiles.get_profile(user_id),
                 # Anchor budget periods and card cycles on the user's local day
                 # (None → the services' own UTC fallback) so a near-midnight
@@ -85,6 +91,7 @@ class AnalysisService(AnalysisServiceABC):
                 self._goal_month_lines(user_id, start, end, today),
             )
         )
+        summary = spending.summary
         goals = goals_page[0]
         by_goal = {line.goal_id: line for line in goal_months}
 
@@ -98,7 +105,7 @@ class AnalysisService(AnalysisServiceABC):
             else Decimal("0")
         )
         total_income = income_registered if income_registered > 0 else income_base
-        disposable = total_income - summary.total_expenses
+        disposable = total_income - spending.total_spent
 
         pct = profile.savings_goal_percentage
         savings_target = total_income * pct / 100 if pct is not None else None
@@ -121,6 +128,8 @@ class AnalysisService(AnalysisServiceABC):
             income_registered=income_registered,
             total_income=total_income,
             total_expenses=summary.total_expenses,
+            goal_saved=spending.goal_saved,
+            goal_withdrawn=spending.goal_withdrawn,
             credit_expenses=summary.credit_expenses,
             cash_expenses=summary.cash_expenses,
             disposable=disposable,
@@ -174,6 +183,28 @@ class AnalysisService(AnalysisServiceABC):
             card_available_total=sum((c.available for c in cards), Decimal("0")),
         )
 
+    async def period_spending(
+        self, user_id: UserId, start: date, end: date
+    ) -> PeriodSpending:
+        cutoff = settings.GOALS_COUNT_AS_SPENDING_FROM
+        # Only the part of the period on/after the cutoff is reported, for the money set
+        # aside AND the money that came back (no asymmetry between the two). The surplus
+        # and the final cash use their own unclipped flows and are not affected.
+        if end < cutoff:
+            counted = _no_flows()
+        elif start >= cutoff:
+            counted = None  # the whole period counts: one read serves both figures
+        else:
+            counted = self._goals.flows_in_period(user_id, cutoff, end)
+        summary, full = await asyncio.gather(
+            self._transactions.get_spending_summary(user_id, period_start=start, period_end=end),
+            self._goals.flows_in_period(user_id, start, end),
+        )
+        clipped = full if counted is None else await counted
+        return PeriodSpending(
+            summary=summary, goal_saved=clipped.saved, goal_withdrawn=clipped.withdrawn
+        )
+
     async def _goal_month_lines(
         self, user_id: UserId, start: date, end: date, today: date | None
     ) -> list[GoalMonthLine]:
@@ -211,23 +242,54 @@ class AnalysisService(AnalysisServiceABC):
         keys = recent_months(count, today=today)
         # The months are independent reads; gather them instead of paying one
         # round-trip per month sequentially.
-        summaries = await asyncio.gather(
-            *(
-                self._transactions.get_spending_summary(
-                    user_id, period_start=start, period_end=end
+        windows = [resolve_period(key) for key in keys]
+        summaries, monthly = await asyncio.gather(
+            asyncio.gather(
+                *(
+                    self._transactions.get_spending_summary(
+                        user_id, period_start=start, period_end=end
+                    )
+                    for start, end in windows
                 )
-                for start, end in (resolve_period(key) for key in keys)
-            )
+            ),
+            # ONE read of the goal flows for the whole window (RPC, Python fallback).
+            self._goals.monthly_flows(user_id, windows[0][0], windows[-1][1]),
         )
+        # The provider returns one row per goal and month: add the goals up per month.
+        saved_by_month: dict[date, Decimal] = defaultdict(lambda: Decimal("0"))
+        for row in monthly:
+            saved_by_month[row.month] += row.saved
+        cutoff = settings.GOALS_COUNT_AS_SPENDING_FROM
+        saved = [
+            await self._month_goal_saved(user_id, start, end, cutoff, saved_by_month)
+            for start, end in windows
+        ]
         return [
             MonthlyTotals(
                 month=key,
                 income=summary.total_income,
-                expenses=summary.total_expenses,
-                balance=summary.total_income - summary.total_expenses,
+                expenses=summary.total_expenses + goal_saved,
+                balance=summary.total_income - summary.total_expenses - goal_saved,
+                goal_saved=goal_saved,
             )
-            for key, summary in zip(keys, summaries, strict=True)
+            for key, summary, goal_saved in zip(keys, summaries, saved, strict=True)
         ]
+
+    async def _month_goal_saved(
+        self,
+        user_id: UserId,
+        start: date,
+        end: date,
+        cutoff: date,
+        saved_by_month: dict[date, Decimal],
+    ) -> Decimal:
+        """What was set aside into goals in one month, counting only from the cutoff on."""
+        if end < cutoff:
+            return Decimal("0")
+        if start >= cutoff:
+            return saved_by_month.get(start, Decimal("0"))
+        # The cutoff falls inside this month: only its tail counts.
+        return (await self._goals.flows_in_period(user_id, cutoff, end)).saved
 
     async def accumulated_surplus(self, user_id: UserId, as_of: date) -> Decimal:
         # Free cash that carries over month to month: everything that ever came in

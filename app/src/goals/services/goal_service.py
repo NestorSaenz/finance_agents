@@ -43,6 +43,7 @@ from ..models import (
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalFlows,
     GoalMonthContribution,
     GoalMonthLine,
     GoalPlan,
@@ -192,6 +193,18 @@ class GoalService(GoalServiceABC):
         self, user_id: UserId, period_start: date, period_end: date
     ) -> Decimal:
         return await self._contributions.sum_in_period(user_id, period_start, period_end)
+
+    async def flows_in_period(self, user_id: UserId, start: date, end: date) -> GoalFlows:
+        rows = await self._months.monthly_totals(user_id, start, end)
+        return GoalFlows(
+            saved=sum((r.saved for r in rows), start=Decimal("0")),
+            withdrawn=sum((r.withdrawn for r in rows), start=Decimal("0")),
+        )
+
+    async def monthly_flows(
+        self, user_id: UserId, start: date, end: date
+    ) -> list[GoalMonthContribution]:
+        return await self._months.monthly_totals(user_id, start, end)
 
     async def list_contributions_in_period(
         self, user_id: UserId, period_start: date, period_end: date

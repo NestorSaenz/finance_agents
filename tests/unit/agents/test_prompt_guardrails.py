@@ -137,8 +137,21 @@ class TestGoalPlanRules:
             TOOL_AGENT_SYSTEM_PROMPT
         )
 
-    def test_a_contribution_or_plan_is_never_an_expense(self) -> None:
-        assert "NUNCA es un gasto: no registres transacciones por ellos" in TOOL_AGENT_SYSTEM_PROMPT
+    def test_a_real_contribution_counts_as_spending_automatically_a_plan_does_not(self) -> None:
+        assert "Un APORTE real cuenta en los gastos del mes automáticamente" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "un\n    PLAN no cuenta hasta que se aporte" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA registres una transacción por un aporte" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "sería\n    contarlo dos veces" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA es un gasto" not in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_tope_for_a_goal_means_a_plan(self) -> None:
+        assert 'dice "tope" o "límite" PARA UNA META' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "se interpreta como un PLAN (set_goal_plan" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_analyze_spending_is_consumption_and_total_spent_is_analyze_finances(self) -> None:
+        assert "es el CONSUMO por categoría, SIN lo apartado a metas" in TOOL_AGENT_SYSTEM_PROMPT
+        assert 'Para "¿cuánto gasté este mes?"' in TOOL_AGENT_SYSTEM_PROMPT
+        assert "analyze_finances" in TOOL_AGENT_SYSTEM_PROMPT
 
     def test_categories_question_reads_budgets_and_goals_and_keeps_the_plan_apart(self) -> None:
         assert "query_budgets Y query_goals" in TOOL_AGENT_SYSTEM_PROMPT

@@ -7,6 +7,7 @@ from decimal import Decimal
 from pydantic import BaseModel
 
 from app.shared.types import Category, CurrencyType, MovementKind, StatementLineKind
+from app.src.transactions.models import SpendingSummary
 
 
 class CategoryLine(BaseModel):
@@ -77,6 +78,34 @@ class MovementCandidate(BaseModel):
     date: date
 
 
+class PeriodSpending(BaseModel):
+    """A period's consumption plus the money set aside into goals (the single source
+    for the chat and the dashboard).
+
+    ``summary`` is the CONSUMPTION summary, untouched (``total_expenses`` stays
+    consumption only). ``goal_saved`` is the gross money contributed to goals that
+    counts as spending: only contributions dated on/after
+    ``GOALS_COUNT_AS_SPENDING_FROM`` (the flows are clipped to that day).
+    ``goal_withdrawn`` is informational and uses the SAME cutoff as ``goal_saved`` (only
+    retiros dated on/after it), so the two never tell an asymmetric story; money that came
+    back from goals never reduces ``total_spent``.
+    """
+
+    summary: SpendingSummary
+    goal_saved: Decimal = Decimal("0")
+    goal_withdrawn: Decimal = Decimal("0")
+
+    @property
+    def total_spent(self) -> Decimal:
+        """Consumption plus what was set aside into goals."""
+        return self.summary.total_expenses + self.goal_saved
+
+    @property
+    def balance(self) -> Decimal:
+        """Income minus everything spent, goal savings included."""
+        return self.summary.total_income - self.total_spent
+
+
 class FinancialSnapshot(BaseModel):
     """A holistic, factual picture of the user's finances for a period.
 
@@ -88,13 +117,15 @@ class FinancialSnapshot(BaseModel):
     income_base: Decimal  # reference monthly income (0 unless the current month)
     income_registered: Decimal  # income transactions logged in the period
     total_income: Decimal  # registered income, or income_base as fallback if none
-    total_expenses: Decimal
+    total_expenses: Decimal  # CONSUMPTION only (goal savings are separate)
+    goal_saved: Decimal = Decimal("0")  # set aside into goals (counts as spending)
+    goal_withdrawn: Decimal = Decimal("0")  # came back from goals (informational)
     # Split of total_expenses by payment method. They can sum to LESS than
     # total_expenses: rows with no payment method recorded (legacy/imported)
     # belong to neither bucket, so never present them as an exhaustive split.
     credit_expenses: Decimal  # charged to a credit card
     cash_expenses: Decimal  # cash, debit or transfer
-    disposable: Decimal  # total_income - total_expenses
+    disposable: Decimal  # total_income - (consumption + goal_saved)
     savings_target_pct: Decimal | None
     savings_target_amount: Decimal | None  # total_income * pct
     by_category: list[CategoryLine]
@@ -110,8 +141,9 @@ class MonthlyTotals(BaseModel):
 
     month: str  # "YYYY-MM"
     income: Decimal
-    expenses: Decimal
+    expenses: Decimal  # consumption + goal_saved
     balance: Decimal  # income - expenses
+    goal_saved: Decimal = Decimal("0")  # the part of ``expenses`` set aside into goals
 
 
 class StatementLine(BaseModel):

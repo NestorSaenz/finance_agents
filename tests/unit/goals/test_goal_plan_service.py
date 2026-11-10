@@ -658,3 +658,34 @@ class TestHistoryEffectivePlan:
 
         assert error.value.details["reason"] == "los meses deben estar entre 1 y 24"
         assert "inválido" in error.value.message
+
+
+class TestFlowsInPeriod:
+    async def test_gross_saved_and_withdrawn_with_inclusive_limits(self) -> None:
+        service, ledger, _ = _setup([_goal("g1"), _goal("g2")])
+        ledger.add("g1", D("100.10"), date(2026, 6, 1))
+        ledger.add("g2", D("200.20"), date(2026, 6, 30))
+        ledger.add("g1", D("-50.05"), date(2026, 6, 15))
+        ledger.add("g1", D("999"), date(2026, 7, 1))  # outside
+        ledger.add("g1", D("999"), date(2026, 5, 31))  # outside
+
+        flows = await service.flows_in_period("u1", *JUNE)
+
+        assert flows.saved == D("300.30")  # gross: the retiro does not net out
+        assert flows.withdrawn == D("50.05")
+
+    async def test_empty_period(self) -> None:
+        service, _, _ = _setup([_goal()])
+
+        flows = await service.flows_in_period("u1", *JUNE)
+
+        assert (flows.saved, flows.withdrawn) == (D("0"), D("0"))
+
+    async def test_monthly_flows_delegates_to_the_provider(self) -> None:
+        service, ledger, _ = _setup([_goal()])
+        ledger.add("g1", D("10"), date(2026, 5, 3))
+        ledger.add("g1", D("20"), date(2026, 6, 3))
+
+        rows = await service.monthly_flows("u1", date(2026, 5, 1), date(2026, 6, 30))
+
+        assert [(r.month, r.saved) for r in rows] == [(date(2026, 5, 1), D("10")), (date(2026, 6, 1), D("20"))]

@@ -22,6 +22,7 @@ from app.agents.tools.names import (
     CREATE_GOAL_TOOL,
     DELETE_GOAL_TOOL,
     PAUSE_GOAL_TOOL,
+    PLAN_TOTAL_LABEL,
     QUERY_GOALS_TOOL,
     REMOVE_CONTRIBUTION_TOOL,
     RESUME_GOAL_TOOL,
@@ -67,6 +68,11 @@ logger = get_logger(__name__)
 _MONTH_ARG: re.Pattern[str] = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])(?:-\d{2})?$")
 _MIN_PLAN_YEAR: Final = 1900
 _GOALS_PAGE_SIZE: Final = 20
+# Fixed text after saving a plan: it is not a tope nor spending until money really moves.
+PLAN_SAVED_NOTE: Final = (
+    'Quedó como plan (no es un tope ni un gasto, y aún no has aportado). Cuando muevas '
+    'la plata, dime "aporté $X a {goal}" y lo registro; ahí sí contará en tus gastos del mes.'
+)
 _E = TypeVar("_E", GoalPlanScope, GoalPlanClearMode)
 
 
@@ -422,7 +428,8 @@ GOAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "PLANEA cuánto abonar a una meta de ahorro en un mes ('para noviembre aparta "
                 "500.000 a vacaciones', 'de ahora en adelante abona 300.000 al mes al fondo', "
                 "'cada mes 200 mil a X'). Es un PLAN a futuro: NO mueve dinero, NO es un aporte "
-                "(eso es contribute_to_goal), NO es un gasto ni un tope de presupuesto. "
+                "(eso es contribute_to_goal), NO es un gasto ni un tope de presupuesto: no cuenta "
+                "en los gastos hasta que el usuario aporte. "
                 "scope 'solo_mes' = solo ese mes; 'desde_mes' = ese mes y los siguientes. "
                 "'de ahora en adelante'/'cada mes' = desde_mes con el mes actual. Para un mes "
                 "que ya pasó, pregunta primero al usuario y repite la llamada con "
@@ -724,7 +731,10 @@ class GoalToolkit:
         shown = planned if planned is not None else amount
         label = _month_label(month)
         reach = f"solo {label}" if scope is GoalPlanScope.SOLO_MES else f"desde {label} en adelante"
-        return f"✅ Plan de {goal.name}: ${shown} ({reach}).{_plan_notes(goal, shown)}"
+        return (
+            f"✅ Plan de {goal.name}: ${shown} ({reach}).{_plan_notes(goal, shown)} "
+            + PLAN_SAVED_NOTE.format(goal=goal.name)
+        )
 
     async def _clear_plan(self, args: dict[str, Any], user_id: UserId) -> str:
         name = str(args.get("goal_name", "")).strip()
@@ -791,8 +801,13 @@ class GoalToolkit:
         )
         done = " 🎉 ¡Meta completada!" if updated.current_amount >= updated.target_amount else ""
         when = "" if contribution_date == today else f" ({contribution_date})"
+        counts = (
+            " (cuenta en tus gastos del mes como ahorro)"
+            if contribution_date >= settings.GOALS_COUNT_AS_SPENDING_FROM
+            else " (quedó registrado en ese mes anterior; no cuenta en tus gastos)"
+        )
         return (
-            f"✅ Aboné ${amount} a '{updated.name}'{when}. "
+            f"✅ Aboné ${amount} a '{updated.name}'{when}{counts}. "
             f"Llevas ${updated.current_amount} de ${updated.target_amount}.{done}"
         )
 
@@ -1146,7 +1161,7 @@ def _plan_totals_lines(statuses: list[GoalPlanStatus], month: date) -> list[str]
         saved[s.currency] += s.contributed_gross
     several = len(planned) > 1
     return [
-        "TOTAL PLAN METAS (no es gasto ni tope)"
+        PLAN_TOTAL_LABEL
         + (f" [{currency.value}]" if several else "")
         + f": planificado ${planned[currency]}"
         + (f" (necesitabas ${effective[currency]})" if effective[currency] != planned[currency] else "")

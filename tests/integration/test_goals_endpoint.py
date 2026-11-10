@@ -27,6 +27,7 @@ from app.src.goals.models import (
     GoalContribution,
     GoalContributionView,
     GoalCreate,
+    GoalFlows,
     GoalMonthLine,
     GoalPlanStatus,
     GoalProgress,
@@ -236,6 +237,12 @@ class StubGoalService(GoalServiceABC):
                 cumulative=Decimal("100"),
             ),
         ]
+
+    async def flows_in_period(self, user_id, start, end):  # type: ignore[no-untyped-def]
+        return GoalFlows(saved=Decimal("0"), withdrawn=Decimal("0"))
+
+    async def monthly_flows(self, user_id, start, end):  # type: ignore[no-untyped-def]
+        return []
 
     async def contributed_in_period(
         self, user_id: UserId, period_start: date, period_end: date

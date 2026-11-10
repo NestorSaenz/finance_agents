@@ -278,6 +278,21 @@ class TestSpendingSummary:
         assert body["credit_expenses"] == "0"
         assert body["cash_expenses"] == "0"
 
+    def test_summary_is_still_consumption_only_with_no_goal_fields(self, client: TestClient) -> None:
+        # Regression: goal savings live in /analysis/summary; this endpoint is untouched.
+        body = client.get(f"{BASE_URL}/summary", params={"period": "este_mes"}).json()
+
+        assert set(body) == {
+            "period",
+            "total_income",
+            "total_expenses",
+            "balance",
+            "by_category",
+            "credit_expenses",
+            "cash_expenses",
+        }
+        assert body["balance"] == "50000"  # income - consumption, as before
+
     def test_accepts_a_specific_month(self, client: TestClient) -> None:
         # A month is passed as YYYY-MM so the dashboard can view any past month.
         response = client.get(f"{BASE_URL}/summary", params={"period": "2026-02"})

@@ -324,7 +324,7 @@ class TestGoalPlanTotalsLine:
         lines = _goal_plan_totals(goals)
 
         assert len(lines) == 2
-        assert lines[0].startswith("TOTAL PLAN METAS (no es gasto ni tope) [MXN]: planificado ")
+        assert lines[0].startswith("TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes) [MXN]: planificado ")
         assert "planificado $300" in lines[0] and "aportado $100" in lines[0]
         assert "[USD]" in lines[1] and "999" not in "".join(lines)
 
@@ -332,3 +332,89 @@ class TestGoalPlanTotalsLine:
         from app.agents.tools.analysis_tools import _goal_plan_totals
 
         assert _goal_plan_totals([]) == []
+
+
+class TestSpendingWithGoalSavings:
+    async def _run(self, **update: object) -> str:
+        class WithGoals(FakeAnalysis):
+            async def snapshot(self, user_id, period, today=None):  # type: ignore[no-untyped-def]
+                return _snapshot().model_copy(update=update)
+
+        return await AnalysisToolkit(WithGoals()).dispatch(  # type: ignore[arg-type]
+            ANALYZE_FINANCES_TOOL, {"period": "este_mes"}, "u1"
+        )
+
+    async def test_spending_line_splits_consumption_and_goal_savings(self) -> None:
+        result = await self._run(
+            goal_saved=Decimal("500000"), disposable=Decimal("-670000"), goal_withdrawn=Decimal("0")
+        )
+
+        assert "GASTOS DEL MES: $700,000 (consumo $200,000 + apartado a metas $500,000)" in result
+        assert "DISPONIBLE (ingresos - gastos): $-670,000" in result
+        assert "VOLVIÓ DE METAS" not in result
+
+    async def test_savings_line_is_computed_in_code(self) -> None:
+        result = await self._run(goal_saved=Decimal("500000"), disposable=Decimal("300000"))
+
+        assert "AHORRO DEL MES: apartado a metas $500,000 + disponible $300,000 = $800,000" in result
+
+    async def test_withdrawn_line_only_when_money_came_back(self) -> None:
+        result = await self._run(goal_withdrawn=Decimal("80000"))
+
+        assert "VOLVIÓ DE METAS: $80,000" in result
+
+    async def test_category_and_payment_lines_are_labelled_as_consumption(self) -> None:
+        result = await self._run(goal_saved=Decimal("500000"))
+
+        assert "GASTOS POR CATEGORÍA (consumo):" in result
+        assert "GASTOS POR MÉTODO DE PAGO (consumo):" in result
+
+    async def test_trend_shows_the_goal_part_of_each_month(self) -> None:
+        class Trend(FakeAnalysis):
+            async def monthly_trend(self, user_id, months, today=None):  # type: ignore[no-untyped-def]
+                return [
+                    _month("2026-10", "3000000", "1000000"),
+                    _month("2026-11", "3000000", "1500000").model_copy(
+                        update={"goal_saved": Decimal("500000")}
+                    ),
+                ]
+
+        result = await AnalysisToolkit(Trend()).dispatch(  # type: ignore[arg-type]
+            SPENDING_TREND_TOOL, {"months_back": 2}, "u1"
+        )
+
+        assert "gastos $1,500,000 (incluye apartado a metas $500,000)" in result
+        assert "octubre de 2026: gastos $1,000,000," in result
+
+
+class TestSavingsAndPeriodLabels:
+    async def _run(self, period: str, **update: object) -> str:
+        class WithGoals(FakeAnalysis):
+            async def snapshot(self, user_id, period, today=None):  # type: ignore[no-untyped-def]
+                return _snapshot().model_copy(update={"period": period, **update})
+
+        return await AnalysisToolkit(WithGoals()).dispatch(  # type: ignore[arg-type]
+            ANALYZE_FINANCES_TOOL, {"period": period}, "u1"
+        )
+
+    async def test_negative_disposable_is_not_added_to_the_savings(self) -> None:
+        result = await self._run(
+            "este_mes", goal_saved=Decimal("500000"), disposable=Decimal("-2000000")
+        )
+
+        assert (
+            "AHORRO DEL MES: apartado a metas $500,000 (gastaste más de lo que ingresó: $2,000,000)"
+            in result
+        )
+        assert "= $-1,500,000" not in result
+
+    async def test_a_non_month_period_is_labelled_as_a_period(self) -> None:
+        result = await self._run("todo", goal_saved=Decimal("1"), disposable=Decimal("5"))
+
+        assert "GASTOS DEL PERÍODO:" in result and "AHORRO DEL PERÍODO:" in result
+        assert "GASTOS DEL MES" not in result
+
+    async def test_a_month_keeps_the_month_label(self) -> None:
+        result = await self._run("2026-11", goal_saved=Decimal("1"), disposable=Decimal("5"))
+
+        assert "GASTOS DEL MES:" in result and "AHORRO DEL MES:" in result

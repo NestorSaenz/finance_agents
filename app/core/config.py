@@ -1,5 +1,6 @@
 """Application configuration using Pydantic Settings."""
 
+from datetime import date
 from typing import Annotated, Any, Literal
 
 from pydantic import AnyUrl, BeforeValidator, computed_field
@@ -51,6 +52,12 @@ class Settings(BaseSettings):
     # user's LOCAL calendar day instead of UTC. Defaults to the app's primary
     # market (Colombia).
     DEFAULT_TIMEZONE: str = "America/Bogota"
+
+    # Money already set aside into goals (real ``goal_contributions``) counts as spending
+    # of its month — that cash is no longer available — but ONLY for contributions dated
+    # on/after this day, so the history loaded before the rule existed (backfilled
+    # aportes) doesn't distort past months. A plan not yet contributed never counts.
+    GOALS_COUNT_AS_SPENDING_FROM: date = date(2026, 11, 1)
 
     # Shared secret guarding POST /recurring/run (the daily materialization job).
     # A Cloud Scheduler job must send it in the X-Recurring-Secret header. Empty

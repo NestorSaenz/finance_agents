@@ -53,11 +53,13 @@ from app.agents.tools.card_tools import CARD_TOOL_SCHEMAS
 from app.agents.tools.category_tools import CATEGORY_TOOL_SCHEMAS
 from app.agents.tools.goal_tools import (
     GOAL_TOOL_SCHEMAS,
+    PLAN_SAVED_NOTE,
     _parse_month,
     _past_gate,
 )
 from app.agents.tools.movement_tools import MOVEMENT_TOOL_SCHEMAS
 from app.agents.tools.names import (
+    ANALYZE_FINANCES_TOOL,
     CLEAR_GOAL_PLAN_TOOL,
     CONTRIBUTE_GOAL_TOOL,
     CREATE_BUDGET_TOOL,
@@ -70,7 +72,7 @@ from app.agents.tools.profile_tools import PROFILE_TOOL_SCHEMAS
 from app.agents.tools.recurring_tools import RECURRING_TOOL_SCHEMAS
 from app.agents.tools.transaction_tools import TRANSACTION_TOOL_SCHEMAS
 from app.shared.dependencies import get_llm_complex
-from app.shared.interfaces.llm import Message
+from app.shared.interfaces.llm import Message, MessageRole
 from app.shared.text_match import normalize
 from app.shared.turn import TurnContext, bound_turn
 
@@ -141,6 +143,13 @@ class RecordingToolkit:
             )
             if blocked:
                 return blocked
+        if name == SET_GOAL_PLAN_TOOL:  # the real tool's wording, so the model can relay it
+            goal = str(arguments.get("goal_name", "la meta"))
+            return (
+                f"✅ Plan de {goal}: ${arguments.get('amount')} "
+                f"(desde {arguments.get('month') or 'este mes'} en adelante). "
+                + PLAN_SAVED_NOTE.format(goal=goal)
+            )
         return FAKE_SUCCESS
 
     def named(self, tool: str) -> list[Call]:
@@ -248,11 +257,39 @@ def _nothing_written(toolkit: RecordingToolkit) -> bool:
     return not toolkit.applied_writes()
 
 
+def _reads_total_spent_without_writing(toolkit: RecordingToolkit) -> bool:
+    """The month's total (goal savings included) comes from analyze_finances, nothing is written."""
+    return bool(toolkit.named(ANALYZE_FINANCES_TOOL)) and not toolkit.applied_writes()
+
+
+def _plans_a_tope_for_a_goal(toolkit: RecordingToolkit) -> bool:
+    """A 'tope' for a goal is a PLAN (set_goal_plan), never a budget."""
+    call = _single(toolkit, SET_GOAL_PLAN_TOOL)
+    return call is not None and _amount_is(call, 500000) and _goal_is(call, "vacaciones")
+
+
+def _contributes_only(toolkit: RecordingToolkit) -> bool:
+    call = _single(toolkit, CONTRIBUTE_GOAL_TOOL)
+    return call is not None and _amount_is(call, 500000) and not toolkit.named(SET_GOAL_PLAN_TOOL)
+
+
+_AFTER_A_CONTRIBUTION: tuple[Message, ...] = (
+    Message(MessageRole.USER, "aporté 500.000 a vacaciones"),
+    Message(
+        MessageRole.ASSISTANT,
+        "✅ Aboné $500000 a 'Vacaciones' (cuenta en tus gastos del mes como ahorro). "
+        "Llevas $500000 de $5000000.",
+    ),
+)
+
+
 @dataclass(frozen=True)
 class EvalCase:
     message: str
     check: Callable[[RecordingToolkit], bool]
     reply_must_ask: bool = False
+    reply_must_mention: str | None = None
+    history: tuple[Message, ...] = ()
 
 
 CASES: dict[str, EvalCase] = {
@@ -285,6 +322,17 @@ CASES: dict[str, EvalCase] = {
         _reads_only(QUERY_BUDGETS_TOOL, QUERY_GOALS_TOOL),
     ),
     "aporte_no_es_plan": EvalCase("aporté 200.000 a vacaciones", _contributes_not_plans),
+    "gasto_del_mes_incluye_aporte": EvalCase(
+        "¿cuánto gasté este mes?",
+        _reads_total_spent_without_writing,
+        history=_AFTER_A_CONTRIBUTION,
+    ),
+    "aporte_500k_no_es_transaccion": EvalCase("aporté 500k a vacaciones", _contributes_only),
+    "tope_para_meta_es_plan": EvalCase(
+        "ponle tope de 500 mil a la meta vacaciones",
+        _plans_a_tope_for_a_goal,
+        reply_must_mention="plan",
+    ),
     "plan_agosto_adversarial": EvalCase(
         "pon el plan de agosto de 400.000 para vacaciones",
         _nothing_written,
@@ -308,13 +356,15 @@ def _judge(case: EvalCase, toolkit: RecordingToolkit, reply: str) -> Outcome:
         return Outcome.FAIL
     if case.reply_must_ask and "?" not in reply and "confirm" not in normalize(reply):
         return Outcome.FAIL
+    if case.reply_must_mention and case.reply_must_mention not in normalize(reply):
+        return Outcome.FAIL
     return Outcome.PASS if case.check(toolkit) else Outcome.FAIL
 
 
 async def _run_once(name: str, case: EvalCase, gate: asyncio.Semaphore, dump: Path) -> RunResult:
     toolkit = RecordingToolkit()
     llm = get_llm_complex()
-    history: list[Message] = []
+    history: list[Message] = list(case.history)
     async with gate:
         try:
             # A bound turn, as in production: the past-month gate remembers its question.

@@ -42,6 +42,12 @@ RESUME_GOAL_TOOL: Final[str] = "resume_goal"
 SET_GOAL_PLAN_TOOL: Final[str] = "set_goal_plan"
 CLEAR_GOAL_PLAN_TOOL: Final[str] = "clear_goal_plan"
 
+# goal_tools / analysis_tools: label of the plan total (a plan is not spending; what was
+# really contributed does count in the month's spending).
+PLAN_TOTAL_LABEL: Final[str] = (
+    "TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes)"
+)
+
 # movement_tools
 FIND_MOVEMENTS_TOOL: Final[str] = "find_movements"
 

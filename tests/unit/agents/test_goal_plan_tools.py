@@ -547,8 +547,8 @@ class TestQueryGoalsPlanLines:
 
         result = await _dispatch(service, "query_goals", {})
 
-        assert "TOTAL PLAN METAS (no es gasto ni tope) [MXN]: planificado $300.30 · aportado $100.15" in result
-        assert "TOTAL PLAN METAS (no es gasto ni tope) [USD]: planificado $50 · aportado $10" in result
+        assert "TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes) [MXN]: planificado $300.30 · aportado $100.15" in result
+        assert "TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes) [USD]: planificado $50 · aportado $10" in result
 
     async def test_single_currency_total_has_no_currency_tag(self) -> None:
         service = _service(statuses=[_status(UUID_LIKE, planned="500", saved="200")])
@@ -556,7 +556,7 @@ class TestQueryGoalsPlanLines:
         result = await _dispatch(service, "query_goals", {})
 
         assert result.splitlines()[-1] == (
-            "TOTAL PLAN METAS (no es gasto ni tope): planificado $500 · aportado $200"
+            "TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes): planificado $500 · aportado $200"
         )
 
     async def test_period_selects_the_month(self) -> None:
@@ -696,7 +696,7 @@ class TestPlanTotalsUseTheEffectivePlan:
         result = await _dispatch(service, "query_goals", {})
 
         assert result.splitlines()[-1] == (
-            "TOTAL PLAN METAS (no es gasto ni tope): planificado $2000 (necesitabas $500) · aportado $0"
+            "TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del mes): planificado $2000 (necesitabas $500) · aportado $0"
         )
 
     async def test_total_stays_plain_when_no_plan_was_capped(self) -> None:
@@ -718,3 +718,51 @@ class TestQueryGoalsListsEveryGoal:
         assert result.startswith("45 meta(s):")
         assert result.count("- Meta ") == 45
         assert result.splitlines()[-1].endswith("planificado $450 · aportado $0")
+
+
+class TestSpendingTexts:
+    async def test_saving_a_plan_says_it_is_only_a_plan(self) -> None:
+        result = await _dispatch(
+            _service(), SET_GOAL_PLAN_TOOL, {"goal_name": "vacaciones", "amount": 500000, "scope": "solo_mes"}
+        )
+
+        assert (
+            'Quedó como plan (no es un tope ni un gasto, y aún no has aportado). Cuando muevas la '
+            'plata, dime "aporté $X a Vacaciones playa" y lo registro; ahí sí contará en tus gastos del mes.'
+        ) in result
+
+    async def test_a_contribution_says_it_counts_in_the_months_spending(self) -> None:
+        result = await _dispatch(
+            _service(), "contribute_to_goal", {"goal_name": "vacaciones", "amount": 500000}
+        )
+
+        assert "(cuenta en tus gastos del mes como ahorro)" in result
+
+    async def test_plan_totals_label_explains_the_difference(self) -> None:
+        service = _service(statuses=[_status(UUID_LIKE, planned="500", saved="200")])
+
+        result = await _dispatch(service, "query_goals", {})
+
+        assert "(el plan no es gasto; lo aportado sí cuenta en tus gastos del mes)" in result
+        assert "no es gasto ni tope" not in result
+
+
+class TestContributionSpendingNote:
+    async def test_a_contribution_before_the_cutoff_does_not_claim_to_count(self) -> None:
+        result = await _dispatch(
+            _service(),
+            "contribute_to_goal",
+            {"goal_name": "vacaciones", "amount": 500000, "date": "2026-07-15"},
+        )
+
+        assert "cuenta en tus gastos del mes como ahorro" not in result
+        assert "no cuenta en tus gastos" in result
+
+    async def test_a_contribution_from_the_cutoff_on_says_it_counts(self) -> None:
+        result = await _dispatch(
+            _service(),
+            "contribute_to_goal",
+            {"goal_name": "vacaciones", "amount": 500000, "date": "2026-11-01"},
+        )
+
+        assert "(cuenta en tus gastos del mes como ahorro)" in result

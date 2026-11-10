@@ -334,10 +334,11 @@ TRANSACTION_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ANALYZE_SPENDING_TOOL,
             "description": (
-                "Analiza los gastos del usuario en un periodo: totales (ingresos, "
-                "gastos, balance), desglose por categoría y patrones. Úsala para "
-                "'¿en qué gasto más?', resúmenes, análisis o antes de dar "
-                "recomendaciones de ahorro."
+                "Analiza el CONSUMO del usuario en un periodo: totales (ingresos, "
+                "gastos de consumo, balance), desglose por categoría y patrones. NO incluye "
+                "lo apartado a metas. Úsala para '¿en qué gasto más?' o resúmenes por "
+                "categoría. Para '¿cuánto gasté este mes?' (el total, con lo apartado a "
+                "metas) usa analyze_finances."
             ),
             "parameters": {
                 "type": "object",

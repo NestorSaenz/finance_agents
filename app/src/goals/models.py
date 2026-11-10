@@ -169,3 +169,16 @@ class GoalMonthLine(BaseModel):
     # ``planned`` capped at what the goal still lacked when the month began (None
     # when there is no plan), computed like ``GoalPlanStatus.effective_planned``.
     effective_planned: Decimal | None = None
+
+
+class GoalFlows(BaseModel):
+    """GROSS money moved to and from goals within a date range.
+
+    ``saved`` sums the positive aportes and ``withdrawn`` the absolute value of the
+    retiros, so a withdrawal never cancels an aporte out.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    saved: Decimal
+    withdrawn: Decimal
