@@ -122,3 +122,41 @@ class TestCardCutoffVocabulary:
         function = schema["function"]
         assert function["parameters"]["properties"] == {}
         assert "SOLO si el mensaje ACTUAL" in function["description"]
+
+
+class TestGoalPlanRules:
+    def test_planning_is_set_goal_plan_and_never_a_budget_transaction_or_contribution(self) -> None:
+        assert "set_goal_plan" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA uses\n    create_budget, register_transaction ni contribute_to_goal para un plan" in (
+            TOOL_AGENT_SYSTEM_PROMPT
+        )
+        assert "planear no\n    mueve dinero" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_real_contributions_stay_contribute_to_goal(self) -> None:
+        assert "(dinero que REALMENTE se movió) →\n    contribute_to_goal, nunca set_goal_plan" in (
+            TOOL_AGENT_SYSTEM_PROMPT
+        )
+
+    def test_a_contribution_or_plan_is_never_an_expense(self) -> None:
+        assert "NUNCA es un gasto: no registres transacciones por ellos" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_categories_question_reads_budgets_and_goals_and_keeps_the_plan_apart(self) -> None:
+        assert "query_budgets Y query_goals" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "se presenta APARTE y NO se suma al TOTAL de los topes" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_goal_plan_is_not_the_profile_savings_percentage(self) -> None:
+        assert 'No confundas el plan mensual de una meta con la "META DE AHORRO %"' in (
+            TOOL_AGENT_SYSTEM_PROMPT
+        )
+
+    def test_past_months_need_an_explicit_confirmation_before_confirm_past(self) -> None:
+        assert "confirm_past=true" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "NUNCA pongas\n    confirm_past=true si el usuario no lo confirmó" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_plan_totals_come_from_the_tool(self) -> None:
+        assert "TOTAL PLAN\n    METAS" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "nunca los sumes tú" in TOOL_AGENT_SYSTEM_PROMPT
+
+    def test_existing_total_and_contribution_rules_are_intact(self) -> None:
+        assert "NUNCA sumes ni restes cifras tú mismo" in TOOL_AGENT_SYSTEM_PROMPT
+        assert "contribute_to_goal → cuando el usuario quiere APORTAR" in TOOL_AGENT_SYSTEM_PROMPT

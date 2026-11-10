@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+import pytest
 import structlog.testing
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -12,6 +13,7 @@ from app.agents.nodes.action_claims import FALSE_CLAIM_REPLY
 from app.agents.nodes.tool_agent import (
     DUPLICATE_WRITE_RESULT,
     MAX_TOOL_ROUNDS,
+    _call_key,
     _history_block,
     tool_agent_node,
 )
@@ -669,3 +671,123 @@ class FakeToolkitStub:
 
     async def dispatch(self, name: str, arguments: dict[str, Any], user_id: UserId) -> str:
         return "ok"
+
+
+_EURO: dict[str, Any] = {
+    "amount": 387195,
+    "card_name": "Nu",
+    "category": "compras",
+    "description": "Euro Arkadia",
+    "payment_method": "credito",
+    "transaction_date": "2026-10-25",
+    "transaction_type": "expense",
+}
+
+
+def _call_with(args: dict[str, Any], name: str = "register_transaction") -> ToolCall:
+    return ToolCall(id="x", name=name, arguments=args)
+
+
+def _round(*args_list: dict[str, Any]) -> LLMResponse:
+    return LLMResponse(
+        content="", model="fake", tool_calls=[_call_with(a) for a in args_list]
+    )
+
+
+class TestRepeatedWriteCanonicalKey:
+    async def _run(self, *rounds: LLMResponse) -> FakeTxService:
+        service = FakeTxService()
+        llm = ScriptedToolLLM([*rounds, _text("Listo.")])
+        state = build_initial_state(message="registra", user_id="u1")
+        await tool_agent_node(state, llm, TransactionToolkit(service))
+        return service
+
+    async def test_retry_that_omits_the_default_transaction_type_is_skipped(self) -> None:
+        without_type = {k: v for k, v in _EURO.items() if k != "transaction_type"}
+
+        service = await self._run(_round(_EURO), _round(without_type))
+
+        assert len(service.created) == 1
+
+    async def test_the_reverse_order_is_also_recognized(self) -> None:
+        without_type = {k: v for k, v in _EURO.items() if k != "transaction_type"}
+
+        service = await self._run(_round(without_type), _round(_EURO))
+
+        assert len(service.created) == 1
+
+    async def test_five_and_five_point_zero_are_the_same_amount(self) -> None:
+        service = await self._run(
+            _round({"amount": 5, "description": "café"}),
+            _round({"amount": 5.0, "description": "café"}),
+        )
+
+        assert len(service.created) == 1
+
+    async def test_spaces_and_case_in_text_do_not_make_a_new_write(self) -> None:
+        service = await self._run(
+            _round({"amount": 50, "description": "Pizza"}),
+            _round({"amount": 50, "description": "  pizza "}),
+        )
+
+        assert len(service.created) == 1
+
+    async def test_explicit_default_equals_omitted(self) -> None:
+        service = await self._run(
+            _round({"amount": 50, "description": "pizza", "transaction_type": "expense", "cuotas": 1}),
+            _round({"amount": 50, "description": "pizza"}),
+        )
+
+        assert len(service.created) == 1
+
+    async def test_non_default_type_is_a_different_write(self) -> None:
+        service = await self._run(
+            _round({"amount": 50, "description": "pizza"}),
+            _round({"amount": 50, "description": "pizza", "transaction_type": "income"}),
+        )
+
+        assert len(service.created) == 2
+
+    @pytest.mark.parametrize(
+        ("field", "other"),
+        [
+            ("amount", 387196),
+            ("transaction_date", "2026-10-26"),
+            ("description", "Prosalco"),
+            ("category", "salud"),
+            ("card_name", "Visa"),
+        ],
+    )
+    async def test_any_different_argument_still_executes(self, field: str, other: object) -> None:
+        service = await self._run(_round(_EURO), _round({**_EURO, field: other}))
+
+        assert len(service.created) == 2
+
+    async def test_equal_writes_in_the_same_round_both_run(self) -> None:
+        service = await self._run(_round(_EURO, _EURO))
+
+        assert len(service.created) == 2
+
+    def test_a_default_of_one_tool_does_not_apply_to_another(self) -> None:
+        with_type = {"amount": 5, "transaction_type": "expense"}
+
+        assert _call_key(_call_with(with_type, "register_transaction")) == _call_key(
+            _call_with({"amount": 5}, "register_transaction")
+        )
+        assert _call_key(_call_with(with_type, "contribute_to_goal")) != _call_key(
+            _call_with({"amount": 5}, "contribute_to_goal")
+        )
+
+    def test_none_and_empty_string_equal_omitted_and_booleans_are_not_numbers(self) -> None:
+        base = {"amount": 5}
+        assert _call_key(_call_with({**base, "category": None, "x": ""})) == _call_key(_call_with(base))
+        assert _call_key(_call_with({"flag": True})) != _call_key(_call_with({"flag": 1}))
+
+    def test_nested_values_are_canonicalized_and_order_independent(self) -> None:
+        a = _call_with({"items": [{"b": 1.0, "a": " X "}], "z": 1}, "other_tool")
+        b = _call_with({"z": 1, "items": [{"a": "x", "b": 1}]}, "other_tool")
+
+        assert _call_key(a) == _call_key(b)
+
+    def test_strings_are_not_converted_to_numbers_beyond_casefolding(self) -> None:
+        assert _call_key(_call_with({"amount": "05"})) != _call_key(_call_with({"amount": 5}))

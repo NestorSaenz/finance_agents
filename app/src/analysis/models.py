@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.shared.types import Category, MovementKind, StatementLineKind
+from app.shared.types import Category, CurrencyType, MovementKind, StatementLineKind
 
 
 class CategoryLine(BaseModel):
@@ -35,6 +35,11 @@ class GoalLine(BaseModel):
     current: Decimal
     target: Decimal
     percentage: float
+    # Plan for the period's month (None: no plan) and the GROSS amount contributed in
+    # it (withdrawals don't net out). Informational: they never change ``disposable``.
+    planned_monthly: Decimal | None = None
+    contributed_this_period: Decimal = Decimal("0")
+    currency: CurrencyType = CurrencyType.MXN
 
 
 class CardLine(BaseModel):

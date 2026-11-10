@@ -5,6 +5,7 @@ Exposes a single tool that returns a grounded snapshot of the user's finances
 the situation and give advice based on real numbers — not guesses.
 """
 
+from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
@@ -16,14 +17,14 @@ from app.agents.tools.names import (
 from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.periods import period_label
-from app.shared.types import UserId
+from app.shared.types import CurrencyType, UserId
 from app.src.analysis.constants import (
     DEFAULT_TREND_MONTHS,
     MAX_TREND_MONTHS,
     MIN_TREND_MONTHS,
 )
 from app.src.analysis.interfaces import AnalysisServiceABC
-from app.src.analysis.models import CardLine, FinancialSnapshot, MonthlyTotals
+from app.src.analysis.models import CardLine, FinancialSnapshot, GoalLine, MonthlyTotals
 
 logger = get_logger(__name__)
 
@@ -200,6 +201,34 @@ def _card_summary(c: CardLine) -> str:
     )
 
 
+def _goal_summary(g: GoalLine) -> str:
+    """One goal: progress, plus its monthly plan and what went in this period (if any)."""
+    text = f"{g.name} {_money(g.current)}/{_money(g.target)} ({g.percentage:.0f}%)"
+    extras = []
+    if g.planned_monthly is not None:
+        extras.append(f"plan {_money(g.planned_monthly)}/mes")
+    if g.planned_monthly is not None or g.contributed_this_period > 0:
+        extras.append(f"aportado en el periodo {_money(g.contributed_this_period)}")
+    return f"{text} [{', '.join(extras)}]" if extras else text
+
+
+def _goal_plan_totals(goals: list[GoalLine]) -> list[str]:
+    """One TOTAL PLAN METAS line per currency, summed here so the model never adds."""
+    planned: dict[CurrencyType, Decimal] = defaultdict(lambda: Decimal("0"))
+    saved: dict[CurrencyType, Decimal] = defaultdict(lambda: Decimal("0"))
+    for g in goals:
+        if g.planned_monthly is not None and g.planned_monthly > 0:
+            planned[g.currency] += g.planned_monthly
+            saved[g.currency] += g.contributed_this_period
+    several = len(planned) > 1
+    return [
+        "TOTAL PLAN METAS (no es gasto ni tope)"
+        + (f" [{currency.value}]" if several else "")
+        + f": planificado {_money(planned[currency])} · aportado {_money(saved[currency])}"
+        for currency in planned
+    ]
+
+
 def _format_snapshot(s: FinancialSnapshot) -> str:
     """Render the snapshot as grounded facts for the LLM to reason over."""
     lines = [f"Situación financiera ({period_label(s.period)}):"]
@@ -242,11 +271,9 @@ def _format_snapshot(s: FinancialSnapshot) -> str:
         lines.append(f"PRESUPUESTOS: {buds}")
 
     if s.goals:
-        goals = "; ".join(
-            f"{g.name} {_money(g.current)}/{_money(g.target)} ({g.percentage:.0f}%)"
-            for g in s.goals
-        )
+        goals = "; ".join(_goal_summary(g) for g in s.goals)
         lines.append(f"METAS DE AHORRO: {goals}")
+        lines.extend(_goal_plan_totals(s.goals))
 
     if s.cards:
         cards = "; ".join(_card_summary(c) for c in s.cards)

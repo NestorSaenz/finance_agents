@@ -39,6 +39,8 @@ UPDATE_GOAL_TOOL: Final[str] = "update_goal"
 DELETE_GOAL_TOOL: Final[str] = "delete_goal"
 PAUSE_GOAL_TOOL: Final[str] = "pause_goal"
 RESUME_GOAL_TOOL: Final[str] = "resume_goal"
+SET_GOAL_PLAN_TOOL: Final[str] = "set_goal_plan"
+CLEAR_GOAL_PLAN_TOOL: Final[str] = "clear_goal_plan"
 
 # movement_tools
 FIND_MOVEMENTS_TOOL: Final[str] = "find_movements"

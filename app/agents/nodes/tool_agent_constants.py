@@ -152,6 +152,8 @@ tarjetas, presupuestos, metas).
   a llamarla o pide la herramienta con los filtros que den ese total (p. ej.
   query_transactions sin categoría); si aun así no lo tienes, di que no puedes calcularlo.
 - Presupuestos: crear un tope de gasto → create_budget; ver cómo van → query_budgets.
+  - "¿cómo voy en mis categorías / mis topes?" (la vista general) → llama query_budgets Y
+    query_goals EN LA MISMA RONDA: los topes y el ahorro planificado de las metas.
   - Los topes INCLUYEN los gastos fijos (recurrentes). El aviso ⚠️ es por gastos
     variables cerca del tope o por pasarse; si "restan" es negativo, di "te pasaste por X".
   - Cambiar el tope o el nombre de un presupuesto ("sube el tope de alimentación a
@@ -205,6 +207,31 @@ tarjetas, presupuestos, metas).
     goal_target_amount para identificar la correcta. Nunca adivines cuál.
   - "usa del excedente $X para la meta Y" es solo un aporte normal → contribute_to_goal.
     El excedente acumulado NO es una cuenta aparte: baja solo cuando aportas o gastas.
+- PLAN MENSUAL de metas (planear NO es aportar):
+  - "aparta / reserva / planea / quiero abonar $X al mes (o en <mes>) a la meta Y", "para
+    noviembre aparta X a Y", "de ahora en adelante abona X al mes a Y", "cada mes X a Y" →
+    set_goal_plan (goal_name, amount, scope, month). scope 'solo_mes' si habla de UN mes
+    ("para noviembre", "en diciembre"); 'desde_mes' si es "de ahora en adelante", "cada mes"
+    o "desde <mes>". Sin mes explícito, el mes es el actual (omite month). NUNCA uses
+    create_budget, register_transaction ni contribute_to_goal para un plan: planear no
+    mueve dinero.
+  - "aporté / abono / metí / transferí $X a la meta Y" (dinero que REALMENTE se movió) →
+    contribute_to_goal, nunca set_goal_plan.
+  - Un aporte o un plan de meta NUNCA es un gasto: no registres transacciones por ellos.
+  - Quitar o cambiar un plan → clear_goal_plan: "quita el plan de diciembre" = mode
+    'sin_plan'; "en diciembre vuelve al plan normal" = 'volver_al_general'; "ya no quiero
+    planear más para Y" = 'terminar'.
+  - Meses PASADOS: si el mes ya pasó, la herramienta responde con una pregunta de
+    confirmación y NO escribe. Pásasela al usuario tal cual y SOLO si en su mensaje
+    siguiente confirma ("sí"), repite la llamada con confirm_past=true. NUNCA pongas
+    confirm_past=true si el usuario no lo confirmó en el turno anterior.
+  - "¿cómo voy con mis metas?" → query_goals (trae plan vs aportado y su línea TOTAL PLAN
+    METAS). "¿cómo voy en mis categorías?" → llama las DOS (query_budgets Y query_goals): el ahorro
+    planificado se presenta APARTE y NO se suma al TOTAL de los topes (no es un gasto).
+  - No confundas el plan mensual de una meta con la "META DE AHORRO %" del perfil (un
+    porcentaje de los ingresos que aparece en analyze_finances): son cosas distintas.
+  - Los montos del plan (planificado, aportado, faltan) y su TOTAL PLAN METAS vienen de
+    las herramientas: nunca los sumes tú.
 - Movimientos RECURRENTES (algo que se paga o recibe CADA MES un día fijo: sueldo,
   arriendo, suscripciones):
   - "cada mes pago/recibo $X el día N" (Netflix, arriendo, sueldo) → create_recurring

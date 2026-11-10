@@ -319,8 +319,9 @@ class TestPlanStatusMonthLimits:
     async def test_period_spanning_two_months_is_rejected(self) -> None:
         service, _, _ = _setup([_goal()])
 
-        with pytest.raises(InvalidPlanPeriodError):
+        with pytest.raises(InvalidPlanPeriodError) as error:
             await service.get_plan_status("u1", date(2026, 6, 1), date(2026, 7, 31), today=TODAY)
+        assert error.value.details["reason"] == "el período debe estar dentro de un solo mes"
 
     async def test_future_month_resolves_from_the_recurring(self) -> None:
         service, _, _ = _setup([_goal()], [_recurring(date(2026, 1, 1), "500")])
@@ -619,3 +620,41 @@ class TestClearPlan:
 
         with pytest.raises(GoalNotFoundError):
             await service.clear_plan("u1", "nope", date(2026, 6, 1), GoalPlanClearMode.SIN_PLAN)
+
+
+class TestHistoryEffectivePlan:
+    async def test_effective_plan_is_capped_at_what_was_missing_at_each_month_start(self) -> None:
+        service, ledger, _ = _setup([_goal(target="10000")], [_recurring(date(2026, 1, 1), "2000")])
+        ledger.add("g1", D("9500"), date(2026, 5, 10))
+
+        lines = await service.get_monthly_history("u1", 2, today=TODAY)
+        by_month = {line.month: line for line in lines}
+
+        assert by_month[date(2026, 4, 1)].effective_planned == D("2000")  # 10000 still missing
+        assert by_month[date(2026, 5, 1)].effective_planned == D("2000")  # started at 0
+        assert by_month[date(2026, 6, 1)].effective_planned == D("500")  # 9500 held at the start
+        assert by_month[date(2026, 6, 1)].planned == D("2000")  # the plan itself is untouched
+
+    async def test_no_plan_means_no_effective_plan(self) -> None:
+        service, _, _ = _setup([_goal()])
+
+        [*_, last] = await service.get_monthly_history("u1", 1, today=TODAY)
+
+        assert last.planned is None and last.effective_planned is None
+
+    async def test_a_goal_already_full_has_zero_effective_plan(self) -> None:
+        service, ledger, _ = _setup([_goal(target="1000")], [_recurring(date(2026, 1, 1), "300")])
+        ledger.add("g1", D("1000"), date(2026, 4, 2))
+
+        lines = await service.get_monthly_history("u1", 1, today=TODAY)
+
+        assert [line.effective_planned for line in lines] == [D("0"), D("0")]
+
+    async def test_months_out_of_range_reason_is_in_spanish(self) -> None:
+        service, _, _ = _setup([_goal()])
+
+        with pytest.raises(InvalidPlanPeriodError) as error:
+            await service.get_monthly_history("u1", 0, today=TODAY)
+
+        assert error.value.details["reason"] == "los meses deben estar entre 1 y 24"
+        assert "inválido" in error.value.message

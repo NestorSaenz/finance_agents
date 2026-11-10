@@ -223,7 +223,18 @@ class StubGoalService(GoalServiceABC):
                 saved=Decimal("100"),
                 withdrawn=Decimal("0"),
                 cumulative=Decimal("100"),
-            )
+            ),
+            GoalMonthLine(
+                goal_id="g1",
+                goal_name="Viaje",
+                currency=CurrencyType.MXN,
+                month=date(2026, 7, 1),
+                planned=Decimal("500"),
+                effective_planned=Decimal("300"),
+                saved=Decimal("0"),
+                withdrawn=Decimal("0"),
+                cumulative=Decimal("100"),
+            ),
         ]
 
     async def contributed_in_period(
@@ -511,7 +522,10 @@ class TestMonthlyHistoryEndpoint:
         response = client.get(f"{BASE_URL}/monthly")
 
         assert response.status_code == 200
-        assert response.json()["lines"][0]["planned"] is None
+        lines = response.json()["lines"]
+        assert lines[0]["planned"] is None and lines[0]["effective_planned"] is None
+        assert lines[1]["planned"] == "500"
+        assert lines[1]["effective_planned"] == "300"  # capped at what the goal still lacked
 
     def test_defaults_to_six_months_ending_in_the_current_month(self) -> None:
         service = StubGoalService()

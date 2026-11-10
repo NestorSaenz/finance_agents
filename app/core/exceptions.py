@@ -252,7 +252,7 @@ class InvalidPlanPeriodError(DomainError):
 
     def __init__(self, reason: str) -> None:
         super().__init__(
-            message=f"Invalid goal plan period: {reason}",
+            message=f"Período de plan de meta inválido: {reason}",
             code="INVALID_PLAN_PERIOD",
             details={"reason": reason},
         )

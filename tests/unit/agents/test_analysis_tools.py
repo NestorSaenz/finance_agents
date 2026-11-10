@@ -10,7 +10,7 @@ from app.agents.tools.analysis_tools import (
     SPENDING_TREND_TOOL,
     AnalysisToolkit,
 )
-from app.shared.types import CategoryType, UserId
+from app.shared.types import CategoryType, CurrencyType, UserId
 from app.src.analysis.constants import (
     DEFAULT_TREND_MONTHS,
     MAX_TREND_MONTHS,
@@ -297,3 +297,38 @@ async def test_threads_bound_local_today_to_snapshot() -> None:
         await AnalysisToolkit(service).dispatch(ANALYZE_FINANCES_TOOL, {}, "u1")  # type: ignore[arg-type]
     # The tool anchors the snapshot's period to the turn's local day.
     assert service.todays == [date(2026, 8, 11)]
+
+
+class TestGoalPlanTotalsLine:
+    def test_totals_are_summed_in_code_per_currency(self) -> None:
+        from app.agents.tools.analysis_tools import _goal_plan_totals
+
+        def line(name: str, planned: str | None, saved: str, currency: CurrencyType) -> GoalLine:
+            return GoalLine(
+                name=name,
+                current=Decimal("1"),
+                target=Decimal("2"),
+                percentage=50.0,
+                planned_monthly=Decimal(planned) if planned is not None else None,
+                contributed_this_period=Decimal(saved),
+                currency=currency,
+            )
+
+        goals = [
+            line("a", "100.10", "40.05", CurrencyType.MXN),
+            line("b", "200.20", "60.10", CurrencyType.MXN),
+            line("c", "50", "10", CurrencyType.USD),
+            line("sin plan", None, "999", CurrencyType.MXN),
+        ]
+
+        lines = _goal_plan_totals(goals)
+
+        assert len(lines) == 2
+        assert lines[0].startswith("TOTAL PLAN METAS (no es gasto ni tope) [MXN]: planificado ")
+        assert "planificado $300" in lines[0] and "aportado $100" in lines[0]
+        assert "[USD]" in lines[1] and "999" not in "".join(lines)
+
+    def test_no_planned_goals_gives_no_total_line(self) -> None:
+        from app.agents.tools.analysis_tools import _goal_plan_totals
+
+        assert _goal_plan_totals([]) == []

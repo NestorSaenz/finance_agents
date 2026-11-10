@@ -166,3 +166,6 @@ class GoalMonthLine(BaseModel):
     saved: Decimal
     withdrawn: Decimal
     cumulative: Decimal
+    # ``planned`` capped at what the goal still lacked when the month began (None
+    # when there is no plan), computed like ``GoalPlanStatus.effective_planned``.
+    effective_planned: Decimal | None = None

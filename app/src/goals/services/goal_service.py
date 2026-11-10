@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date, timedelta
 from decimal import Decimal
-from itertools import accumulate, islice
+from itertools import accumulate
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -388,7 +388,7 @@ class GoalService(GoalServiceABC):
         provider = self._months
         month = first_of_month(period_start)
         if first_of_month(period_end) != month:
-            raise InvalidPlanPeriodError("the period must fall within a single month")
+            raise InvalidPlanPeriodError("el período debe estar dentro de un solo mes")
         current_month = first_of_month(today or current_today())
 
         goals = await self._list_all_goals(user_id)
@@ -423,7 +423,7 @@ class GoalService(GoalServiceABC):
         today: date | None = None,
     ) -> list[GoalMonthLine]:
         if not 1 <= months <= MAX_HISTORY_MONTHS:
-            raise InvalidPlanPeriodError(f"months must be between 1 and {MAX_HISTORY_MONTHS}")
+            raise InvalidPlanPeriodError(f"los meses deben estar entre 1 y {MAX_HISTORY_MONTHS}")
         plans = self._plans
         provider = self._months
         current_month = first_of_month(today or current_today())
@@ -671,7 +671,7 @@ def _goal_history(
     created = _created_month(goal)
     movements = [totals.get((goal.id, month)) for month in window]
     nets = ((m.saved - m.withdrawn) if m else Decimal("0") for m in movements)
-    cumulatives = islice(accumulate(nets, initial=opening), 1, None)
+    balances = list(accumulate(nets, initial=opening))  # balances[i] = start of window[i]
 
     return [
         GoalMonthLine(
@@ -680,11 +680,19 @@ def _goal_history(
             currency=goal.currency,
             month=month,
             planned=planned,
+            # The plan capped at what the goal still lacked when the month began.
+            effective_planned=(
+                min(planned, max(goal.target_amount - start, Decimal("0")))
+                if planned is not None
+                else None
+            ),
             saved=movement.saved if movement else Decimal("0"),
             withdrawn=movement.withdrawn if movement else Decimal("0"),
-            cumulative=cumulative,
+            cumulative=end,
         )
-        for month, movement, cumulative in zip(window, movements, cumulatives, strict=True)
+        for month, movement, start, end in zip(
+            window, movements, balances[:-1], balances[1:], strict=True
+        )
         for planned in [resolve_plan(plans, month, created)]
         if movement is not None or planned is not None or created <= month <= current_month
     ]

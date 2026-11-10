@@ -11,6 +11,7 @@ import json
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import date
+from decimal import Decimal
 from typing import Final, NamedTuple
 
 from langchain_core.messages import AIMessage
@@ -30,6 +31,13 @@ from app.agents.nodes.action_claims import (
 from app.agents.nodes.tool_agent_constants import NO_HISTORY_BLOCK, TOOL_AGENT_SYSTEM_PROMPT
 from app.agents.state import AgentState
 from app.agents.tools.base import Toolkit
+from app.agents.tools.names import (
+    CREATE_BUDGET_TOOL,
+    CREATE_GOAL_TOOL,
+    CREATE_RECURRING_TOOL,
+    MANAGE_CATEGORY_TOOL,
+    REGISTER_TRANSACTION_TOOL,
+)
 from app.core.logging import get_logger
 from app.core.observability import record_tool_span, start_tool_span
 from app.shared.clock import bound_today, current_today, local_today
@@ -50,6 +58,16 @@ DUPLICATE_WRITE_RESULT: Final = (
     "usuario pidió registrarla dos veces, díselo y pregúntale si quiere el segundo; si no, "
     "responde sin repetirla."
 )
+
+# Real defaults of the mutating tools' optional arguments (taken from each tool's code),
+# so repeat detection treats an explicit default and an omitted argument as the same call.
+_TOOL_DEFAULTS: Final[dict[str, dict[str, object]]] = {
+    REGISTER_TRANSACTION_TOOL: {"transaction_type": "expense", "cuotas": 1},
+    CREATE_RECURRING_TOOL: {"transaction_type": "expense", "frequency": "monthly"},
+    CREATE_BUDGET_TOOL: {"period_type": "monthly"},
+    CREATE_GOAL_TOOL: {"goal_type": "savings"},
+    MANAGE_CATEGORY_TOOL: {"delete_movements": False},
+}
 
 # Fetches the user's existing categories so the agent can reuse them (injected
 # via binding, like llm/toolkit). Optional: tests and simple wiring may omit it.
@@ -312,9 +330,42 @@ class _RoundOutcome(NamedTuple):
     ran_results: list[str]
 
 
+def _canonical(value: object) -> object:
+    """Canonical form of an argument value, for comparing calls (never for executing them).
+
+    Numbers (not bool) become their normalized decimal string, so 5, 5.0 and Decimal("5")
+    agree; strings are stripped and case-folded; containers are canonicalized recursively.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return format(Decimal(str(value)).normalize(), "f")
+    if isinstance(value, str):
+        return value.strip().casefold()
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_canonical(v) for v in value]
+    return value
+
+
 def _call_key(call: ToolCall) -> tuple[str, str]:
-    """Identity of a call for repeat detection: tool name + canonical (sorted) args."""
-    return call.name, json.dumps(call.arguments, sort_keys=True, default=str)
+    """Identity of a call for repeat detection: tool name + canonical (sorted) args.
+
+    An argument that is absent, ``None`` or ``""`` equals one that is omitted, and one
+    equal to its tool's real default (``_TOOL_DEFAULTS``) equals omitting it, so a retry
+    that spells the defaults differently is still recognized as the same write.
+    """
+    defaults = _TOOL_DEFAULTS.get(call.name, {})
+    canonical = {
+        key: _canonical(value)
+        for key, value in call.arguments.items()
+        if value is not None and value != ""
+    }
+    for key, default in defaults.items():
+        if canonical.get(key) == _canonical(default):
+            del canonical[key]
+    return call.name, json.dumps(canonical, sort_keys=True, default=str)
 
 
 async def _dispatch_round(

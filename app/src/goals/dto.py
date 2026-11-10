@@ -241,6 +241,10 @@ class GoalMonthLineResponse(BaseModel):
     currency: CurrencyType
     month: str
     planned: Decimal | None
+    effective_planned: Decimal | None = Field(
+        default=None,
+        description="Plan capped at what the goal still lacked at the month start (null: no plan)",
+    )
     saved: Decimal
     withdrawn: Decimal
     cumulative: Decimal
@@ -253,6 +257,7 @@ class GoalMonthLineResponse(BaseModel):
             currency=line.currency,
             month=month_key(line.month),
             planned=line.planned,
+            effective_planned=line.effective_planned,
             saved=line.saved,
             withdrawn=line.withdrawn,
             cumulative=line.cumulative,

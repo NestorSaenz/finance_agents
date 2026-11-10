@@ -3,12 +3,19 @@
 import asyncio
 from datetime import date
 from decimal import Decimal
+from typing import Final
 
+import httpx
+from postgrest.exceptions import APIError
+
+from app.core.exceptions import FinanceGPTError
+from app.core.logging import get_logger
 from app.shared.periods import ESTE_MES, recent_months, resolve_period
 from app.shared.types import UserId
 from app.src.budgets.interfaces import BudgetServiceABC
 from app.src.cards.interfaces import CreditCardServiceABC
 from app.src.goals.interfaces import GoalServiceABC
+from app.src.goals.models import GoalMonthLine
 from app.src.transactions.interfaces import TransactionServiceABC
 from app.src.users.interfaces import UserProfileServiceABC
 
@@ -22,6 +29,12 @@ from ..models import (
     GoalLine,
     MonthlyTotals,
 )
+
+logger = get_logger(__name__)
+
+# Failures reading the (informational) goal-plan data: domain/infrastructure errors and
+# the database client's own (missing table, network).
+_PLAN_DATA_FAILURES: Final = (FinanceGPTError, APIError, httpx.HTTPError)
 
 # Goals/cards are cumulative; a generous page keeps personal-finance volumes in one read.
 _GOALS_PAGE: int = 50
@@ -55,7 +68,7 @@ class AnalysisService(AnalysisServiceABC):
 
         # These reads are independent, so fetch them concurrently instead of
         # paying five sequential round-trips.
-        summary, profile, budget_statuses, goals_page, card_statuses = (
+        summary, profile, budget_statuses, goals_page, card_statuses, goal_months = (
             await asyncio.gather(
                 self._transactions.get_spending_summary(
                     user_id, period_start=start, period_end=end
@@ -69,9 +82,11 @@ class AnalysisService(AnalysisServiceABC):
                     user_id, page=1, page_size=_GOALS_PAGE, as_of=end
                 ),
                 self._cards.get_all_status(user_id, as_of=today),
+                self._goal_month_lines(user_id, start, end, today),
             )
         )
         goals = goals_page[0]
+        by_goal = {line.goal_id: line for line in goal_months}
 
         # The profile's monthly income is a FALLBACK, not additive: it only counts
         # when this month has no logged income, so a registered income replaces it
@@ -144,6 +159,13 @@ class AnalysisService(AnalysisServiceABC):
                         if g.target_amount > 0
                         else 0.0
                     ),
+                    planned_monthly=(
+                        by_goal[g.id].planned if g.id in by_goal else None
+                    ),
+                    currency=g.currency,
+                    contributed_this_period=(
+                        by_goal[g.id].saved if g.id in by_goal else Decimal("0")
+                    ),
                 )
                 for g in goals
             ],
@@ -151,6 +173,26 @@ class AnalysisService(AnalysisServiceABC):
             card_debt_total=sum((c.balance for c in cards), Decimal("0")),
             card_available_total=sum((c.available for c in cards), Decimal("0")),
         )
+
+    async def _goal_month_lines(
+        self, user_id: UserId, start: date, end: date, today: date | None
+    ) -> list[GoalMonthLine]:
+        """Each goal's plan and gross contributions for the period's month.
+
+        Only a single-month period has a monthly plan; for a wider one (e.g. "todo")
+        there is nothing to report, so the goal lines keep their defaults.
+        """
+        if (start.year, start.month) != (end.year, end.month):
+            return []
+        try:
+            history = await self._goals.get_monthly_history(
+                user_id, months=1, to_month=start, today=today
+            )
+        except _PLAN_DATA_FAILURES as e:
+            # Informational data: the analysis must not fail because the plan can't be read.
+            logger.warning("Goal plan data unavailable for the analysis", error=str(e))
+            return []
+        return [line for line in history if line.month == start.replace(day=1)]
 
     async def monthly_trend(
         self, user_id: UserId, months: int, today: date | None = None

@@ -5,12 +5,13 @@ from decimal import Decimal
 
 import pytest
 
+from app.core.exceptions import DatabaseQueryError
 from app.shared.types import CategoryType, CurrencyType, UserId
 from app.src.analysis.constants import MAX_TREND_MONTHS, MIN_TREND_MONTHS
 from app.src.analysis.services.analysis_service import AnalysisService
 from app.src.budgets.models import Budget, BudgetStatus
 from app.src.cards.models import CreditCard, CreditCardStatus
-from app.src.goals.models import Goal
+from app.src.goals.models import Goal, GoalMonthLine
 from app.src.transactions.models import CategorySpending, SpendingSummary
 from app.src.users.models import UserProfile
 
@@ -61,6 +62,20 @@ class FakeBudgets:
 
 
 class FakeGoals:
+    async def get_monthly_history(self, user_id, months=6, to_month=None, today=None):  # type: ignore[no-untyped-def]
+        return [
+            GoalMonthLine(
+                goal_id="g1",
+                goal_name="vacaciones playa",
+                currency=CurrencyType.MXN,
+                month=to_month,
+                planned=Decimal("5000"),
+                saved=Decimal("3500"),
+                withdrawn=Decimal("500"),
+                cumulative=Decimal("20000"),
+            )
+        ]
+
     async def contributed_in_period(self, user_id, period_start, period_end):  # type: ignore[no-untyped-def]
         return Decimal("2000")
 
@@ -198,6 +213,22 @@ async def test_snapshot_aggregates_cards_and_goals() -> None:
     assert snap.by_category[0].percentage == pytest.approx(100.0)
 
 
+async def test_snapshot_goal_line_carries_the_plan_and_gross_contributions() -> None:
+    snap = await _service().snapshot("u1", "este_mes")
+
+    assert snap.goals[0].planned_monthly == Decimal("5000")
+    assert snap.goals[0].contributed_this_period == Decimal("3500")  # gross, not 3000 net
+    # Informational only: the plan never touches the disposable figure.
+    assert snap.disposable == snap.total_income - snap.total_expenses
+
+
+async def test_snapshot_goal_line_has_no_plan_for_a_multi_month_period() -> None:
+    snap = await _service().snapshot("u1", "todo")
+
+    assert snap.goals[0].planned_monthly is None
+    assert snap.goals[0].contributed_this_period == Decimal("0")
+
+
 async def test_snapshot_excludes_reference_income_for_other_periods() -> None:
     snap = await _service().snapshot("u1", "todo")
 
@@ -305,3 +336,23 @@ async def test_snapshot_carries_the_cash_credit_split() -> None:
     # Surfaced from the summary so the tool can answer "cash vs card".
     assert snap.cash_expenses == Decimal("5000")
     assert snap.credit_expenses == Decimal("0")
+
+
+async def test_snapshot_survives_a_failing_goal_plan_read() -> None:
+    class FailingPlans(FakeGoals):
+        async def get_monthly_history(self, user_id, months=6, to_month=None, today=None):  # type: ignore[no-untyped-def]
+            raise DatabaseQueryError("rpc", "goal_plans missing")
+
+    service = AnalysisService(
+        FakeTransactions(),  # type: ignore[arg-type]
+        FakeBudgets(),  # type: ignore[arg-type]
+        FailingPlans(),  # type: ignore[arg-type]
+        FakeCards(),  # type: ignore[arg-type]
+        FakeProfiles(),  # type: ignore[arg-type]
+    )
+
+    snap = await service.snapshot("u1", "este_mes")
+
+    assert snap.goals[0].planned_monthly is None  # informational data dropped, analysis intact
+    assert snap.goals[0].contributed_this_period == Decimal("0")
+    assert snap.goals[0].currency == CurrencyType.MXN
