@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { planIncomeShare } from "@/lib/budgets";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import type { BudgetStatusItem, BudgetStatusList, Transaction } from "@/lib/types";
 
@@ -258,6 +259,52 @@ describe("BudgetProgress", () => {
     it("adds a calm note when topes exceed the income", () => {
       renderBudgets({ data: twoBudgets, monthlyIncome: 1000000 });
       expect(screen.getByText(/más que tu ingreso base/)).toBeInTheDocument();
+    });
+  });
+
+  describe("empty state and goal plan lines", () => {
+    it("shows the 'Aún no tienes topes' message when there are no topes and no plans", () => {
+      renderBudgets({ data: list([]) });
+      expect(screen.getByText(/Aún no tienes topes definidos/)).toBeInTheDocument();
+    });
+
+    it("skips that message when the month has goal plans", () => {
+      const { container } = renderBudgets({ data: list([]), hasPlans: true });
+      expect(screen.queryByText(/Aún no tienes topes/)).toBeNull();
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("adds the plan lines apart from 'Tus topes suman'", () => {
+      renderBudgets({
+        data: list([
+          budgetItem({ budget: { id: "t", name: "T", category: "transporte", amount: "2000000" } }),
+        ]),
+        monthlyIncome: 10000000,
+        plan: planIncomeShare(10000000, 1000000, 2000000),
+        hasPlans: true,
+      });
+      expect(screen.getByText(/Tus topes suman/).textContent).toContain("20%");
+      expect(screen.getByText(/Ahorro planificado del mes/).textContent).toContain("10%");
+      expect(screen.getByText(/Topes \+ metas/).textContent).toContain("30%");
+      expect(screen.queryByText(/más que tu ingreso base/)).toBeNull();
+    });
+
+    it("shows no plan lines without income", () => {
+      renderBudgets({ plan: planIncomeShare(0, 1000000, 0), hasPlans: true });
+      expect(screen.queryByText(/Ahorro planificado del mes/)).toBeNull();
+    });
+
+    it("warns softly, on its own line, when topes + plan exceed the income", () => {
+      renderBudgets({
+        data: list([
+          budgetItem({ budget: { id: "t", name: "T", category: "transporte", amount: "800000" } }),
+        ]),
+        monthlyIncome: 1000000,
+        plan: planIncomeShare(1000000, 300000, 800000),
+        hasPlans: true,
+      });
+      expect(screen.getByText(/Topes y ahorro planificado suman más/)).toBeInTheDocument();
+      expect(screen.queryByText(/^Tus topes suman más que tu ingreso/)).toBeNull();
     });
   });
 });

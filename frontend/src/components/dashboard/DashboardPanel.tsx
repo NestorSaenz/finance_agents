@@ -5,6 +5,7 @@ import { RefreshCw, X } from "lucide-react";
 
 import { ApiError, api } from "@/lib/api";
 import { currentMonthKey } from "@/lib/format";
+import { historyTo } from "@/lib/goalPlans";
 import { goalFlows } from "@/lib/movements";
 import { useAuth } from "@/context/AuthContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
@@ -13,6 +14,8 @@ import type {
   CardPaymentsList,
   CreditCardStatusList,
   Goal,
+  GoalMonthlyHistory,
+  GoalPlanStatusList,
   GoalContributionsList,
   Recurring,
   SpendingSummary,
@@ -76,6 +79,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
   const [contributions, setContributions] =
     useState<GoalContributionsList | null>(null);
+  const [planStatus, setPlanStatus] = useState<GoalPlanStatusList | null>(null);
+  const [goalHistory, setGoalHistory] = useState<GoalMonthlyHistory | null>(null);
   const [surplus, setSurplus] = useState(0);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,6 +113,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         contributionsData,
         surplusData,
         recurringData,
+        planData,
+        historyData,
       ] = await Promise.all([
         api.spendingSummary(period, token),
         api.transactions(period, token),
@@ -125,6 +132,13 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         api.excedente(period, token),
         // Recurrentes are the same regardless of the selected period.
         api.recurring(token),
+        // The monthly plan block is optional: a failure here must not break the
+        // rest of the panel, so it degrades to "no plan block".
+        // 'todo' has no plan (the backend answers an empty list), so skip the call.
+        period === "todo"
+          ? Promise.resolve(null)
+          : api.goalPlanStatus(period, token).catch(() => null),
+        api.goalMonthly(6, historyTo(period), token).catch(() => null),
       ]);
       setSummary(summaryData);
       setMovements(movementsData.transactions);
@@ -137,6 +151,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setContributions(contributionsData);
       setSurplus(Number(surplusData.accumulated_surplus ?? 0));
       setRecurring(recurringData.recurring);
+      setPlanStatus(planData);
+      setGoalHistory(historyData);
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -154,6 +170,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setContributions(null);
       setSurplus(0);
       setRecurring([]);
+      setPlanStatus(null);
+      setGoalHistory(null);
     } finally {
       setLoading(false);
     }
@@ -314,6 +332,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               transactions={movements}
               recurring={recurring}
               period={period}
+              planStatus={planStatus}
+              goalHistory={goalHistory}
             />
           ) : null}
         </div>

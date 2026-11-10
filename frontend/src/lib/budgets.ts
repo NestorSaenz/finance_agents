@@ -49,3 +49,32 @@ export function budgetIncomeShare(
 
   return { categoryTotal, totalPct: pctOf(categoryTotal, income), overall, pctById };
 }
+
+/** The month's planned goal saving against the base income. A plan is NOT a
+ *  gasto or a tope: this is shown apart from "Tus topes suman". */
+export interface PlanIncomeShare {
+  planned: number;
+  plannedPct: number;
+  /** Topes + planned saving (only when there are category topes). */
+  combined: { amount: number; pct: number } | null;
+  /** True when topes + plan exceed the income but the topes alone do not
+   *  (the topes-alone case already has its own note). */
+  exceedsIncome: boolean;
+}
+
+export function planIncomeShare(
+  income: number | null | undefined,
+  plannedSaving: number,
+  categoryTotal: number,
+): PlanIncomeShare | null {
+  if (income == null || !Number.isFinite(income) || income <= 0) return null;
+  if (!Number.isFinite(plannedSaving) || plannedSaving <= 0) return null;
+  const combinedAmount = categoryTotal + plannedSaving;
+  const combinedPct = pctOf(combinedAmount, income);
+  return {
+    planned: plannedSaving,
+    plannedPct: pctOf(plannedSaving, income),
+    combined: categoryTotal > 0 ? { amount: combinedAmount, pct: combinedPct } : null,
+    exceedsIncome: combinedPct > 100 && pctOf(categoryTotal, income) <= 100,
+  };
+}

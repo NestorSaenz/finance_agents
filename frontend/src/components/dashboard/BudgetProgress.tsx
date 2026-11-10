@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { useMoney } from "@/context/CurrencyContext";
-import { budgetIncomeShare } from "@/lib/budgets";
+import { budgetIncomeShare, type PlanIncomeShare } from "@/lib/budgets";
 import { categoryLabel, formatPercent } from "@/lib/format";
 import type { BudgetStatusItem, BudgetStatusList, Transaction } from "@/lib/types";
 
@@ -44,9 +44,21 @@ interface BudgetProgressProps {
   /** Base monthly income from the profile. Percentages of income are shown only
    *  when this is > 0. */
   monthlyIncome?: number;
+  /** The month's planned goal saving vs income (computed once by the parent).
+   *  Shown apart from the topes, never added to them. */
+  plan?: PlanIncomeShare | null;
+  /** True when the month has goal plans: the "no topes" empty message is then
+   *  skipped, since the section still has the plan block. */
+  hasPlans?: boolean;
 }
 
-export function BudgetProgress({ data, transactions, monthlyIncome }: BudgetProgressProps) {
+export function BudgetProgress({
+  data,
+  transactions,
+  monthlyIncome,
+  plan = null,
+  hasPlans = false,
+}: BudgetProgressProps) {
   // One category's detail expands at a time (mirrors CardStatus's accordion).
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -76,6 +88,7 @@ export function BudgetProgress({ data, transactions, monthlyIncome }: BudgetProg
   );
 
   if (data.statuses.length === 0) {
+    if (hasPlans) return null;
     return (
       <div className="rounded-xl border border-dashed border-line bg-surface p-4 text-center text-sm text-muted">
         Aún no tienes topes definidos. Crea uno diciéndole a Safi, p. ej.
@@ -86,7 +99,7 @@ export function BudgetProgress({ data, transactions, monthlyIncome }: BudgetProg
 
   return (
     <div className="flex flex-col gap-3">
-      {share && <BudgetIncomeSummary share={share} />}
+      <BudgetIncomeSummary share={share} plan={plan} />
       {data.statuses.map((s) => (
         <BudgetRow
           key={s.budget.id}

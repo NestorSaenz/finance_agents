@@ -12,6 +12,8 @@ import type {
   CreditCardStatusList,
   GoalContributionsList,
   GoalList,
+  GoalMonthlyHistory,
+  GoalPlanStatusList,
   LoginPayload,
   OnboardingPayload,
   RecurringCreatePayload,
@@ -144,6 +146,23 @@ export const api = {
     token: string | null,
   ): Promise<GoalContributionsList> =>
     request(`/goals/contributions?period=${encodeURIComponent(period)}`, { token }),
+
+  goalPlanStatus: (
+    period: string,
+    token: string | null,
+  ): Promise<GoalPlanStatusList> =>
+    request(`/goals/plan-status?period=${encodeURIComponent(period)}`, { token }),
+
+  /** Month-by-month plan vs contributed; `to` ("YYYY-MM") defaults to the current month. */
+  goalMonthly: (
+    months: number,
+    to: string | undefined,
+    token: string | null,
+  ): Promise<GoalMonthlyHistory> =>
+    request(
+      `/goals/monthly?months=${months}${to ? `&to=${encodeURIComponent(to)}` : ""}`,
+      { token },
+    ),
 
   excedente: (
     period: string,

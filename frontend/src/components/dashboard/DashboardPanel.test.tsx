@@ -15,6 +15,8 @@ const {
   contributionsMock,
   excedenteMock,
   recurringMock,
+  planMock,
+  monthlyMock,
   ApiError,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -36,6 +38,8 @@ const {
     contributionsMock: vi.fn(),
     excedenteMock: vi.fn(),
     recurringMock: vi.fn(),
+    planMock: vi.fn(),
+    monthlyMock: vi.fn(),
     ApiError: ApiErrorMock,
   };
 });
@@ -52,6 +56,8 @@ vi.mock("@/lib/api", () => ({
     goalContributions: (...args: unknown[]) => contributionsMock(...args),
     excedente: (...args: unknown[]) => excedenteMock(...args),
     recurring: (...args: unknown[]) => recurringMock(...args),
+    goalPlanStatus: (...args: unknown[]) => planMock(...args),
+    goalMonthly: (...args: unknown[]) => monthlyMock(...args),
   },
   ApiError,
 }));
@@ -80,6 +86,37 @@ function summary(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const EMPTY_PLAN = {
+  statuses: [],
+  total_planned: {},
+  total_effective_planned: {},
+  total_saved: {},
+  total_withdrawn: {},
+};
+
+const PLAN = {
+  statuses: [
+    {
+      goal_id: "g1",
+      goal_name: "Viaje a Japón",
+      currency: "COP",
+      month: "2026-09",
+      planned: "500000",
+      effective_planned: "500000",
+      contributed_gross: "320000",
+      withdrawn: "0",
+      remaining: "180000",
+      percentage: 64,
+      is_met: false,
+      goal_completed: false,
+    },
+  ],
+  total_planned: { COP: "500000" },
+  total_effective_planned: { COP: "500000" },
+  total_saved: { COP: "320000" },
+  total_withdrawn: { COP: "0" },
+};
+
 const PROFILE = {
   display_name: "Néstor",
   monthly_income: "10000000",
@@ -103,6 +140,8 @@ beforeEach(() => {
   contributionsMock.mockReset().mockResolvedValue({ contributions: [], total: "0" });
   excedenteMock.mockReset().mockResolvedValue({ accumulated_surplus: "0" });
   recurringMock.mockReset().mockResolvedValue({ recurring: [], total: 0 });
+  planMock.mockReset().mockResolvedValue(EMPTY_PLAN);
+  monthlyMock.mockReset().mockResolvedValue({ lines: [] });
 });
 
 describe("DashboardPanel", () => {
@@ -251,6 +290,84 @@ describe("DashboardPanel", () => {
     expect(await screen.findByText("Merca Facil")).toBeInTheDocument();
     // The row shows its REAL purchase date (July), not the September period.
     expect(screen.getByText(/28 jul/i)).toBeInTheDocument();
+  });
+
+  describe("Goal plan block", () => {
+    it("shows the plan and the 'solo mes en curso' note for a past month (no topes)", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockResolvedValue(PLAN);
+
+      render(<DashboardPanel open onClose={() => {}} />);
+      await screen.findByText("Flujo de caja");
+      await userEvent.click(screen.getByRole("button", { name: "Mes pasado" }));
+
+      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(screen.getByText("Los topes se muestran solo para el mes en curso.")).toBeInTheDocument();
+      expect(planMock).toHaveBeenLastCalledWith("mes_pasado", "tok");
+      // 'to' is the previous month, never the default current one.
+      expect(monthlyMock.mock.calls.at(-1)?.[1]).toMatch(/^\d{4}-\d{2}$/);
+    });
+
+    it("does not request plan-status for 'Todo' and shows no plan block", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockResolvedValue(PLAN);
+
+      render(<DashboardPanel open onClose={() => {}} />);
+      await screen.findByText("Flujo de caja");
+      planMock.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Todo" }));
+
+      await waitFor(() => expect(summaryMock).toHaveBeenLastCalledWith("todo", "tok"));
+      expect(planMock).not.toHaveBeenCalled();
+      expect(screen.queryByText("Ahorro planificado · no es gasto")).toBeNull();
+    });
+
+    it("keeps the panel working when plan-status fails", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockRejectedValue(new ApiError(500, "boom"));
+      monthlyMock.mockRejectedValue(new ApiError(500, "boom"));
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      expect(await screen.findByText("Flujo de caja")).toBeInTheDocument();
+      expect(screen.queryByText("Ahorro planificado · no es gasto")).toBeNull();
+      expect(screen.queryByText("Reintentar")).toBeNull();
+    });
+
+    it("keeps the panel working when only monthly history fails", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockResolvedValue(PLAN);
+      monthlyMock.mockRejectedValue(new ApiError(500, "boom"));
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(screen.queryByText("Reintentar")).toBeNull();
+    });
+
+    it("shows the plan this month alongside the topes without altering 'Tus topes suman'", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockResolvedValue(PLAN);
+      budgetMock.mockResolvedValue({
+        statuses: [
+          {
+            budget: { id: "b1", name: "Comida", category: "alimentacion", amount: "1000000" },
+            spent: "0",
+            remaining: "1000000",
+            percentage: 0,
+            alert_triggered: false,
+          },
+        ],
+        total_budgeted: "1000000",
+        total_spent: "0",
+      });
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(screen.getByText(/Tus topes suman/).textContent).toContain("10%");
+      expect(screen.getByText(/Ahorro planificado del mes/).textContent).toContain("5%");
+    });
   });
 
   describe("Flujo de caja goal lines", () => {

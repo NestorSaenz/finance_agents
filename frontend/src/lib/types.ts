@@ -105,6 +105,57 @@ export interface GoalList {
   total_contributed: string;
 }
 
+/** One goal's monthly plan vs what was contributed (GET /goals/plan-status). */
+export interface GoalPlanStatus {
+  goal_id: string;
+  goal_name: string;
+  /** ISO-4217 currency of the goal. */
+  currency: string;
+  /** "YYYY-MM". */
+  month: string;
+  planned: string;
+  /** The plan capped at what the goal still lacked — use it for "faltan". */
+  effective_planned: string;
+  /** Gross contributions of the month (withdrawals are NOT netted). */
+  contributed_gross: string;
+  withdrawn: string;
+  remaining: string;
+  percentage: number;
+  is_met: boolean;
+  goal_completed: boolean;
+}
+
+/** Totals are keyed by currency and never mixed. */
+export interface GoalPlanStatusList {
+  statuses: GoalPlanStatus[];
+  total_planned: Record<string, string>;
+  total_effective_planned: Record<string, string>;
+  total_saved: Record<string, string>;
+  total_withdrawn: Record<string, string>;
+}
+
+/** One goal in one month of the history (GET /goals/monthly). */
+export interface GoalMonthLine {
+  goal_id: string;
+  goal_name: string;
+  currency: string;
+  /** "YYYY-MM". */
+  month: string;
+  /** null = no plan that month. */
+  planned: string | null;
+  /** The plan capped at what the goal still lacked (same rule as plan-status).
+   *  Additive: absent/null on older backends, then `planned` is used. */
+  effective_planned?: string | null;
+  saved: string;
+  withdrawn: string;
+  /** Accumulated at the close of the month. */
+  cumulative: string;
+}
+
+export interface GoalMonthlyHistory {
+  lines: GoalMonthLine[];
+}
+
 export interface AccumulatedSurplus {
   /** Free cash accumulated up to the period's month-end (Decimal serialized as string). */
   accumulated_surplus: string;

@@ -1,21 +1,28 @@
 "use client";
 
-import { useMoney } from "@/context/CurrencyContext";
+import { useCurrency, useMoney } from "@/context/CurrencyContext";
 import type {
   BudgetStatusList,
   CardPaymentsList,
   CreditCardStatusList,
   Goal,
+  GoalMonthlyHistory,
+  GoalPlanStatusList,
   Recurring,
   SpendingSummary,
   Transaction,
   UserProfile,
 } from "@/lib/types";
 
+import { budgetIncomeShare, planIncomeShare } from "@/lib/budgets";
+import { plannedSavingFor, selectedMonth, visiblePlans } from "@/lib/goalPlans";
+
+import { BudgetIncomeSummary } from "./BudgetIncomeSummary";
 import { BudgetProgress } from "./BudgetProgress";
 import { CardPayments } from "./CardPayments";
 import { CardStatus } from "./CardStatus";
 import { CategorySpendingBars } from "./CategorySpendingBars";
+import { GoalPlanProgress } from "./GoalPlanProgress";
 import { GoalProgress } from "./GoalProgress";
 import { PaymentSplit } from "./PaymentSplit";
 
@@ -39,6 +46,10 @@ interface SummaryContentProps {
   transactions: Transaction[];
   /** Recurring templates (period-independent); read-only, managed via chat. */
   recurring: Recurring[];
+  /** Goal plans vs contributed for the selected month (null = not loaded/failed). */
+  planStatus?: GoalPlanStatusList | null;
+  /** Month-by-month plan history, ending at the selected month. */
+  goalHistory?: GoalMonthlyHistory | null;
   /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
   period: string;
 }
@@ -58,8 +69,11 @@ export function SummaryContent({
   transactions,
   recurring,
   period,
+  planStatus = null,
+  goalHistory = null,
 }: SummaryContentProps) {
   const money = useMoney();
+  const currency = useCurrency();
   // Past-month cards come back without a statement period (see CardStatus), so
   // the subtitle follows the server's own live/past decision.
   const historicalCards =
@@ -117,6 +131,18 @@ export function SummaryContent({
       : goalSaved > 0
         ? "Apartar para metas reduce tu caja del mes, pero no es gasto."
         : "Lo que retiraste de tus metas volvió a tu caja; no es un ingreso.";
+
+  // Goal plans: a saving plan is NOT a gasto or a tope — it never touches the
+  // totals above, only its own block and the "% de tu ingreso" lines.
+  const hasPlans = visiblePlans(planStatus).length > 0;
+  const plannedSaving = plannedSavingFor(planStatus, currency);
+  const topesShare = budgetIncomeShare(budget?.statuses ?? [], referenceIncome);
+  const planShare = planIncomeShare(
+    referenceIncome,
+    plannedSaving,
+    topesShare?.categoryTotal ?? 0,
+  );
+  const hasTopes = budget !== null && budget.statuses.length > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -241,22 +267,39 @@ export function SummaryContent({
         />
       )}
 
-      {budget && (
+      {(budget || hasPlans) && (
         <Section
           title="Cómo voy en cada categoría"
-          subtitle="Incluye tus gastos fijos y las compras a crédito según el mes en que las pagas. El aviso llega cuando tus gastos variables se acercan al tope o te pasas."
+          subtitle={
+            budget
+              ? "Incluye tus gastos fijos y las compras a crédito según el mes en que las pagas. El aviso llega cuando tus gastos variables se acercan al tope o te pasas."
+              : "Los topes se muestran solo para el mes en curso."
+          }
         >
-          <BudgetProgress
-            data={budget}
-            transactions={budgetTransactions}
-            monthlyIncome={referenceIncome}
-          />
+          <div className="flex flex-col gap-4">
+            {budget ? (
+              <BudgetProgress
+                data={budget}
+                transactions={budgetTransactions}
+                monthlyIncome={referenceIncome}
+                plan={planShare}
+                hasPlans={hasPlans}
+              />
+            ) : null}
+            {/* Without topes BudgetProgress renders no income lines: show the plan's here. */}
+            {!hasTopes && planShare && <BudgetIncomeSummary share={null} plan={planShare} />}
+            <GoalPlanProgress data={planStatus} />
+          </div>
         </Section>
       )}
 
       {activeGoals.length > 0 && (
         <Section title="Metas de ahorro">
-          <GoalProgress goals={activeGoals} />
+          <GoalProgress
+            goals={activeGoals}
+            history={goalHistory}
+            selectedMonth={selectedMonth(period)}
+          />
         </Section>
       )}
 
