@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 import { ApiError, api } from "@/lib/api";
 import { currentMonthKey } from "@/lib/format";
+import { goalFlows } from "@/lib/movements";
 import { useAuth } from "@/context/AuthContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import type {
@@ -71,7 +72,6 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [budget, setBudget] = useState<BudgetStatusList | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [goalContributed, setGoalContributed] = useState(0);
   const [cards, setCards] = useState<CreditCardStatusList | null>(null);
   const [payments, setPayments] = useState<CardPaymentsList | null>(null);
   const [contributions, setContributions] =
@@ -80,6 +80,13 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Gross goal flows of the selected period, from the same contributions list
+  // the Movimientos view shows (so both views always agree).
+  const goalFlow = useMemo(
+    () => goalFlows(contributions?.contributions ?? []),
+    [contributions],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,7 +132,6 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setBudgetTransactions(budgetTransactionsData?.transactions ?? []);
       setProfile(profileData);
       setGoals(goalsData.goals);
-      setGoalContributed(Number(goalsData.total_contributed ?? 0));
       setCards(cardsData);
       setPayments(paymentsData);
       setContributions(contributionsData);
@@ -143,7 +149,6 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
       setBudgetTransactions([]);
       setProfile(null);
       setGoals([]);
-      setGoalContributed(0);
       setCards(null);
       setPayments(null);
       setContributions(null);
@@ -301,7 +306,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               budgetTransactions={budgetTransactions}
               profile={profile}
               goals={goals}
-              goalContributions={goalContributed}
+              goalSaved={goalFlow.saved}
+              goalWithdrawn={goalFlow.withdrawn}
               accumulatedSurplus={surplus}
               cards={cards}
               payments={payments}

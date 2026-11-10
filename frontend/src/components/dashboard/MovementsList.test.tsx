@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { formatMoney } from "@/lib/format";
 import type {
   CardPaymentsList,
   CreditCardStatusList,
@@ -81,7 +82,7 @@ describe("MovementsList", () => {
     expect(screen.getByText("Aporte a Viaje a Japón")).toBeInTheDocument();
     // Shown as a negative outflow (leaves the pocket like cash); the amount row
     // carries the "negative" tone. Assert on the value substring, not the glyph.
-    const amount = screen.getByText(/150[.,]000/);
+    const amount = screen.getByText(/150[.,]000/, { selector: "li p" });
     expect(amount.className).toContain("text-negative");
   });
 
@@ -146,7 +147,7 @@ describe("MovementsList", () => {
       await userEvent.click(screen.getByRole("button", { name: /Efectivo/i }));
     }
 
-    it("excludes goal movements from the pocket total and shows both gross goal amounts", async () => {
+    it("headline = expenses + payments + saved; breakdown lists the non-zero parts; withdrawals apart", async () => {
       render(
         <MovementsList
           transactions={[tx({ amount: "100000" })]}
@@ -156,23 +157,36 @@ describe("MovementsList", () => {
         />,
       );
       await openCash();
-      // 100.000 cash + 300.000 payment = 400.000; goals are left out.
+      // 100.000 cash + 300.000 payment + 500.000 saved = 900.000 (gross; the
+      // 2.000.000 withdrawal is NOT netted in).
       const header = screen.getByText(/movimiento\(s\)/);
-      expect(header.textContent).toMatch(/salió de tu bolsillo\D*\$?\s*400[.,]000/);
-      const goalLine = screen.getByText(/Metas \(no es gasto\)/);
-      expect(goalLine.textContent).toMatch(/guardaste\s*\$?\s*500[.,]000/);
-      expect(goalLine.textContent).toMatch(/retiraste\s*\$?\s*2[.,]000[.,]000/);
+      expect(header.textContent).toContain(`salió de tu caja ${formatMoney(900000)}`);
+      const breakdown = screen.getByText(/^Gastos en efectivo/, { selector: "p" });
+      expect(breakdown.textContent).toMatch(
+        /Gastos en efectivo\D*100[.,]000\D*Pagos a tarjetas\D*300[.,]000\D*Apartado para metas\D*500[.,]000/,
+      );
+      const back = screen.getByText(/Volvió de tus metas/);
+      expect(back.textContent).toMatch(/\+\D*2[.,]000[.,]000/);
+      expect(back.textContent).toContain(`+${formatMoney(2000000)}`);
+      expect(
+        screen.getByText(
+          "Lo apartado para metas es ahorro: sigue siendo tuyo, pero ya no está libre.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Metas \(no es gasto\)/)).not.toBeInTheDocument();
     });
 
-    it("shows no Metas line without goal movements", async () => {
+    it("shows no goal lines or notes without goal movements", async () => {
       render(
         <MovementsList transactions={[tx()]} cards={null} payments={pay} contributions={null} />,
       );
       await openCash();
-      expect(screen.queryByText(/Metas \(no es gasto\)/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Volvió de tus metas/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Apartado para metas/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/ahorro: sigue siendo tuyo/)).not.toBeInTheDocument();
     });
 
-    it("shows only 'retiraste' when there is just a withdrawal", async () => {
+    it("with only a withdrawal: headline unchanged, only 'Volvió de tus metas'", async () => {
       const onlyWithdrawal: GoalContributionsList = {
         contributions: [
           { goal_name: "Emergencia", amount: "-100000", contribution_date: "2026-06-06" },
@@ -188,10 +202,11 @@ describe("MovementsList", () => {
         />,
       );
       await openCash();
-      const goalLine = screen.getByText(/Metas \(no es gasto\)/);
-      expect(goalLine.textContent).toMatch(/retiraste/);
-      expect(goalLine.textContent).not.toMatch(/guardaste/);
-      expect(screen.getByText(/movimiento\(s\)/).textContent).toMatch(/salió de tu bolsillo\D*\$?\s*50[.,]000/);
+      expect(screen.getByText(/Volvió de tus metas/).textContent).toMatch(/100[.,]000/);
+      expect(screen.queryByText(/Apartado para metas/)).not.toBeInTheDocument();
+      expect(screen.getByText(/movimiento\(s\)/).textContent).toMatch(
+        /salió de tu caja\D*50[.,]000/,
+      );
     });
 
     it("treats untagged card-less expenses as cash; ignores credit and income", async () => {
@@ -222,10 +237,10 @@ describe("MovementsList", () => {
       await openCash();
       expect(screen.getByText("Sin etiqueta")).toBeInTheDocument();
       expect(screen.queryByText("Compra crédito")).not.toBeInTheDocument();
-      expect(screen.getByText(/movimiento\(s\)/).textContent).toMatch(/salió de tu bolsillo\D*\$?\s*20[.,]000/);
+      expect(screen.getByText(/movimiento\(s\)/).textContent).toMatch(/salió de tu caja\D*\$?\s*20[.,]000/);
     });
 
-    it("hides the Metas line when switching to a card chip", async () => {
+    it("hides the goal lines when switching to a card chip", async () => {
       render(
         <MovementsList
           transactions={[
@@ -237,9 +252,9 @@ describe("MovementsList", () => {
         />,
       );
       await openCash();
-      expect(screen.getByText(/Metas \(no es gasto\)/)).toBeInTheDocument();
+      expect(screen.getByText(/Volvió de tus metas/)).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: /Nu/ }));
-      expect(screen.queryByText(/Metas \(no es gasto\)/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Volvió de tus metas/)).not.toBeInTheDocument();
     });
 
     it("'Todas' shows gastado = Σ expenses (no income, payments or goals) and the note", () => {
@@ -269,7 +284,21 @@ describe("MovementsList", () => {
     const headerFigure = () =>
       parse(screen.getByText(/movimiento\(s\)/).querySelector("span")?.textContent);
 
-    it("Efectivo shows the 'salió de tu bolsillo' header, the two-part breakdown and the payment note", async () => {
+    it("'Todas' adds the 'Además apartaste' line only when something was saved", () => {
+      const { unmount } = render(
+        <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={aporte} />,
+      );
+      expect(screen.getByText(/Además apartaste/).textContent).toMatch(/500[.,]000/);
+      // 'gastado' is untouched by goals.
+      expect(headerFigure()).toBe(50000);
+      unmount();
+      render(
+        <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={null} />,
+      );
+      expect(screen.queryByText(/Además apartaste/)).not.toBeInTheDocument();
+    });
+
+    it("Efectivo breakdown lists the two parts and the payment note", async () => {
       render(
         <MovementsList
           transactions={[tx({ amount: "100000" })]}
@@ -280,9 +309,9 @@ describe("MovementsList", () => {
       );
       await openCash();
       expect(screen.getByText(/movimiento\(s\)/).textContent).toMatch(
-        /salió de tu bolsillo\D*400[.,]000/,
+        /salió de tu caja\D*400[.,]000/,
       );
-      const line = screen.getByText(/^Efectivo/, { selector: "p" });
+      const line = screen.getByText(/^Gastos en efectivo/, { selector: "p" });
       const [cashPart, paidPart] = within(line).getAllByText(/\d/);
       expect(parse(cashPart.textContent)).toBe(100000);
       expect(parse(paidPart.textContent)).toBe(300000);
@@ -296,10 +325,10 @@ describe("MovementsList", () => {
 
     it("hides the breakdown when only one part is non-zero, keeping the note for payments", async () => {
       const { unmount } = render(
-        <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={aporte} />,
+        <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={null} />,
       );
       await openCash();
-      expect(screen.queryByText(/^Efectivo/, { selector: "p" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Gastos en efectivo/, { selector: "p" })).not.toBeInTheDocument();
       expect(screen.queryByText(/por eso no se suman/)).not.toBeInTheDocument();
       unmount();
 
@@ -312,8 +341,8 @@ describe("MovementsList", () => {
         />,
       );
       await openCash();
-      // Only payments: no "Efectivo $X + pagos…" line, but the note stays.
-      expect(screen.queryByText(/^Efectivo/, { selector: "p" })).not.toBeInTheDocument();
+      // Only payments: no breakdown line, but the note stays.
+      expect(screen.queryByText(/^Gastos en efectivo/, { selector: "p" })).not.toBeInTheDocument();
       expect(screen.getByText(/por eso no se suman/)).toBeInTheDocument();
     });
 
@@ -384,7 +413,8 @@ describe("MovementsList", () => {
             budgetTransactions={[]}
             profile={null}
             goals={[]}
-            goalContributions={-1500000}
+            goalSaved={500000}
+            goalWithdrawn={2000000}
             accumulatedSurplus={0}
             cards={null}
             payments={pay}
@@ -403,14 +433,20 @@ describe("MovementsList", () => {
       expect(todas).toBe(1650000);
       expect(todas).toBe(gastosCard);
 
-      // (b) Efectivo header == Resumen Flujo de caja "Efectivo" + "Pagos a tarjetas".
+      // (b) Efectivo header == Resumen Flujo de caja lines, line by line:
+      // Efectivo + Pagos a tarjetas + Apartado para metas (withdrawals apart).
       const dd = (label: string) =>
         parse(screen.getByText(label, { selector: "dt" }).nextElementSibling?.textContent);
       await openCash();
-      expect(headerFigure()).toBe(dd("Efectivo") + dd("Pagos a tarjetas"));
+      expect(headerFigure()).toBe(
+        dd("Efectivo") + dd("Pagos a tarjetas") + dd("Apartado para metas"),
+      );
+      expect(headerFigure()).toBe(2200000);
+      expect(screen.getByText(/Volvió de tus metas/).textContent).toMatch(/2[.,]000[.,]000/);
+      expect(dd("Retirado de metas")).toBe(2000000);
 
       // (c) Efectivo cash part + Nu chip gastado == Todas gastado.
-      const breakdown = screen.getByText(/^Efectivo/, { selector: "p" });
+      const breakdown = screen.getByText(/^Gastos en efectivo/, { selector: "p" });
       const efectivoSpan = within(breakdown).getAllByText(/\d/)[0];
       await userEvent.click(screen.getByRole("button", { name: /Nu/ }));
       const nu = headerFigure();

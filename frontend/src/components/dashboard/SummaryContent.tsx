@@ -27,8 +27,10 @@ interface SummaryContentProps {
   budgetTransactions: Transaction[];
   profile: UserProfile | null;
   goals: Goal[];
-  /** Total set aside toward savings goals in the selected period. */
-  goalContributions: number;
+  /** Gross amount set aside toward savings goals in the selected period. */
+  goalSaved: number;
+  /** Gross amount withdrawn from goals in the selected period. */
+  goalWithdrawn: number;
   /** Free cash accumulated up to the selected month-end (carries over, no reset). */
   accumulatedSurplus: number;
   cards: CreditCardStatusList | null;
@@ -48,7 +50,8 @@ export function SummaryContent({
   budgetTransactions,
   profile,
   goals,
-  goalContributions,
+  goalSaved,
+  goalWithdrawn,
   accumulatedSurplus,
   cards,
   payments,
@@ -96,24 +99,24 @@ export function SummaryContent({
   // purchase). Answers "de mis ingresos, ¿cuánto me queda de verdad?".
   const cashExpenses = Number(summary.cash_expenses);
   const cardPayments = Number(payments?.total ?? 0);
-  // Money set aside to savings goals this month also leaves the disposable pool.
-  const goalContribs = goalContributions;
+  // Goal money is shown GROSS (never one net): what was set aside leaves the
+  // disposable pool, what was withdrawn comes back. Neither is a gasto.
+  const hasGoalFlow = goalSaved > 0 || goalWithdrawn > 0;
   // Two steps, so saving never reads as a loss: first what's left after money
   // that TRULY left the pocket (cash + card payments), then the final position
-  // after choosing to move some into goals.
+  // after the goal movements.
   const afterSpending = income - cashExpenses - cardPayments;
-  const cashAvailable = afterSpending - goalContribs;
+  const cashAvailable = afterSpending - goalSaved + goalWithdrawn;
   const hasCashFlow =
-    income > 0 || cashExpenses > 0 || cardPayments > 0 || goalContribs !== 0;
+    income > 0 || cashExpenses > 0 || cardPayments > 0 || hasGoalFlow;
   // Explain the bottom line in words — saving is not spending.
-  const cashFlowNote =
-    goalContribs > 0
-      ? cashAvailable >= 0
-        ? `Te sobró incluso después de guardar ${money(goalContribs)} en metas. Aportar a metas es ahorro, no gasto.`
-        : `Aportar a metas es ahorro, no gasto: este mes guardaste ${money(Math.abs(cashAvailable))} más de lo que te quedó disponible.`
-      : goalContribs < 0
-        ? `Incluye ${money(Math.abs(goalContribs))} que retiraste de tus metas y volvió a tu bolsillo.`
-        : "Lo que te queda tras el efectivo y los pagos a tarjetas del mes.";
+  const cashFlowNote = !hasGoalFlow
+    ? "Lo que te queda tras el efectivo y los pagos a tarjetas del mes."
+    : goalSaved > 0 && goalWithdrawn > 0
+      ? "Apartar para metas reduce tu caja del mes, pero no es gasto. Lo que retiraste de tus metas volvió a tu caja."
+      : goalSaved > 0
+        ? "Apartar para metas reduce tu caja del mes, pero no es gasto."
+        : "Lo que retiraste de tus metas volvió a tu caja; no es un ingreso.";
 
   return (
     <div className="flex flex-col gap-5">
@@ -160,7 +163,7 @@ export function SummaryContent({
                 no goal movements this is already the bottom line. */}
             <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
               <dt className="font-medium text-ink">
-                {goalContribs !== 0
+                {hasGoalFlow
                   ? afterSpending >= 0
                     ? "Te sobró"
                     : "Te faltó"
@@ -177,21 +180,20 @@ export function SummaryContent({
 
             {/* Saving is NOT spending: goal money apart in a neutral tone, then
                 the final cash position after choosing to save. */}
-            {goalContribs !== 0 && (
+            {hasGoalFlow && (
               <>
-                <div className="flex items-center justify-between">
-                  <dt className="text-muted">
-                    {goalContribs >= 0 ? "Guardado en metas" : "Retirado de metas"}
-                  </dt>
-                  <dd
-                    className={`tabular-nums ${
-                      goalContribs >= 0 ? "text-brand-600" : "text-positive"
-                    }`}
-                  >
-                    {goalContribs >= 0 ? "−" : "+"}
-                    {money(Math.abs(goalContribs))}
-                  </dd>
-                </div>
+                {goalSaved > 0 && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-muted">Apartado para metas</dt>
+                    <dd className="tabular-nums text-brand-600">−{money(goalSaved)}</dd>
+                  </div>
+                )}
+                {goalWithdrawn > 0 && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-muted">Retirado de metas</dt>
+                    <dd className="tabular-nums text-positive">+{money(goalWithdrawn)}</dd>
+                  </div>
+                )}
                 <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">
                   <dt className="font-medium text-ink">Caja final del mes</dt>
                   <dd

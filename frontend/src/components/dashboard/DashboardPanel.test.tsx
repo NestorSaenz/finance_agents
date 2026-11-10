@@ -253,6 +253,79 @@ describe("DashboardPanel", () => {
     expect(screen.getByText(/28 jul/i)).toBeInTheDocument();
   });
 
+  describe("Flujo de caja goal lines", () => {
+    const digits = (el: HTMLElement | null | undefined): number =>
+      Number((el?.textContent ?? "").replace(/\D/g, ""));
+    const dd = (label: string) =>
+      screen.getByText(label, { selector: "dt" }).nextElementSibling as HTMLElement;
+    const contribs = (amounts: string[]) => ({
+      contributions: amounts.map((amount, i) => ({
+        goal_name: `Meta ${i}`,
+        amount,
+        contribution_date: "2026-10-05",
+      })),
+      total: String(amounts.reduce((sum, a) => sum + Number(a), 0)),
+    });
+
+    it("shows gross saved and withdrawn (Astrid's October) and a Caja final equal to the old net math", async () => {
+      summaryMock.mockResolvedValue(
+        summary({ total_income: "10000000", total_expenses: "1000000", cash_expenses: "1000000" }),
+      );
+      contributionsMock.mockResolvedValue(contribs(["200000", "300000", "-2000000", "-1100000"]));
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      await screen.findByText("Flujo de caja");
+      expect(digits(dd("Apartado para metas"))).toBe(500000);
+      expect(dd("Apartado para metas").textContent).toContain("−");
+      expect(digits(dd("Retirado de metas"))).toBe(3100000);
+      expect(dd("Retirado de metas").textContent).toContain("+");
+      // Old math: afterSpending - net, net = 500.000 - 3.100.000.
+      const afterSpending = 10000000 - 1000000;
+      expect(digits(dd("Caja final del mes"))).toBe(afterSpending - (500000 - 3100000));
+      expect(
+        screen.getByText(/Apartar para metas reduce tu caja del mes, pero no es gasto/),
+      ).toBeInTheDocument();
+    });
+
+    it("still shows both lines when saved and withdrawn net to zero", async () => {
+      summaryMock.mockResolvedValue(summary());
+      contributionsMock.mockResolvedValue(contribs(["100000", "-100000"]));
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      await screen.findByText("Flujo de caja");
+      expect(digits(dd("Apartado para metas"))).toBe(100000);
+      expect(digits(dd("Retirado de metas"))).toBe(100000);
+    });
+
+    it("explains a withdrawal-only month in the note, without the 'apartar' sentence", async () => {
+      summaryMock.mockResolvedValue(summary());
+      contributionsMock.mockResolvedValue(contribs(["-100000"]));
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      await screen.findByText("Flujo de caja");
+      expect(screen.queryByText("Apartado para metas")).toBeNull();
+      expect(digits(dd("Retirado de metas"))).toBe(100000);
+      expect(
+        screen.getByText("Lo que retiraste de tus metas volvió a tu caja; no es un ingreso."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Apartar para metas reduce/)).toBeNull();
+    });
+
+    it("shows no goal lines without goal movements", async () => {
+      summaryMock.mockResolvedValue(summary());
+
+      render(<DashboardPanel open onClose={() => {}} />);
+
+      await screen.findByText("Flujo de caja");
+      expect(screen.queryByText("Apartado para metas")).toBeNull();
+      expect(screen.queryByText("Retirado de metas")).toBeNull();
+      expect(screen.queryByText("Caja final del mes")).toBeNull();
+    });
+  });
+
   it("shows savings goals with progress", async () => {
     summaryMock.mockResolvedValue(summary());
     goalsMock.mockResolvedValue({

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { formatMoney } from "@/lib/format";
 import {
   expenseAmount,
+  goalFlows,
   isCashMovement,
   isCashTx,
   movementTotals,
@@ -85,5 +86,33 @@ describe("expenseAmount / movementTotals", () => {
     // Same pure formatter useMoney() binds to the user's currency.
     expect(formatMoney(t.expenses, "COP")).toBe(formatMoney(0.3, "COP"));
     expect(formatMoney(t.expenses, "USD")).toBe(formatMoney(0.3, "USD"));
+  });
+});
+
+describe("goalFlows", () => {
+  const rows = (...amounts: string[]) => amounts.map((amount) => ({ amount }));
+
+  it("keeps saved and withdrawn gross (Astrid's October)", () => {
+    expect(goalFlows(rows("200000", "300000", "-2000000", "-1100000"))).toEqual({
+      saved: 500000,
+      withdrawn: 3100000,
+    });
+  });
+  it("handles only saves, only withdrawals and empty", () => {
+    expect(goalFlows(rows("100", "50"))).toEqual({ saved: 150, withdrawn: 0 });
+    expect(goalFlows(rows("-100", "-50"))).toEqual({ saved: 0, withdrawn: 150 });
+    expect(goalFlows([])).toEqual({ saved: 0, withdrawn: 0 });
+  });
+  it("does not net a month that nets to zero", () => {
+    expect(goalFlows(rows("100000", "-100000"))).toEqual({ saved: 100000, withdrawn: 100000 });
+  });
+  it("skips non-finite amounts", () => {
+    expect(goalFlows(rows("abc", "100", "NaN", "-50"))).toEqual({ saved: 100, withdrawn: 50 });
+  });
+  it("movementTotals reuses it", () => {
+    expect(movementTotals([contrib("500"), contrib("-200")])).toMatchObject({
+      saved: 500,
+      withdrawn: 200,
+    });
   });
 });

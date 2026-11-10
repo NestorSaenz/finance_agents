@@ -415,7 +415,7 @@ export default function GuiaPage() {
                   <dd className="font-semibold tabular-nums text-positive">$7.570.466</dd>
                 </div>
                 <div className="flex items-center justify-between">
-                  <dt className="text-muted">Guardado en metas</dt>
+                  <dt className="text-muted">Apartado para metas</dt>
                   <dd className="tabular-nums text-brand-600">−$1.100.000</dd>
                 </div>
                 <div className="mt-1 flex items-center justify-between border-t border-line pt-1.5">

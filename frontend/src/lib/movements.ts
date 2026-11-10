@@ -52,16 +52,33 @@ export interface MovementTotals {
   withdrawn: number;
 }
 
+/** Gross goal flows: saved (aportes, positive amounts) and withdrawn (retiros,
+ *  |negative amounts|). Never a net — both are positive numbers. */
+export interface GoalFlows {
+  saved: number;
+  withdrawn: number;
+}
+
+export function goalFlows(contributions: ReadonlyArray<{ amount: string }>): GoalFlows {
+  const flows: GoalFlows = { saved: 0, withdrawn: 0 };
+  for (const c of contributions) {
+    const value = Number(c.amount);
+    if (!Number.isFinite(value)) continue;
+    if (value > 0) flows.saved += value;
+    else flows.withdrawn += Math.abs(value);
+  }
+  return flows;
+}
+
 /** Totals over a list of movements. Goal movements never count as expense. */
 export function movementTotals(list: Movement[]): MovementTotals {
-  const totals: MovementTotals = { expenses: 0, paid: 0, saved: 0, withdrawn: 0 };
+  let expenses = 0;
+  let paid = 0;
+  const goalRows: { amount: string }[] = [];
   for (const m of list) {
-    if (m.kind === "payment") totals.paid += Number(m.amount);
-    else if (m.kind === "contribution") {
-      const value = Number(m.amount);
-      if (value > 0) totals.saved += value;
-      else totals.withdrawn += Math.abs(value);
-    } else totals.expenses += expenseAmount(m);
+    if (m.kind === "payment") paid += Number(m.amount);
+    else if (m.kind === "contribution") goalRows.push(m);
+    else expenses += expenseAmount(m);
   }
-  return totals;
+  return { expenses, paid, ...goalFlows(goalRows) };
 }
