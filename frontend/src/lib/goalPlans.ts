@@ -73,39 +73,55 @@ export function historyTo(period: string, now: Date = new Date()): string | unde
   return period === "este_mes" || period === "todo" ? undefined : selectedMonth(period, now);
 }
 
-/** One goal's history rows, oldest first, ending at `endMonth` (later months dropped). */
-export function goalHistory(
-  lines: ReadonlyArray<GoalMonthLine>,
-  goalId: string,
-  endMonth: string,
-): GoalMonthLine[] {
-  return lines
-    .filter((l) => l.goal_id === goalId && l.month <= endMonth)
-    .sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
-}
-
-export interface MonthState {
-  kind: "sin_plan" | "cumplido" | "faltan";
-  /** Fill 0–100 (0 without plan). */
-  fill: number;
-  /** What was still missing when the plan was not met. */
-  missing: number;
-}
-
-/** Plan vs saved for one history month. A plan of 0 (or none) means "that month
- *  I did not plan". The effective plan (capped like the month block) is used when
- *  the backend sends it, falling back to `planned`. */
-export function monthState(line: GoalMonthLine): MonthState {
-  const effective = line.effective_planned ?? line.planned;
-  const planned = effective === null ? 0 : Number(effective);
-  if (line.planned === null || !(Number(line.planned) > 0) || !Number.isFinite(planned)) {
-    return { kind: "sin_plan", fill: 0, missing: 0 };
+/** What is still missing to reach the month's plans, in `currency` (>= 0).
+ *  Informational: it never adds to any total until the aporte is registered. */
+export function pendingSavingFor(
+  list: GoalPlanStatusList | null | undefined,
+  currency: string,
+): number {
+  let pending = 0;
+  for (const s of visiblePlans(list)) {
+    if (s.currency !== currency) continue;
+    const remaining = Number(s.remaining);
+    if (Number.isFinite(remaining) && remaining > 0) pending += remaining;
   }
-  const saved = Number(line.saved);
-  if (saved >= planned) return { kind: "cumplido", fill: 100, missing: 0 };
-  return {
-    kind: "faltan",
-    fill: Math.max(0, Math.min(100, (saved / planned) * 100)),
-    missing: planned - saved,
-  };
+  return pending;
+}
+
+/** One month of the plan history, for ONE currency. */
+export interface MonthSummary {
+  month: string;
+  /** Σ effective plans of the goals planned that month. */
+  planned: number;
+  /** Σ gross saved by those goals. */
+  saved: number;
+  /** Goals that reached their plan. */
+  met: number;
+  /** Goals planned that month. */
+  total: number;
+}
+
+/** Plan vs saved per month (oldest first). Months without a plan (null / 0) are
+ *  left out; uses effective_planned when present, else planned. `endMonth` drops
+ *  later months. */
+export function monthSummaries(
+  lines: ReadonlyArray<GoalMonthLine>,
+  currency: string,
+  endMonth?: string,
+): MonthSummary[] {
+  const byMonth = new Map<string, MonthSummary>();
+  for (const l of lines) {
+    if (l.currency !== currency || (endMonth && l.month > endMonth)) continue;
+    const raw = l.effective_planned ?? l.planned;
+    const planned = raw === null ? 0 : Number(raw);
+    if (!(planned > 0) || !Number.isFinite(planned)) continue;
+    const saved = Number(l.saved);
+    const row = byMonth.get(l.month) ?? { month: l.month, planned: 0, saved: 0, met: 0, total: 0 };
+    row.planned += planned;
+    row.saved += Number.isFinite(saved) ? saved : 0;
+    row.total += 1;
+    if (saved >= planned) row.met += 1;
+    byMonth.set(l.month, row);
+  }
+  return [...byMonth.values()].sort((a, b) => (a.month < b.month ? -1 : 1));
 }

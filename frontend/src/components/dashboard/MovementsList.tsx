@@ -27,6 +27,8 @@ interface MovementsListProps {
   cards: CreditCardStatusList | null;
   payments: CardPaymentsList | null;
   contributions: GoalContributionsList | null;
+  /** Cutoff date: only aportes dated on/after it count as gasto in "Todas". */
+  goalSpendingFrom?: string | null;
 }
 
 /**
@@ -41,6 +43,7 @@ export function MovementsList({
   cards,
   payments,
   contributions,
+  goalSpendingFrom,
 }: MovementsListProps) {
   const [filter, setFilter] = useState<MovementFilter>(ALL);
 
@@ -102,7 +105,10 @@ export function MovementsList({
     [movements, filter],
   );
 
-  const totals = useMemo(() => movementTotals(visible), [visible]);
+  const totals = useMemo(
+    () => movementTotals(visible, goalSpendingFrom),
+    [visible, goalSpendingFrom],
+  );
 
   if (movements.length === 0) {
     return (

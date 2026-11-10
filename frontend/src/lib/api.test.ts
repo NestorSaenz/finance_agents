@@ -81,3 +81,20 @@ describe("error handling", () => {
     expect((error as ApiError).status).toBe(0);
   });
 });
+
+describe("analysis and goal plan endpoints", () => {
+  it("spendingSummary reads GET /analysis/summary", async () => {
+    const fetchMock = stubFetch(200, { period: "este_mes" });
+    await api.spendingSummary("2026-10", "tok");
+    expect(captured(fetchMock).url).toBe("/api/v1/analysis/summary?period=2026-10");
+  });
+
+  it("goalMonthly sends months and optionally 'to'", async () => {
+    const fetchMock = stubFetch(200, { lines: [] });
+    await api.goalMonthly(4, "2026-09", "tok");
+    expect(captured(fetchMock).url).toBe("/api/v1/goals/monthly?months=4&to=2026-09");
+    const second = stubFetch(200, { lines: [] });
+    await api.goalMonthly(4, undefined, "tok");
+    expect(captured(second).url).toBe("/api/v1/goals/monthly?months=4");
+  });
+});

@@ -41,7 +41,20 @@ export function expenseAmount(m: Movement): number {
   return m.kind === "tx" && m.tx.transaction_type === "expense" ? Number(m.tx.amount) : 0;
 }
 
+/** What a row adds to the Resumen "Gastos" (total_spent): an expense's amount, or
+ *  a positive goal aporte dated on/after `goalSpendingFrom` (the cutoff; without
+ *  one aportes do not count). Payments, withdrawals and income add 0. */
+export function spentAmount(m: Movement, goalSpendingFrom?: string | null): number {
+  if (m.kind === "contribution") {
+    const value = Number(m.amount);
+    return goalSpendingFrom && m.date >= goalSpendingFrom && value > 0 ? value : 0;
+  }
+  return expenseAmount(m);
+}
+
 export interface MovementTotals {
+  /** Gross aportes counted as gasto (dated on/after the cutoff). */
+  savedSpent: number;
   /** Σ expense transactions (any payment method). */
   expenses: number;
   /** Σ card payments. */
@@ -71,14 +84,20 @@ export function goalFlows(contributions: ReadonlyArray<{ amount: string }>): Goa
 }
 
 /** Totals over a list of movements. Goal movements never count as expense. */
-export function movementTotals(list: Movement[]): MovementTotals {
+export function movementTotals(
+  list: Movement[],
+  goalSpendingFrom?: string | null,
+): MovementTotals {
   let expenses = 0;
+  let savedSpent = 0;
   let paid = 0;
   const goalRows: { amount: string }[] = [];
   for (const m of list) {
     if (m.kind === "payment") paid += Number(m.amount);
-    else if (m.kind === "contribution") goalRows.push(m);
-    else expenses += expenseAmount(m);
+    else if (m.kind === "contribution") {
+      goalRows.push(m);
+      savedSpent += spentAmount(m, goalSpendingFrom);
+    } else expenses += expenseAmount(m);
   }
-  return { expenses, paid, ...goalFlows(goalRows) };
+  return { expenses, paid, savedSpent, ...goalFlows(goalRows) };
 }

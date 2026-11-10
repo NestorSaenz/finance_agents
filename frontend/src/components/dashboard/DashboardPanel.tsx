@@ -86,6 +86,11 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Same rule as the month picker: the current month is the live "Este mes" view.
+  const selectMonth = useCallback((value: string) => {
+    setPeriod(value === currentMonthKey() ? "este_mes" : value);
+  }, []);
+
   // Gross goal flows of the selected period, from the same contributions list
   // the Movimientos view shows (so both views always agree).
   const goalFlow = useMemo(
@@ -138,7 +143,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
         period === "todo"
           ? Promise.resolve(null)
           : api.goalPlanStatus(period, token).catch(() => null),
-        api.goalMonthly(6, historyTo(period), token).catch(() => null),
+        api.goalMonthly(4, historyTo(period), token).catch(() => null),
       ]);
       setSummary(summaryData);
       setMovements(movementsData.transactions);
@@ -278,7 +283,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
             onChange={(e) => {
               const { value } = e.target;
               // The current month behaves like the "Este mes" tab (live view).
-              if (value) setPeriod(value === currentMonthKey() ? "este_mes" : value);
+              if (value) selectMonth(value);
             }}
             className={`w-full rounded-lg border px-3 py-1.5 text-sm transition-colors ${
               MONTH_OPTIONS.some((m) => m.value === period)
@@ -316,6 +321,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               cards={cards}
               payments={payments}
               contributions={contributions}
+              goalSpendingFrom={summary?.goal_spending_from}
             />
           ) : summary ? (
             <SummaryContent
@@ -334,6 +340,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               period={period}
               planStatus={planStatus}
               goalHistory={goalHistory}
+              onSelectMonth={selectMonth}
             />
           ) : null}
         </div>

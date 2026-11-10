@@ -62,6 +62,16 @@ export interface SpendingSummary {
   by_category: CategorySpending[];
   credit_expenses: string;
   cash_expenses: string;
+  // Added by GET /analysis/summary. All optional: older payloads omit them
+  // (then goal_saved = 0 and total_spent = total_expenses).
+  /** Gross aportes of the period that count as gasto. */
+  goal_saved?: string;
+  /** Gross retiros (informational; not income). */
+  goal_withdrawn?: string;
+  /** total_expenses (consumo) + goal_saved. */
+  total_spent?: string;
+  /** ISO date: only aportes dated on/after it count as gasto. */
+  goal_spending_from?: string | null;
 }
 
 export interface BudgetStatusItem {

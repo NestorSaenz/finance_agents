@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { formatMoney } from "@/lib/format";
@@ -49,10 +50,11 @@ describe("GoalPlanProgress", () => {
 
   it("shows aportado de planeado, 'faltan' and a brand (not green, not red) bar below 100%", () => {
     render(<GoalPlanProgress data={data([status()])} />);
-    expect(screen.getByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
-    expect(screen.getByText(/aportado/, { selector: "span" }).textContent).toContain(
-      `aportado ${formatMoney(320000)} de ${formatMoney(500000)}`,
-    );
+    expect(screen.getByText("Ahorro planificado del mes")).toBeInTheDocument();
+    // Line 1: "nombre · $aportado / $plan".
+    expect(
+      screen.getByText(text(`${formatMoney(320000)} / ${formatMoney(500000)}`)),
+    ).toBeInTheDocument();
     expect(screen.getByText(text(`faltan ${formatMoney(180000)}`))).toBeInTheDocument();
     const bar = screen.getByRole("progressbar", { name: "Plan de Viaje a Japón" });
     expect(bar).toHaveAttribute("aria-valuenow", "64");
@@ -108,5 +110,35 @@ describe("GoalPlanProgress", () => {
     expect(totals[0].textContent).toContain(formatMoney(500000, "COP"));
     expect(totals[1].textContent).toContain(formatMoney(100, "USD"));
     expect(totals[0].textContent).not.toContain(formatMoney(100, "USD"));
+  });
+
+  it("shows the subtitle explaining that the plan is not a gasto but aportes are", () => {
+    render(<GoalPlanProgress data={data([status()])} />);
+    expect(
+      screen.getByText("El plan no es gasto; lo que aportes sí cuenta en tus gastos del mes"),
+    ).toBeInTheDocument();
+  });
+
+  it("with 8 plans shows 4 and a 'Ver todas (8)' toggle", async () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      status({ goal_id: `g${i}`, goal_name: `Meta ${i}` }),
+    );
+    render(<GoalPlanProgress data={data(many)} />);
+    expect(screen.getAllByRole("progressbar")).toHaveLength(4);
+    const toggle = screen.getByRole("button", { name: "Ver todas (8)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle.className).toContain("min-h-[44px]");
+
+    await userEvent.click(toggle);
+    expect(screen.getAllByRole("progressbar")).toHaveLength(8);
+    expect(screen.getByRole("button", { name: "Ver menos" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("has no toggle with 4 plans or fewer", () => {
+    render(<GoalPlanProgress data={data([status()])} />);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

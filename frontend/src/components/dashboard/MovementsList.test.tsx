@@ -284,18 +284,92 @@ describe("MovementsList", () => {
     const headerFigure = () =>
       parse(screen.getByText(/movimiento\(s\)/).querySelector("span")?.textContent);
 
-    it("'Todas' adds the 'Además apartaste' line only when something was saved", () => {
-      const { unmount } = render(
+    it("'Todas' gastado = consumo + aportes from the cutoff; retiros and older aportes do not add", () => {
+      const rows: GoalContributionsList = {
+        contributions: [
+          { goal_name: "Viaje", amount: "500000", contribution_date: "2026-06-05" },
+          { goal_name: "Viaje", amount: "-2000000", contribution_date: "2026-06-06" },
+          { goal_name: "Viejo", amount: "900000", contribution_date: "2026-05-20" },
+        ],
+        total: "0",
+      };
+      render(
+        <MovementsList
+          transactions={[tx({ amount: "50000" })]}
+          cards={null}
+          payments={pay}
+          contributions={rows}
+          goalSpendingFrom="2026-06-01"
+        />,
+      );
+      // 50.000 consumo + 500.000 aporte; the retiro, the payment and the
+      // pre-cutoff aporte do not add.
+      expect(headerFigure()).toBe(550000);
+      const breakdown = screen.getByText(/^consumo/, { selector: "p" });
+      expect(breakdown.textContent).toContain(formatMoney(50000));
+      expect(breakdown.textContent).toContain(formatMoney(500000));
+      expect(screen.getByText(/Incluye lo apartado a metas/)).toBeInTheDocument();
+    });
+
+    it("'Todas' before the cutoff (or without one) keeps gastado = consumo", () => {
+      render(
         <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={aporte} />,
       );
-      expect(screen.getByText(/Además apartaste/).textContent).toMatch(/500[.,]000/);
-      // 'gastado' is untouched by goals.
       expect(headerFigure()).toBe(50000);
+      expect(screen.queryByText(/^consumo/, { selector: "p" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Además apartaste/)).not.toBeInTheDocument();
+    });
+
+    it("'Todo' crossing the cutoff counts only aportes on/after it; absent cutoff counts none", () => {
+      const rows: GoalContributionsList = {
+        contributions: [
+          { goal_name: "Julio", amount: "300000", contribution_date: "2026-07-10" },
+          { goal_name: "Oct", amount: "200000", contribution_date: "2026-10-10" },
+          { goal_name: "Julio", amount: "-100000", contribution_date: "2026-07-12" },
+        ],
+        total: "400000",
+      };
+      const { unmount } = render(
+        <MovementsList
+          transactions={[tx({ amount: "50000" })]}
+          cards={null}
+          payments={null}
+          contributions={rows}
+          goalSpendingFrom="2026-10-01"
+        />,
+      );
+      expect(headerFigure()).toBe(250000); // 50.000 + only the October aporte
       unmount();
       render(
-        <MovementsList transactions={[tx()]} cards={null} payments={null} contributions={null} />,
+        <MovementsList
+          transactions={[tx({ amount: "50000" })]}
+          cards={null}
+          payments={null}
+          contributions={rows}
+          goalSpendingFrom={undefined}
+        />,
       );
-      expect(screen.queryByText(/Además apartaste/)).not.toBeInTheDocument();
+      expect(headerFigure()).toBe(50000);
+    });
+
+    it("Efectivo and card chips keep their values when aportes count as gasto", async () => {
+      render(
+        <MovementsList
+          transactions={[
+            tx({ id: "k", amount: "250000", payment_method: "credito", card_id: "c1" }),
+            tx({ id: "a", amount: "100000" }),
+          ]}
+          cards={nuCards}
+          payments={pay}
+          contributions={aporte}
+          goalSpendingFrom="2026-06-01"
+        />,
+      );
+      await openCash();
+      // cash 100.000 + payments 300.000 + saved 500.000 (the Flujo de caja line by line).
+      expect(headerFigure()).toBe(900000);
+      await userEvent.click(screen.getByRole("button", { name: /Nu/ }));
+      expect(headerFigure()).toBe(250000);
     });
 
     it("Efectivo breakdown lists the two parts and the payment note", async () => {

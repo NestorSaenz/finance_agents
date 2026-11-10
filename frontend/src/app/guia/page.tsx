@@ -384,7 +384,7 @@ export default function GuiaPage() {
           <Chapter
             kicker="Y cuando prefieras verlo"
             title="Un panel que dice la verdad"
-            say="Todo lo que hablas se ve, ordenado. Con tu caja real del mes (separando lo que gastas de lo que ahorras) y tu excedente que se acumula."
+            say="Todo lo que hablas se ve, ordenado. Con tu caja real del mes (lo que apartas a metas cuenta en tus gastos del mes, pero sigue siendo tuyo) y tu excedente que se acumula."
           >
             <div
               className="rounded-xl border border-line bg-surface p-4 shadow-card"

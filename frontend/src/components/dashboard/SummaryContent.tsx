@@ -15,13 +15,19 @@ import type {
 } from "@/lib/types";
 
 import { budgetIncomeShare, planIncomeShare } from "@/lib/budgets";
-import { plannedSavingFor, selectedMonth, visiblePlans } from "@/lib/goalPlans";
+import {
+  pendingSavingFor,
+  plannedSavingFor,
+  selectedMonth,
+  visiblePlans,
+} from "@/lib/goalPlans";
 
 import { BudgetIncomeSummary } from "./BudgetIncomeSummary";
 import { BudgetProgress } from "./BudgetProgress";
 import { CardPayments } from "./CardPayments";
 import { CardStatus } from "./CardStatus";
 import { CategorySpendingBars } from "./CategorySpendingBars";
+import { GoalPlanHistory } from "./GoalPlanHistory";
 import { GoalPlanProgress } from "./GoalPlanProgress";
 import { GoalProgress } from "./GoalProgress";
 import { PaymentSplit } from "./PaymentSplit";
@@ -52,6 +58,8 @@ interface SummaryContentProps {
   goalHistory?: GoalMonthlyHistory | null;
   /** The selected period (e.g. "este_mes", "mes_pasado", "2026-06"). */
   period: string;
+  /** Tapping a month in the plan history switches the panel to it. */
+  onSelectMonth?: (month: string) => void;
 }
 
 /** The scrollable body of the dashboard: totals, gauge, and progress sections. */
@@ -71,6 +79,7 @@ export function SummaryContent({
   period,
   planStatus = null,
   goalHistory = null,
+  onSelectMonth,
 }: SummaryContentProps) {
   const money = useMoney();
   const currency = useCurrency();
@@ -106,7 +115,12 @@ export function SummaryContent({
   const usesBaseFallback =
     registeredIncome === 0 && period === "este_mes" && referenceIncome > 0;
   const income = registeredIncome > 0 ? registeredIncome : usesBaseFallback ? referenceIncome : 0;
-  const balance = income - expenses;
+  // Gastos = consumo + what the user ALREADY set aside to goals (that money is no
+  // longer available). Older payloads omit the new fields: then it is just consumo.
+  const spentOnGoals = Number(summary.goal_saved ?? 0);
+  const totalSpent = Number(summary.total_spent ?? summary.total_expenses);
+  const goalsReturned = Number(summary.goal_withdrawn ?? 0);
+  const balance = income - totalSpent;
 
   // Cash-flow lens: money that actually left the pocket this month = cash spent +
   // what was paid to cards (credit purchases count when you pay the card, not at
@@ -121,15 +135,24 @@ export function SummaryContent({
   // after the goal movements.
   const afterSpending = income - cashExpenses - cardPayments;
   const cashAvailable = afterSpending - goalSaved + goalWithdrawn;
+  // What the month's plans still lack: informational, in "Este mes" only. It is
+  // not a gasto until the aporte is registered, so it never enters a total.
+  const pending = period === "este_mes" ? pendingSavingFor(planStatus, currency) : 0;
+  const hasPending = pending > 0;
   const hasCashFlow =
-    income > 0 || cashExpenses > 0 || cardPayments > 0 || hasGoalFlow;
-  // Explain the bottom line in words — saving is not spending.
+    income > 0 || cashExpenses > 0 || cardPayments > 0 || hasGoalFlow || hasPending;
+  // Explain the bottom line in words. Aportes dated before the cutoff
+  // (goal_spending_from) do not count as gasto, so they keep the old wording.
+  const savedNote =
+    spentOnGoals > 0
+      ? "Lo apartado a metas cuenta en tus gastos del mes y sale de tu caja (sigue siendo tuyo)."
+      : "Apartar para metas reduce tu caja del mes, pero no es gasto.";
   const cashFlowNote = !hasGoalFlow
     ? "Lo que te queda tras el efectivo y los pagos a tarjetas del mes."
     : goalSaved > 0 && goalWithdrawn > 0
-      ? "Apartar para metas reduce tu caja del mes, pero no es gasto. Lo que retiraste de tus metas volvió a tu caja."
+      ? `${savedNote} Lo que retiraste de tus metas volvió a tu caja.`
       : goalSaved > 0
-        ? "Apartar para metas reduce tu caja del mes, pero no es gasto."
+        ? savedNote
         : "Lo que retiraste de tus metas volvió a tu caja; no es un ingreso.";
 
   // Goal plans: a saving plan is NOT a gasto or a tope — it never touches the
@@ -143,12 +166,25 @@ export function SummaryContent({
     topesShare?.categoryTotal ?? 0,
   );
   const hasTopes = budget !== null && budget.statuses.length > 0;
+  const afterPending = cashAvailable - pending;
+  const hasHistory = (goalHistory?.lines.length ?? 0) > 0;
+  const viewedMonth = selectedMonth(period);
 
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Ingresos" value={income} tone="positive" />
-        <StatCard label="Gastos" value={summary.total_expenses} tone="negative" />
+        <StatCard
+          label="Gastos"
+          value={totalSpent}
+          tone="negative"
+          details={[
+            ...(spentOnGoals > 0
+              ? [`consumo ${money(expenses)}`, `+ apartado a metas ${money(spentOnGoals)}`]
+              : []),
+            ...(hasPending ? [`sin contar ${money(pending)} por aportar`] : []),
+          ]}
+        />
       </div>
 
       <div className="rounded-xl border border-line bg-surface p-4">
@@ -161,9 +197,17 @@ export function SummaryContent({
           {money(balance)}
         </p>
         <p className="mt-2 text-xs text-muted">
-          Ingresos menos gastos del mes. Los cargos a crédito cuentan completos,
-          aunque aún no los pagues — por eso puede diferir de tu caja real de abajo.
+          Ingresos menos gastos del mes
+          {spentOnGoals > 0 ? " (incluye lo apartado a metas)" : ""}. Los cargos a
+          crédito cuentan completos, aunque aún no los pagues — por eso puede diferir
+          de tu caja real de abajo.
         </p>
+        {goalsReturned > 0 && (
+          <p className="mt-1 text-xs text-muted">
+            Además volvieron {money(goalsReturned)} de tus metas (no es ingreso; ya está
+            en tu caja final).
+          </p>
+        )}
       </div>
 
       {hasCashFlow && (
@@ -224,7 +268,7 @@ export function SummaryContent({
                   <dt className="font-medium text-ink">Caja final del mes</dt>
                   <dd
                     className={`font-semibold tabular-nums ${
-                      cashAvailable >= 0 ? "text-positive" : "text-amber-600"
+                      cashAvailable >= 0 ? "text-positive" : "text-amber-700"
                     }`}
                   >
                     {money(cashAvailable)}
@@ -233,6 +277,36 @@ export function SummaryContent({
               </>
             )}
           </dl>
+          {hasPending && (
+            <div className="mt-3 flex flex-col gap-0.5 border-t border-line pt-2 text-xs text-muted">
+              <p>
+                Por aportar a tus metas este mes (plan):{" "}
+                <span className="font-semibold tabular-nums text-ink">{money(pending)}</span>
+              </p>
+              <p>
+                {afterPending >= 0 ? (
+                  <>
+                    Si lo aportas, tu caja final quedaría en{" "}
+                    <span className="font-semibold tabular-nums text-ink">
+                      {money(afterPending)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    Si lo aportas, te faltarían{" "}
+                    <span className="font-semibold tabular-nums text-amber-700">
+                      {money(Math.abs(afterPending))}
+                    </span>
+                  </>
+                )}{" "}
+                y tus gastos del mes subirían a{" "}
+                <span className="font-semibold tabular-nums text-ink">
+                  {money(totalSpent + pending)}
+                </span>
+              </p>
+              <p>Es un plan: no cuenta como gasto hasta que registres el aporte.</p>
+            </div>
+          )}
           <p className="mt-2 text-xs text-muted">{cashFlowNote}</p>
         </div>
       )}
@@ -257,17 +331,22 @@ export function SummaryContent({
 
       {income > 0 && (
         <IncomeGauge
-          spent={expenses}
+          spent={totalSpent}
           income={income}
           note={
-            usesBaseFallback
-              ? `Usando tu ingreso base ${money(referenceIncome)}. Registra o actualiza el de este mes para ajustarlo.`
-              : undefined
+            [
+              spentOnGoals > 0 ? `Incluye ${money(spentOnGoals)} apartados a metas.` : null,
+              usesBaseFallback
+                ? `Usando tu ingreso base ${money(referenceIncome)}. Registra o actualiza el de este mes para ajustarlo.`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
           }
         />
       )}
 
-      {(budget || hasPlans) && (
+      {(budget || hasPlans || hasHistory) && (
         <Section
           title="Cómo voy en cada categoría"
           subtitle={
@@ -289,17 +368,22 @@ export function SummaryContent({
             {/* Without topes BudgetProgress renders no income lines: show the plan's here. */}
             {!hasTopes && planShare && <BudgetIncomeSummary share={null} plan={planShare} />}
             <GoalPlanProgress data={planStatus} />
+            {goalHistory && onSelectMonth && (
+              <GoalPlanHistory
+                lines={goalHistory.lines}
+                currency={currency}
+                selectedMonth={period === "todo" ? null : viewedMonth}
+                endMonth={viewedMonth}
+                onSelectMonth={onSelectMonth}
+              />
+            )}
           </div>
         </Section>
       )}
 
       {activeGoals.length > 0 && (
         <Section title="Metas de ahorro">
-          <GoalProgress
-            goals={activeGoals}
-            history={goalHistory}
-            selectedMonth={selectedMonth(period)}
-          />
+          <GoalProgress goals={activeGoals} />
         </Section>
       )}
 
@@ -334,7 +418,7 @@ export function SummaryContent({
       />
 
       {summary.by_category.length > 0 && (
-        <Section title="Gastos por categoría">
+        <Section title="Gastos por categoría (consumo)">
           <CategorySpendingBars data={summary.by_category} />
         </Section>
       )}
@@ -495,10 +579,13 @@ function StatCard({
   label,
   value,
   tone,
+  details = [],
 }: {
   label: string;
   value: string | number;
   tone: "positive" | "negative";
+  /** Muted breakdown / notes shown under the amount. */
+  details?: string[];
 }) {
   const money = useMoney();
   return (
@@ -511,6 +598,11 @@ function StatCard({
       >
         {money(value)}
       </p>
+      {details.map((d) => (
+        <p key={d} className="mt-1 break-words text-xs text-muted">
+          {d}
+        </p>
+      ))}
     </div>
   );
 }

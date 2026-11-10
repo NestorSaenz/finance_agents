@@ -104,7 +104,7 @@ export const api = {
     period: string,
     token: string | null,
   ): Promise<SpendingSummary> =>
-    request(`/transactions/summary?period=${encodeURIComponent(period)}`, { token }),
+    request(`/analysis/summary?period=${encodeURIComponent(period)}`, { token }),
 
   transactions: (
     period: string,

@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { formatPercent } from "@/lib/format";
 import { planIncomeShare } from "@/lib/budgets";
 import {
-  goalHistory,
   historyTo,
   monthLabel,
-  monthState,
+  monthSummaries,
+  pendingSavingFor,
   planFill,
   planTotals,
   plannedSavingFor,
@@ -115,52 +115,48 @@ describe("month helpers", () => {
     expect(historyTo("mes_pasado", now)).toBe("2025-12");
     expect(historyTo("2026-06", now)).toBe("2026-06");
   });
+});
 
-  it("orders one goal's rows and ends at the chosen month (future dropped)", () => {
-    const lines = [
-      line({ month: "2026-10" }),
-      line({ month: "2026-08" }),
-      line({ month: "2026-12" }), // future relative to the chosen month
-      line({ goal_id: "g2", month: "2026-09" }),
-    ];
-    expect(goalHistory(lines, "g1", "2026-10").map((l) => l.month)).toEqual([
-      "2026-08",
-      "2026-10",
-    ]);
-  });
-
-  it("classifies a month: sin plan, cumplido, faltan", () => {
-    expect(monthState(line({ planned: null, saved: "100" }))).toMatchObject({ kind: "sin_plan" });
-    expect(monthState(line({ saved: "500000" }))).toMatchObject({ kind: "cumplido", fill: 100 });
-    expect(monthState(line({ saved: "320000" }))).toEqual({
-      kind: "faltan",
-      fill: 64,
-      missing: 180000,
+describe("pendingSavingFor", () => {
+  it("sums what is still missing in the profile currency only", () => {
+    const l = list({
+      statuses: [
+        status({ remaining: "500000" }),
+        status({ goal_id: "g2", remaining: "0", is_met: true }),
+        status({ goal_id: "g3", remaining: "100", currency: "USD" }),
+      ],
     });
+    expect(pendingSavingFor(l, "COP")).toBe(500000);
+    expect(pendingSavingFor(l, "USD")).toBe(100);
+    expect(pendingSavingFor(null, "COP")).toBe(0);
   });
 });
 
-describe("monthState with zero / effective plans", () => {
-  it("a plan of 0 means 'sin plan' (even when something was saved)", () => {
-    expect(monthState(line({ planned: "0", saved: "0" }))).toMatchObject({ kind: "sin_plan" });
-    expect(monthState(line({ planned: "0", saved: "100" }))).toMatchObject({ kind: "sin_plan" });
+describe("monthSummaries", () => {
+  const lines = [
+    line({ month: "2026-09", planned: "500000", saved: "500000" }),
+    line({ goal_id: "g2", month: "2026-09", planned: "300000", saved: "100000" }),
+    line({ month: "2026-10", planned: "500000", effective_planned: "400000", saved: "400000" }),
+    line({ month: "2026-08", planned: null, saved: "50" }),
+    line({ month: "2026-07", planned: "0", saved: "0" }),
+    line({ goal_id: "g3", currency: "USD", month: "2026-10", planned: "100", saved: "10" }),
+    line({ month: "2026-12", planned: "1", saved: "1" }),
+  ];
+
+  it("summarises per month, oldest first, only the given currency", () => {
+    expect(monthSummaries(lines, "COP", "2026-10")).toEqual([
+      { month: "2026-09", planned: 800000, saved: 600000, met: 1, total: 2 },
+      { month: "2026-10", planned: 400000, saved: 400000, met: 1, total: 1 },
+    ]);
   });
 
-  it("uses effective_planned for the fill and 'faltan', and falls back to planned", () => {
-    expect(monthState(line({ planned: "500000", effective_planned: "400000", saved: "300000" }))).toEqual({
-      kind: "faltan",
-      fill: 75,
-      missing: 100000,
-    });
-    // Capped plan already reached.
-    expect(
-      monthState(line({ planned: "500000", effective_planned: "250000", saved: "250000" })),
-    ).toMatchObject({ kind: "cumplido" });
-    for (const missing of [null, undefined]) {
-      expect(
-        monthState(line({ planned: "500000", effective_planned: missing, saved: "250000" })),
-      ).toMatchObject({ kind: "faltan", missing: 250000 });
-    }
+  it("leaves out months without plan (null or 0) and keeps currencies apart", () => {
+    const months = monthSummaries(lines, "COP").map((m) => m.month);
+    expect(months).not.toContain("2026-08");
+    expect(months).not.toContain("2026-07");
+    expect(monthSummaries(lines, "USD")).toEqual([
+      { month: "2026-10", planned: 100, saved: 10, met: 0, total: 1 },
+    ]);
   });
 });
 

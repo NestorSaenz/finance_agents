@@ -1,21 +1,14 @@
 "use client";
 
 import { useMoney } from "@/context/CurrencyContext";
-import { goalHistory } from "@/lib/goalPlans";
-import type { Goal, GoalMonthlyHistory } from "@/lib/types";
-
-import { GoalMonthHistory } from "./GoalMonthHistory";
+import type { Goal } from "@/lib/types";
 
 interface GoalProgressProps {
   goals: Goal[];
-  /** Month-by-month plan history; each goal gets a "Ver mes a mes" accordion. */
-  history?: GoalMonthlyHistory | null;
-  /** "YYYY-MM" the history ends at (highlighted). */
-  selectedMonth?: string;
 }
 
 /** Savings goals with a progress bar (current vs target). */
-export function GoalProgress({ goals, history, selectedMonth }: GoalProgressProps) {
+export function GoalProgress({ goals }: GoalProgressProps) {
   const money = useMoney();
   // Show goals still in play (active/completed), most-funded first.
   const visible = goals
@@ -48,13 +41,6 @@ export function GoalProgress({ goals, history, selectedMonth }: GoalProgressProp
                 style={{ width: `${Math.max(0, Math.min(pct, 100))}%` }}
               />
             </div>
-            {history && selectedMonth && (
-              <GoalMonthHistory
-                goalName={g.name}
-                lines={goalHistory(history.lines, g.id, selectedMonth)}
-                selectedMonth={selectedMonth}
-              />
-            )}
           </div>
         );
       })}

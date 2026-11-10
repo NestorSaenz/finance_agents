@@ -29,26 +29,40 @@ function Amount({ value, plus = false }: { value: number; plus?: boolean }) {
 /** Header lines above the movements list: the figure the user compares with the
  *  Resumen, what it is made of, and goal flows (savings, not spending). */
 export function MovementsTotals({ mode, count, totals }: MovementsTotalsProps) {
-  const { expenses, paid, saved, withdrawn } = totals;
+  const { expenses, paid, saved, withdrawn, savedSpent } = totals;
 
-  if (mode === "all" || mode === "card") {
+  if (mode === "all") {
     return (
       <>
         <p className="text-xs text-muted">
-          {count} movimiento(s) · gastado <Amount value={expenses} />
+          {count} movimiento(s) · gastado <Amount value={expenses + savedSpent} />
         </p>
-        {mode === "all" && (
+        {savedSpent > 0 ? (
+          <>
+            <p className="text-xs text-muted">
+              consumo <Amount value={expenses} /> + apartado a metas{" "}
+              <Amount value={savedSpent} />
+            </p>
+            <p className="text-xs text-muted">
+              Igual a «Gastos» del Resumen. Incluye lo apartado a metas; no incluye pagos a
+              tarjetas ni lo que volvió de tus metas.
+            </p>
+          </>
+        ) : (
           <p className="text-xs text-muted">
             Igual a «Gastos» del Resumen. No incluye pagos a tarjetas ni movimientos de
             metas.
           </p>
         )}
-        {mode === "all" && saved > 0 && (
-          <p className="text-xs text-muted">
-            Además apartaste <Amount value={saved} /> para metas (no es gasto).
-          </p>
-        )}
       </>
+    );
+  }
+
+  if (mode === "card") {
+    return (
+      <p className="text-xs text-muted">
+        {count} movimiento(s) · gastado <Amount value={expenses} />
+      </p>
     );
   }
 

@@ -7,6 +7,7 @@ import {
   isCashMovement,
   isCashTx,
   movementTotals,
+  spentAmount,
   type Movement,
 } from "@/lib/movements";
 import type { Transaction } from "@/lib/types";
@@ -77,7 +78,13 @@ describe("expenseAmount / movementTotals", () => {
       contrib("500"),
       contrib("-2000"),
     ]);
-    expect(t).toEqual({ expenses: 100, paid: 300, saved: 500, withdrawn: 2000 });
+    expect(t).toEqual({
+      expenses: 100,
+      paid: 300,
+      saved: 500,
+      withdrawn: 2000,
+      savedSpent: 0,
+    });
   });
 
   it("sums decimal strings; the money formatter hides float drift", () => {
@@ -113,6 +120,48 @@ describe("goalFlows", () => {
     expect(movementTotals([contrib("500"), contrib("-200")])).toMatchObject({
       saved: 500,
       withdrawn: 200,
+    });
+  });
+});
+
+describe("spentAmount (what counts toward Gastos)", () => {
+  const dated = (amount: string, date: string): Movement => ({
+    kind: "contribution",
+    date,
+    id: "c",
+    goalName: "Meta",
+    amount,
+  });
+
+  it("counts expenses and aportes on/after the cutoff only", () => {
+    expect(spentAmount(txm({ amount: "100" }), "2026-10-01")).toBe(100);
+    expect(spentAmount(dated("500", "2026-10-01"), "2026-10-01")).toBe(500);
+    expect(spentAmount(dated("500", "2026-09-30"), "2026-10-01")).toBe(0);
+  });
+
+  it("never counts withdrawals, payments or income; no cutoff means no aportes", () => {
+    expect(spentAmount(dated("-500", "2026-10-05"), "2026-10-01")).toBe(0);
+    expect(spentAmount(pay("300"), "2026-10-01")).toBe(0);
+    expect(spentAmount(txm({ transaction_type: "income", amount: "9" }), "2026-10-01")).toBe(0);
+    expect(spentAmount(dated("500", "2026-10-05"), null)).toBe(0);
+    expect(spentAmount(dated("500", "2026-10-05"))).toBe(0);
+  });
+
+  it("Σ spentAmount over the rows = consumo + counted aportes (= total_spent)", () => {
+    const rows = [
+      txm({ amount: "100" }),
+      txm({ id: "2", amount: "50", transaction_type: "income" }),
+      pay("300"),
+      dated("200", "2026-10-02"),
+      dated("300", "2026-10-03"),
+      dated("-2000", "2026-10-04"),
+      dated("999", "2026-09-01"),
+    ];
+    const sum = rows.reduce((acc, m) => acc + spentAmount(m, "2026-10-01"), 0);
+    expect(sum).toBe(600);
+    expect(movementTotals(rows, "2026-10-01")).toMatchObject({
+      expenses: 100,
+      savedSpent: 500,
     });
   });
 });

@@ -155,7 +155,7 @@ describe("DashboardPanel", () => {
     expect(screen.getByText("Balance")).toBeInTheDocument();
     expect(screen.getByText("Flujo de caja")).toBeInTheDocument();
     // Spending-by-category section (lightweight bars, no chart library).
-    expect(screen.getByText("Gastos por categoría")).toBeInTheDocument();
+    expect(screen.getByText("Gastos por categoría (consumo)")).toBeInTheDocument();
     // Credit vs cash split section rendered.
     expect(screen.getByText("Cómo pagas")).toBeInTheDocument();
     expect(screen.getByText("Crédito")).toBeInTheDocument();
@@ -292,6 +292,51 @@ describe("DashboardPanel", () => {
     expect(screen.getByText(/28 jul/i)).toBeInTheDocument();
   });
 
+  it("Movimientos 'Todas' counts aportes from goal_spending_from, matching the Resumen Gastos", async () => {
+    summaryMock.mockResolvedValue(
+      summary({
+        total_expenses: "40000",
+        goal_saved: "500000",
+        total_spent: "540000",
+        goal_spending_from: "2026-10-01",
+      }),
+    );
+    contributionsMock.mockResolvedValue({
+      contributions: [
+        { goal_name: "Viaje", amount: "500000", contribution_date: "2026-10-05" },
+        { goal_name: "Viejo", amount: "900000", contribution_date: "2026-09-20" },
+      ],
+      total: "1400000",
+    });
+    transactionsMock.mockResolvedValue({
+      transactions: [
+        {
+          id: "t1",
+          amount: "40000",
+          description: "Comida",
+          transaction_type: "expense",
+          category: "restaurantes",
+          payment_method: "efectivo",
+          card_id: null,
+          transaction_date: "2026-10-02",
+          budget_date: "2026-10-02",
+          created_at: "2026-10-02T00:00:00Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 0,
+    });
+
+    render(<DashboardPanel open onClose={() => {}} />);
+    const gastos = (await screen.findByText("Gastos")).parentElement;
+    expect(Number((gastos?.querySelector("p:nth-of-type(2)")?.textContent ?? "").replace(/\D/g, ""))).toBe(540000);
+
+    await userEvent.click(screen.getByRole("button", { name: "Movimientos" }));
+    const header = await screen.findByText(/movimiento\(s\)/);
+    expect(Number((header.querySelector("span")?.textContent ?? "").replace(/\D/g, ""))).toBe(540000);
+  });
+
   describe("Goal plan block", () => {
     it("shows the plan and the 'solo mes en curso' note for a past month (no topes)", async () => {
       summaryMock.mockResolvedValue(summary());
@@ -301,7 +346,7 @@ describe("DashboardPanel", () => {
       await screen.findByText("Flujo de caja");
       await userEvent.click(screen.getByRole("button", { name: "Mes pasado" }));
 
-      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(await screen.findByText("Ahorro planificado del mes")).toBeInTheDocument();
       expect(screen.getByText("Los topes se muestran solo para el mes en curso.")).toBeInTheDocument();
       expect(planMock).toHaveBeenLastCalledWith("mes_pasado", "tok");
       // 'to' is the previous month, never the default current one.
@@ -319,7 +364,7 @@ describe("DashboardPanel", () => {
 
       await waitFor(() => expect(summaryMock).toHaveBeenLastCalledWith("todo", "tok"));
       expect(planMock).not.toHaveBeenCalled();
-      expect(screen.queryByText("Ahorro planificado · no es gasto")).toBeNull();
+      expect(screen.queryByText("Ahorro planificado del mes")).toBeNull();
     });
 
     it("keeps the panel working when plan-status fails", async () => {
@@ -330,8 +375,43 @@ describe("DashboardPanel", () => {
       render(<DashboardPanel open onClose={() => {}} />);
 
       expect(await screen.findByText("Flujo de caja")).toBeInTheDocument();
-      expect(screen.queryByText("Ahorro planificado · no es gasto")).toBeNull();
+      expect(screen.queryByText("Ahorro planificado del mes")).toBeNull();
       expect(screen.queryByText("Reintentar")).toBeNull();
+    });
+
+    it("asks for 4 months of history (4 + the chosen one = 5)", async () => {
+      summaryMock.mockResolvedValue(summary());
+
+      render(<DashboardPanel open onClose={() => {}} />);
+      await screen.findByText("Flujo de caja");
+
+      expect(monthlyMock).toHaveBeenCalledWith(4, undefined, "tok");
+    });
+
+    it("tapping a month in the plan history switches the whole panel to it", async () => {
+      summaryMock.mockResolvedValue(summary());
+      planMock.mockResolvedValue(PLAN);
+      monthlyMock.mockResolvedValue({
+        lines: [
+          {
+            goal_id: "g1",
+            goal_name: "Viaje a Japón",
+            currency: "COP",
+            month: "2026-09",
+            planned: "500000",
+            saved: "500000",
+            withdrawn: "0",
+            cumulative: "500000",
+          },
+        ],
+      });
+
+      render(<DashboardPanel open onClose={() => {}} />);
+      await userEvent.click(await screen.findByRole("button", { name: /Historial de planes/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Sep 2026/ }));
+
+      await waitFor(() => expect(summaryMock).toHaveBeenLastCalledWith("2026-09", "tok"));
+      expect(planMock).toHaveBeenLastCalledWith("2026-09", "tok");
     });
 
     it("keeps the panel working when only monthly history fails", async () => {
@@ -341,7 +421,7 @@ describe("DashboardPanel", () => {
 
       render(<DashboardPanel open onClose={() => {}} />);
 
-      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(await screen.findByText("Ahorro planificado del mes")).toBeInTheDocument();
       expect(screen.queryByText("Reintentar")).toBeNull();
     });
 
@@ -364,9 +444,9 @@ describe("DashboardPanel", () => {
 
       render(<DashboardPanel open onClose={() => {}} />);
 
-      expect(await screen.findByText("Ahorro planificado · no es gasto")).toBeInTheDocument();
+      expect(await screen.findByText("Ahorro planificado del mes")).toBeInTheDocument();
       expect(screen.getByText(/Tus topes suman/).textContent).toContain("10%");
-      expect(screen.getByText(/Ahorro planificado del mes/).textContent).toContain("5%");
+      expect(screen.getByText(/Ahorro planificado del mes.+ingreso/).textContent).toContain("5%");
     });
   });
 
