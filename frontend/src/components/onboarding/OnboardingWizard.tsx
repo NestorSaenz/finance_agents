@@ -5,10 +5,13 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { categoryLabel } from "@/lib/format";
+import { parseAmountInput } from "@/lib/moneyInput";
+import { useNewDesign } from "@/lib/useNewDesign";
 import { Logo } from "@/components/ui/Logo";
 
 import { CardsStep, newCard, type CardDraft } from "./CardsStep";
 import { CategoryCapsStep } from "./CategoryCapsStep";
+import { CategoryCapsStepV2 } from "./CategoryCapsStepV2";
 import { RecurringStep, newRecurring, type RecurringDraft } from "./RecurringStep";
 import { WelcomeStep } from "./WelcomeStep";
 
@@ -68,6 +71,8 @@ interface OnboardingWizardProps {
 
 export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
   const { token } = useAuth();
+  // ?nuevo=1 turns the redesigned category step on (off by default).
+  const newDesign = useNewDesign();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [name, setName] = useState("");
   const [income, setIncome] = useState("");
@@ -174,7 +179,10 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
       if (withData) {
         const start = monthStartISO();
         const budgets = selected
-          .map((category) => ({ category, amount: Number(caps[category]) }))
+          .map((category) => ({
+            category,
+            amount: newDesign ? parseAmountInput(caps[category] ?? "") : Number(caps[category]),
+          }))
           .filter((b) => Number.isFinite(b.amount) && b.amount > 0);
         // Best-effort: a failed item shouldn't block finishing onboarding.
         await Promise.allSettled([
@@ -224,7 +232,12 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/50 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-xl sm:p-8">
+      <div
+        className={`w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-xl sm:p-8 ${
+          // The redesigned step is summary / scrolling content / footer in a bounded column.
+          newDesign && step === 2 ? "flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden" : ""
+        }`}
+      >
         <div className="mb-6 flex items-center justify-between">
           <Logo />
           <span className="text-xs font-medium text-muted">Paso {step} de 4</span>
@@ -246,6 +259,24 @@ export function OnboardingWizard({ onDone }: OnboardingWizardProps) {
             onCurrencyChange={setCurrency}
             onSkip={() => void finish(false)}
             onContinue={() => setStep(2)}
+          />
+        ) : step === 2 && newDesign ? (
+          <CategoryCapsStepV2
+            commonCategories={COMMON_CATEGORIES}
+            moreCategories={MORE_CATEGORIES}
+            customCategories={customCategories}
+            selected={selected}
+            caps={caps}
+            income={income !== "" && incomeValid && incomeValue > 0 ? incomeValue : null}
+            currency={currency}
+            submitting={submitting}
+            onToggle={toggleCategory}
+            onAddCustom={addCustomCategory}
+            onCapChange={(category, value) =>
+              setCaps((prev) => ({ ...prev, [category]: value }))
+            }
+            onBack={() => setStep(1)}
+            onContinue={() => setStep(3)}
           />
         ) : step === 2 ? (
           <CategoryCapsStep
