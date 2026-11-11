@@ -7,7 +7,7 @@ import { Logo } from "@/components/ui/Logo";
 export const metadata: Metadata = {
   title: "Guía · Safi",
   description:
-    "Descubre todo lo que puedes hacer con Safi: registra gastos e ingresos hablando, controla tarjetas y presupuestos, ahorra para tus metas y consulta tus finanzas en lenguaje natural.",
+    "Descubre todo lo que puedes hacer con Safi: registra gastos e ingresos hablando, controla tarjetas y presupuestos, ahorra para tus metas (con plan mensual), valida tus extractos contra lo que ya registraste y consulta tus finanzas en lenguaje natural.",
 };
 
 /** Amount in tabular figures. Tone carries meaning via sign + color (never color alone). */
@@ -20,7 +20,7 @@ function Amt({
 }) {
   const sign = tone === "in" ? "+" : tone === "out" ? "−" : "";
   const color =
-    tone === "in" ? "text-positive" : tone === "out" ? "text-negative" : "text-ink";
+    tone === "in" ? "text-emerald-700" : tone === "out" ? "text-negative" : "text-ink";
   return (
     <span className={`font-medium tabular-nums ${color}`}>
       {sign}
@@ -113,12 +113,16 @@ const CAPABILITIES = [
   "Categorías automáticas y propias",
   "Efectivo o crédito",
   "Tarjetas con corte y pago",
+  "Cambio de corte con confirmación",
   "Compras a cuotas",
   "Pagos y abonos a tarjeta",
   "Presupuestos con alertas",
+  "Tus topes como % de tu ingreso",
   "Metas: aportar, retirar, ajustar",
+  "Plan mensual de metas",
   "Movimientos fijos (recurrentes)",
   "Extractos por foto o PDF",
+  "Validar extractos contra lo registrado",
   "Consultas por mes, tarjeta o categoría",
   "Análisis y consejos con tus datos",
   "Editar y borrar hablando",
@@ -240,6 +244,25 @@ export default function GuiaPage() {
               El cargo impacta el mes en que <Em>pagas la tarjeta</Em> —según tu corte y pago—, no el
               día de la compra. Tu presupuesto no miente.
             </Under>
+            <div className="mt-6">
+              <Thread label="Cambiar el corte de una tarjeta">
+                <UserMsg>cambia el corte de Rappi al 20</UserMsg>
+                <SafiMsg>
+                  Rappi: corte <strong>15 → 20</strong>, el día de pago sigue el 5. ¿Lo cambio?
+                </SafiMsg>
+                <UserMsg>sí</UserMsg>
+                <SafiMsg>
+                  ✏️ Actualicé tu tarjeta Rappi: corte: día 15 → 20. Recalculé{" "}
+                  <strong>4 cargos</strong> pendientes con las nuevas fechas.
+                </SafiMsg>
+              </Thread>
+            </div>
+            <Under>
+              Cambiar el día de <Em>corte o de pago</Em> siempre pasa por una confirmación: Safi te
+              propone el cambio y solo lo aplica cuando le dices que sí. Al confirmar,{" "}
+              <Em>recalcula en qué mes cae cada cargo pendiente</Em>; los estados ya vencidos
+              conservan su mes. El nombre y el cupo sí cambian al instante.
+            </Under>
           </Chapter>
 
           <Chapter kicker="03 · Compras a cuotas" title="Diferido, sin sacar cuentas">
@@ -270,6 +293,14 @@ export default function GuiaPage() {
               te pasaste — no cada mes solo porque llegó una cuenta fija. Si tus gastos fijos ya
               ocupan casi todo el tope, el aviso llega cuando te pasas.
             </Under>
+            <Under>
+              En el panel, arriba de tus topes ves <Em>“Tus topes suman $X · % de tu ingreso”</Em>
+              (sobre tu ingreso base) y cada tope con su propio % del ingreso. Si tienes un tope
+              general, aparece aparte para no sumarlo dos veces. Cuando preguntas “¿cómo voy?”, el
+              chat te da los totales ya calculados. Los planes de tus metas se muestran{" "}
+              <Em>aparte</Em> (“Ahorro planificado del mes” y “Topes + metas”): no se suman al total
+              de tus topes ni a tus gastos.
+            </Under>
           </Chapter>
 
           <Chapter
@@ -278,10 +309,10 @@ export default function GuiaPage() {
             say="Ahorra para algo y muévelo cuando lo necesites — sin perder el rastro."
           >
             <Thread label="Metas de ahorro">
-              <UserMsg>aparta 200.000 para el viaje a Japón</UserMsg>
+              <UserMsg>abona 200.000 al viaje a Japón</UserMsg>
               <SafiMsg>
-                🎯 <Amt tone="in">$200.000</Amt> a «Japón». Llevas <Amt>$1.200.000</Amt> de{" "}
-                <Amt>$8.000.000</Amt>.
+                ✅ Aboné <Amt>$200.000</Amt> a «Viaje a Japón» (cuenta en tus gastos del mes como
+                ahorro). Llevas <Amt>$1.200.000</Amt> de <Amt>$8.000.000</Amt>.
               </SafiMsg>
               <UserMsg>retira 100.000 del fondo de emergencias</UserMsg>
               <SafiMsg>
@@ -293,6 +324,63 @@ export default function GuiaPage() {
               Un retiro <Em>no es un ingreso</Em>: es tu propia plata de vuelta. No infla tus
               ganancias del mes — solo deja de estar apartada.
             </Under>
+
+            <div className="mt-8">
+              <p className="mb-3 text-sm font-medium text-ink">
+                Y puedes planear cuánto aportar cada mes
+              </p>
+              <Thread label="Plan mensual de una meta">
+                <UserMsg>para noviembre aparta 500.000 a la meta de vacaciones</UserMsg>
+                <SafiMsg>
+                  ✅ Plan de <strong>Vacaciones</strong>: <Amt>$500.000</Amt> (solo noviembre 2026).
+                  Quedó como <strong>plan</strong>: no es un tope ni un gasto, y aún no has aportado.
+                  Cuando muevas la plata, dime «aporté X a Vacaciones» y lo registro; ahí sí contará
+                  en tus gastos del mes.
+                </SafiMsg>
+                <UserMsg>de ahora en adelante abona 300.000 al mes al fondo de emergencias</UserMsg>
+                <SafiMsg>
+                  ✅ Plan de <strong>Fondo de emergencias</strong>: <Amt>$300.000</Amt> (desde
+                  noviembre 2026 en adelante). Quedó como plan (no es un tope ni un gasto, y aún no has
+                  aportado).
+                </SafiMsg>
+                <UserMsg>quita el plan de diciembre del fondo de emergencias</UserMsg>
+                <SafiMsg>
+                  ✅ Quité el plan de Fondo de emergencias para diciembre 2026: ese mes no planeas
+                  abonar.
+                </SafiMsg>
+                <UserMsg>abona 200.000 a vacaciones</UserMsg>
+                <SafiMsg>
+                  ✅ Aboné <Amt>$200.000</Amt> a «Vacaciones» (cuenta en tus gastos del mes como
+                  ahorro). Llevas <Amt>$200.000</Amt> de <Amt>$3.000.000</Amt>.
+                </SafiMsg>
+                <UserMsg>¿cómo voy con mis metas este mes?</UserMsg>
+                <SafiMsg>
+                  Vacaciones: plan <Amt>$500.000</Amt> · aportado <Amt>$200.000</Amt> (40%) · faltan{" "}
+                  <Amt>$300.000</Amt>
+                  <br />
+                  Fondo de emergencias: plan <Amt>$300.000</Amt> · aportado <Amt>$0</Amt> (0%) · faltan{" "}
+                  <Amt>$300.000</Amt>
+                  <br />
+                  TOTAL PLAN METAS (el plan no es gasto; lo aportado sí cuenta en tus gastos del
+                  mes): planificado <Amt>$800.000</Amt> · aportado <Amt>$200.000</Amt>
+                </SafiMsg>
+              </Thread>
+              <Under>
+                Para <Em>quitar o cambiar</Em> un plan: “quita el plan de diciembre” deja ese mes sin
+                plan, “en diciembre vuelve al plan normal” lo regresa al general y “ya no quiero
+                planear más para Vacaciones” deja de planear desde ese mes en adelante. Si el mes ya
+                pasó, Safi <Em>te pide confirmación antes de escribir</Em> y no cambia nada hasta que
+                le dices que sí.
+              </Under>
+              <Under>
+                <Em>Plan, aporte, gasto y tope no son lo mismo.</Em> Un plan es una intención: no
+                mueve plata. Un aporte es plata que realmente apartaste, y{" "}
+                <Em>cuenta en tus gastos del mes</Em> (desde noviembre de 2026; antes de esa fecha
+                queda registrado pero no cuenta). Un retiro no es ingreso. Y un tope es el límite de
+                una categoría de gasto: si le dices “tope mensual” a una meta, Safi lo toma como plan
+                y te aclara que quedó como plan, no como tope.
+              </Under>
+            </div>
           </Chapter>
 
           <Chapter
@@ -300,7 +388,7 @@ export default function GuiaPage() {
             title="Lo de todos los meses, en automático"
           >
             <Thread label="Movimientos recurrentes">
-              <UserMsg>cada mes pago 45.000 de gimnasio el día 1</UserMsg>
+              <UserMsg>cada mes pago 45.000 de gimnasio el día 1, en efectivo</UserMsg>
               <SafiMsg>
                 Anotado 🔁 Cada día <strong>1</strong> registro <Amt tone="out">$45.000</Amt> de
                 gimnasio. Tú no haces nada.
@@ -308,7 +396,8 @@ export default function GuiaPage() {
             </Thread>
             <Under>
               El sueldo, el arriendo, Netflix… los dices <Em>una sola vez</Em> y aparecen solos cada
-              mes. Se acabó el registrarlos a mano.
+              mes. Se acabó el registrarlos a mano. Si tienes tarjetas y no dices cómo se paga, Safi
+              te pregunta si es en efectivo o con tarjeta de crédito antes de crearlo.
             </Under>
           </Chapter>
 
@@ -316,8 +405,14 @@ export default function GuiaPage() {
             <Thread label="Extracto por foto">
               <UserMsg>📷 extracto_agosto.jpg</UserMsg>
               <SafiMsg>
-                Leí <strong>7 movimientos</strong> por <Amt>$1.480.000</Amt>. Te los propongo… ¿los
-                registro?
+                Leí <strong>7 movimientos</strong> y ninguno estaba registrado.
+                <br />
+                <br />
+                Faltan por registrar: …
+                <br />
+                <br />
+                Los categorizo yo y te muestro cómo quedaron. ¿Los registro tal cual? Dime{" "}
+                <em>sí</em> para guardarlos, o indícame qué corregir.
               </SafiMsg>
               <UserMsg>sí, todos</UserMsg>
               <SafiMsg>Listos ✅ 7 movimientos guardados.</SafiMsg>
@@ -325,6 +420,28 @@ export default function GuiaPage() {
             <Under>
               Foto, captura del Excel o PDF: Safi <Em>lee, entiende y propone</Em> antes de guardar
               nada. Tú solo confirmas.
+            </Under>
+            <div className="mt-6">
+              <Thread label="Validar un extracto contra lo registrado">
+                <UserMsg>📷 extracto_nu.jpg — valida que todos estos movimientos de Nu estén registrados</UserMsg>
+                <SafiMsg>
+                  Revisé <strong>7 movimientos</strong> contra tus registros: 5 ya están registrados.
+                  <br />✅ Farmacia: <Amt>$32.000</Amt> (2026-10-08)
+                  <br />💳 pago a tu Nu del 12-oct ya registrado
+                  <br />…
+                  <br />
+                  <br />
+                  Faltan por registrar: Café <Amt tone="out">$9.500</Amt> y Taxi{" "}
+                  <Amt tone="out">$18.000</Amt>. ¿Los registro tal cual?
+                </SafiMsg>
+              </Thread>
+            </div>
+            <Under>
+              También sirve preguntar “¿falta alguno por registrar?”. Safi compara cada línea con lo
+              que ya tienes, marca con ✅ lo que está y propone registrar <Em>solo lo que falta</Em>:
+              no te pregunta categoría por línea (las pone él) y, como mucho, una sola pregunta sobre
+              cómo pagaste si no se ve en el extracto. Un “Gracias por tu pago” del banco lo reconoce
+              como <Em>pago a la tarjeta</Em>, no como ingreso.
             </Under>
           </Chapter>
 
@@ -357,7 +474,11 @@ export default function GuiaPage() {
               <SafiMsg>Corregido ✏️ ahora en efectivo.</SafiMsg>
               <UserMsg>borra el gasto de Netflix</UserMsg>
               <SafiMsg>
-                🗑️ Borré <strong>Netflix</strong> <Amt tone="out">$16.900</Amt>.
+                ¿Elimino tu gasto de <Amt tone="out">$16.900</Amt> en Suscripciones del 3 de octubre?
+              </SafiMsg>
+              <UserMsg>sí</UserMsg>
+              <SafiMsg>
+                🗑️ Eliminé: <strong>Netflix</strong> — <Amt tone="out">$16.900</Amt> (2026-10-03).
               </SafiMsg>
             </Thread>
             <Under>
@@ -384,12 +505,12 @@ export default function GuiaPage() {
           <Chapter
             kicker="Y cuando prefieras verlo"
             title="Un panel que dice la verdad"
-            say="Todo lo que hablas se ve, ordenado. Con tu caja real del mes (lo que apartas a metas cuenta en tus gastos del mes, pero sigue siendo tuyo) y tu excedente que se acumula."
+            say="Todo lo que hablas se ve, ordenado. Con tu caja real del mes (lo que apartas a metas cuenta en tus gastos del mes, pero sigue siendo tuyo), el plan de tus metas y tu excedente que se acumula."
           >
             <div
               className="rounded-xl border border-line bg-surface p-4 shadow-card"
               role="img"
-              aria-label="Vista del panel de resumen de Safi: flujo de caja del mes con una caja final de $6.470.466"
+              aria-label="Vista del panel de resumen de Safi: flujo de caja del mes con una caja final de $6.470.466 y un plan de metas por aportar de $600.000"
             >
               <p className="text-xs font-medium uppercase tracking-wide text-muted">
                 Flujo de caja · este mes
@@ -423,14 +544,19 @@ export default function GuiaPage() {
                   <dd className="font-semibold tabular-nums text-positive">$6.470.466</dd>
                 </div>
               </dl>
+              <p className="mt-3 text-xs text-muted">
+                Por aportar a tus metas este mes (plan):{" "}
+                <span className="font-semibold tabular-nums text-ink">$600.000</span>. Es un plan: no
+                cuenta como gasto hasta que registres el aporte.
+              </p>
               <div className="mt-4 flex flex-col gap-3">
                 <div>
                   <div className="mb-1.5 flex items-center justify-between text-sm">
                     <span className="text-ink">Restaurantes</span>
-                    <span className="tabular-nums text-muted">$643k / $700k</span>
+                    <span className="tabular-nums text-muted">$410k / $500k</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-amber-500" style={{ width: "92%" }} />
+                    <div className="h-full rounded-full bg-brand-600" style={{ width: "82%" }} />
                   </div>
                 </div>
                 <div>
@@ -449,7 +575,21 @@ export default function GuiaPage() {
             </div>
             <Under>
               La pestaña <Em>Movimientos</Em> junta todo: efectivo, tarjetas, aportes y retiros de
-              metas — con filtros por fuente. Nada se pierde.
+              metas — con filtros por fuente. Nada se pierde. En <Em>“Todas”</Em> el “gastado” es el
+              mismo número que <Em>Gastos</Em> en el Resumen.
+            </Under>
+            <Under>
+              <Em>Gastos</Em> incluye lo que ya apartaste a tus metas, con el desglose “consumo +
+              apartado a metas”; el <Em>Balance</Em> y <Em>Gastos vs ingresos</Em> también lo
+              incluyen (para aportes desde noviembre de 2026). Tu <Em>caja final no cambia</Em>: ya
+              descontaba lo apartado. La línea “Por aportar a tus metas este mes (plan)” solo
+              aparece en el mes actual y es informativa: el plan no cuenta como gasto hasta que
+              aportes.
+            </Under>
+            <Under>
+              Con el selector de mes ves cualquier mes. El bloque <Em>“Ahorro planificado del mes”</Em>{" "}
+              sigue al mes que elijas y el <Em>“Historial de planes (últimos 5 meses)”</Em> te deja
+              tocar un mes para verlo. Los topes, en cambio, solo se muestran para el mes en curso.
             </Under>
           </Chapter>
 

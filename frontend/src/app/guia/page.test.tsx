@@ -50,3 +50,50 @@ describe("GuiaPage", () => {
     expect(cta).toHaveAttribute("href", "/signup");
   });
 });
+
+describe("GuiaPage - plan mensual, validación de extractos y cambio de corte", () => {
+  it("lists the new capabilities", () => {
+    render(<GuiaPage />);
+
+    expect(screen.getByText("Plan mensual de metas")).toBeInTheDocument();
+    expect(screen.getByText("Validar extractos contra lo registrado")).toBeInTheDocument();
+    expect(screen.getByText("Cambio de corte con confirmación")).toBeInTheDocument();
+  });
+
+  it("documents the goal plan, the statement validation and the cutoff change", () => {
+    render(<GuiaPage />);
+
+    expect(
+      screen.getByText("para noviembre aparta 500.000 a la meta de vacaciones"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/valida que todos estos movimientos de Nu/)).toBeInTheDocument();
+    expect(screen.getByText("cambia el corte de Rappi al 20")).toBeInTheDocument();
+    expect(screen.getAllByText(/Por aportar a tus metas este mes \(plan\)/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("GuiaPage - exactitud de los ejemplos de metas", () => {
+  it("the contribution example uses 'abona' (a contribution), never 'aparta' (a plan)", () => {
+    render(<GuiaPage />);
+
+    expect(screen.getByText("abona 200.000 al viaje a Japón")).toBeInTheDocument();
+    expect(screen.queryByText("aparta 200.000 para el viaje a Japón")).toBeNull();
+  });
+
+  it("a contribution is described as counting in the month's expenses", () => {
+    render(<GuiaPage />);
+
+    // The reply to a real contribution says it counts; only the PLAN is "no es gasto".
+    expect(screen.getAllByText(/cuenta en tus gastos del mes como ahorro/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/aporte[^.]*no es gasto/i)).toBeNull();
+  });
+
+  it("the plan examples name the goal and their numbers line up", () => {
+    render(<GuiaPage />);
+
+    expect(
+      screen.getByText("quita el plan de diciembre del fondo de emergencias"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/aportado.*\(40%\)/)).toBeInTheDocument();
+  });
+});
