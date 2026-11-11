@@ -30,7 +30,7 @@ from app.src.goals.models import Goal, GoalCreate, GoalPlan
 from app.src.goals.services.contribution_months_provider import ContributionMonthsProvider
 from app.src.goals.services.goal_service import GoalService
 from tests.conftest import BOGOTA_LATE_NIGHT
-from tests.fakes import InMemoryContributionLedger, InMemoryGoalPlanRepository, RpcFailingDatabase
+from tests.fakes import FakeProfileService, InMemoryContributionLedger, InMemoryGoalPlanRepository, RpcFailingDatabase
 
 TODAY = date(2026, 6, 15)
 D = Decimal
@@ -109,7 +109,9 @@ def _setup(
     ledger = InMemoryContributionLedger()
     plan_repo = InMemoryGoalPlanRepository(plans)
     provider = ContributionMonthsProvider(RpcFailingDatabase(), ledger)  # type: ignore[arg-type]
-    service = GoalService(FakeGoalRepository(goals), ledger, plan_repo, provider)
+    service = GoalService(
+        FakeGoalRepository(goals), ledger, plan_repo, provider, FakeProfileService()  # type: ignore[arg-type]
+    )
     return service, ledger, plan_repo
 
 

@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from app.shared.dependencies import DatabaseDep
+from app.src.users.dependencies import UserProfileServiceDep
 
 from .interfaces import (
     ContributionMonthsProviderABC,
@@ -54,9 +55,10 @@ def get_goal_service(
     months: Annotated[
         ContributionMonthsProviderABC, Depends(get_contribution_months_provider)
     ],
+    profiles: UserProfileServiceDep,
 ) -> GoalServiceABC:
     """Provide the goal service."""
-    return GoalService(repository, contributions, plans, months)
+    return GoalService(repository, contributions, plans, months, profiles)
 
 
 GoalServiceDep = Annotated[GoalServiceABC, Depends(get_goal_service)]

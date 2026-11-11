@@ -173,12 +173,14 @@ def get_compiled_graph() -> "CompiledStateGraph":
         SemanticTransactionCategorizer(embedding_client, vector_store),
     )
     budget_service = BudgetService(BudgetRepository(db), TransactionSpendingProvider(db))
+    user_profile_service = UserProfileService(UserProfileRepository(db))
     goal_contributions = GoalContributionRepository(db)
     goal_service = GoalService(
         GoalRepository(db),
         goal_contributions,
         GoalPlanRepository(db),
         ContributionMonthsProvider(db, goal_contributions),
+        user_profile_service,
     )
     card_service = CreditCardService(
         CreditCardRepository(db),
@@ -189,7 +191,6 @@ def get_compiled_graph() -> "CompiledStateGraph":
     card_schedule_service = CardScheduleChangeService(
         card_service, PendingActionService(PendingActionRepository(db))
     )
-    user_profile_service = UserProfileService(UserProfileRepository(db))
     analysis_service = AnalysisService(
         transaction_service,
         budget_service,

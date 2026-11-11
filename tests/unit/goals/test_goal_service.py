@@ -20,7 +20,7 @@ from app.src.goals.interfaces import (
 from app.src.goals.models import Goal, GoalContribution, GoalCreate
 from app.src.goals.services.contribution_months_provider import ContributionMonthsProvider
 from app.src.goals.services.goal_service import GoalService
-from tests.fakes import InMemoryGoalPlanRepository, RpcFailingDatabase
+from tests.fakes import FakeProfileService, InMemoryGoalPlanRepository, RpcFailingDatabase
 
 
 def _goal(
@@ -170,6 +170,7 @@ def _service(
         contributions,
         InMemoryGoalPlanRepository(),
         ContributionMonthsProvider(RpcFailingDatabase(), contributions),  # type: ignore[arg-type]
+        FakeProfileService(),  # type: ignore[arg-type]
     )
 
 

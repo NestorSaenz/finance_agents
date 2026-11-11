@@ -56,6 +56,7 @@ class PlanGoalService(FakeGoalService):
         self.created_at = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
 
     async def create_goal(self, goal, user_id):  # type: ignore[no-untyped-def]
+        self.created.append((goal, user_id))
         return _goal(id="new", name=goal.name, created_at=self.created_at)
 
     async def list_goals(self, user_id, *, page, page_size, as_of=None):  # type: ignore[no-untyped-def]
@@ -766,3 +767,12 @@ class TestContributionSpendingNote:
         )
 
         assert "(cuenta en tus gastos del mes como ahorro)" in result
+
+
+class TestCreateGoalCurrency:
+    async def test_the_chat_leaves_the_currency_to_the_service_default(self) -> None:
+        service = _service()
+
+        await _dispatch(service, "create_goal", {"name": "Moto", "target_amount": 1000})
+
+        assert service.created[0][0].currency is None

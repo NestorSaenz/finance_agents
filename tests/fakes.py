@@ -583,3 +583,18 @@ def make_budget_row(**overrides: Any) -> dict[str, Any]:
     }
     row.update(overrides)
     return row
+
+
+class FakeProfileService:
+    """Profile stub with a fixed currency (``None`` = not set) or a failing read."""
+
+    def __init__(self, currency: str | None = None, fail: Exception | None = None) -> None:
+        self._currency = currency
+        self._fail = fail
+
+    async def get_profile(self, user_id: UserId):  # type: ignore[no-untyped-def]
+        from app.src.users.models import UserProfile
+
+        if self._fail is not None:
+            raise self._fail
+        return UserProfile(user_id=user_id, currency=self._currency)

@@ -23,7 +23,9 @@ class GoalCreate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     goal_type: GoalType = GoalType.SAVINGS
     target_amount: Decimal = Field(..., gt=0, description="Target amount (positive)")
-    currency: CurrencyType = CurrencyType.MXN
+    # None = "the user's currency": the service resolves it (profile, else the app default)
+    # when the goal is created, so the default is never frozen at import time.
+    currency: CurrencyType | None = None
     target_date: date | None = None
     priority: int = Field(default=DEFAULT_PRIORITY, ge=1)
 

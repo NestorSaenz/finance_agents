@@ -38,6 +38,13 @@ class GoalRepository(GoalRepositoryABC):
         self._db = db
 
     async def create(self, goal: GoalCreate, user_id: UserId) -> Goal:
+        if goal.currency is None:
+            # The service resolves the currency (profile / app default); a business
+            # default is never decided here.
+            raise InfrastructureError(
+                "Goal currency was not resolved before persisting",
+                code="GOAL_CURRENCY_MISSING",
+            )
         row = {
             "user_id": user_id,
             "name": goal.name,

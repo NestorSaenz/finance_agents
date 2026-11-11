@@ -5,9 +5,14 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from decimal import Decimal
 from itertools import accumulate
+from typing import Final
+
+import httpx
+from postgrest.exceptions import APIError
 
 from app.core.config import settings
 from app.core.exceptions import (
+    FinanceGPTError,
     GoalNotFoundError,
     GoalWithdrawalExceedsBalanceError,
     InvalidAmountError,
@@ -17,6 +22,7 @@ from app.core.logging import get_logger
 from app.shared.clock import current_today
 from app.shared.serialization import decimal_to_db
 from app.shared.types import (
+    CurrencyType,
     GoalId,
     GoalPlanClearMode,
     GoalPlanKind,
@@ -24,6 +30,7 @@ from app.shared.types import (
     GoalStatus,
     UserId,
 )
+from app.src.users.interfaces import UserProfileServiceABC
 
 from ..constants import (
     DEFAULT_HISTORY_MONTHS,
@@ -31,6 +38,7 @@ from ..constants import (
     MAX_PLANNED_AMOUNT,
     PLAN_AMOUNT_QUANTUM,
 )
+from ..currency import default_goal_currency
 from ..interfaces import (
     ContributionMonthsProviderABC,
     GoalContributionRepositoryABC,
@@ -61,6 +69,9 @@ from ..planning import (
 
 logger = get_logger(__name__)
 
+# A profile read that fails must not block creating a goal: fall back to the app default.
+_PROFILE_FAILURES: Final = (FinanceGPTError, APIError, httpx.HTTPError)
+
 
 class GoalService(GoalServiceABC):
     """Orchestrates goal persistence, contributions, and progress evaluation."""
@@ -71,14 +82,38 @@ class GoalService(GoalServiceABC):
         contributions: GoalContributionRepositoryABC,
         plans: GoalPlanRepositoryABC,
         months: ContributionMonthsProviderABC,
+        profiles: UserProfileServiceABC,
     ) -> None:
         self._repository = repository
         self._contributions = contributions
         self._plans = plans
         self._months = months
+        self._profiles = profiles
 
     async def create_goal(self, goal: GoalCreate, user_id: UserId) -> Goal:
+        if goal.currency is None:
+            goal = goal.model_copy(update={"currency": await self._default_currency(user_id)})
         return await self._repository.create(goal, user_id)
+
+    async def _default_currency(self, user_id: UserId) -> CurrencyType:
+        """The currency of a new goal: the user's profile currency, else the app default.
+
+        A profile currency the goals module doesn't support, or an unreadable profile,
+        falls back to ``settings.DEFAULT_CURRENCY`` (a bad profile read never blocks).
+        """
+        fallback = default_goal_currency()
+        try:
+            profile = await self._profiles.get_profile(user_id)
+        except _PROFILE_FAILURES as e:
+            logger.warning("Could not load profile currency", user_id=user_id, error=str(e))
+            return fallback
+        if not profile.currency:
+            return fallback
+        try:
+            return CurrencyType(profile.currency)
+        except ValueError:
+            logger.warning("Unsupported profile currency for goals", currency=profile.currency)
+            return fallback
 
     async def get_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
         goal = await self._repository.get_by_id(goal_id, user_id)

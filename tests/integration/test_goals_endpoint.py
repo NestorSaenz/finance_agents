@@ -103,6 +103,7 @@ class StubProfileService(UserProfileServiceABC):
 class StubGoalService(GoalServiceABC):
     def __init__(self, found: bool = True) -> None:
         self.found = found
+        self.created_goals: list[GoalCreate] = []
         self.contribution_dates: list[date | None] = []
         self.progress_dates: list[date | None] = []
         self.plan_calls: list[tuple[str, Decimal, date, GoalPlanScope]] = []
@@ -111,6 +112,7 @@ class StubGoalService(GoalServiceABC):
         self.history_calls: list[tuple[int, date | None, date | None]] = []
 
     async def create_goal(self, goal: GoalCreate, user_id: UserId) -> Goal:
+        self.created_goals.append(goal)
         return _goal()
 
     async def get_goal(self, goal_id: GoalId, user_id: UserId) -> Goal:
@@ -339,6 +341,21 @@ class TestCrud:
         )
         assert response.status_code == 200
         assert response.json()["id"] == "goal-1"
+
+    def test_create_without_currency_leaves_it_to_the_service_default(self) -> None:
+        service = StubGoalService()
+        for client in _client(service):
+            response = client.post(BASE_URL, json={"name": "Viaje", "target_amount": 1000})
+
+        assert response.status_code == 200
+        assert service.created_goals[0].currency is None  # profile / app default, resolved there
+
+    def test_create_with_an_explicit_currency_keeps_it(self) -> None:
+        service = StubGoalService()
+        for client in _client(service):
+            client.post(BASE_URL, json={"name": "Viaje", "target_amount": 1000, "currency": "USD"})
+
+        assert service.created_goals[0].currency == CurrencyType.USD
 
     def test_list_goals(self, client: TestClient) -> None:
         response = client.get(BASE_URL)
