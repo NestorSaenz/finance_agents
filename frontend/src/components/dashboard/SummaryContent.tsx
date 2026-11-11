@@ -17,7 +17,9 @@ import type {
 import { budgetIncomeShare, planIncomeShare } from "@/lib/budgets";
 import {
   pendingSavingFor,
+  planCurrencies,
   plannedSavingFor,
+  resolveCurrency,
   selectedMonth,
   visiblePlans,
 } from "@/lib/goalPlans";
@@ -137,7 +139,10 @@ export function SummaryContent({
   const cashAvailable = afterSpending - goalSaved + goalWithdrawn;
   // What the month's plans still lack: informational, in "Este mes" only. It is
   // not a gasto until the aporte is registered, so it never enters a total.
-  const pending = period === "este_mes" ? pendingSavingFor(planStatus, currency) : 0;
+  // Goals may be labelled with another currency than the profile's (single-
+  // currency user): resolve which one the plan lines are summarised in.
+  const planCurrency = resolveCurrency(planCurrencies(planStatus, goalHistory), currency);
+  const pending = period === "este_mes" ? pendingSavingFor(planStatus, planCurrency) : 0;
   const hasPending = pending > 0;
   const hasCashFlow =
     income > 0 || cashExpenses > 0 || cardPayments > 0 || hasGoalFlow || hasPending;
@@ -158,7 +163,7 @@ export function SummaryContent({
   // Goal plans: a saving plan is NOT a gasto or a tope — it never touches the
   // totals above, only its own block and the "% de tu ingreso" lines.
   const hasPlans = visiblePlans(planStatus).length > 0;
-  const plannedSaving = plannedSavingFor(planStatus, currency);
+  const plannedSaving = plannedSavingFor(planStatus, planCurrency);
   const topesShare = budgetIncomeShare(budget?.statuses ?? [], referenceIncome);
   const planShare = planIncomeShare(
     referenceIncome,
@@ -367,11 +372,12 @@ export function SummaryContent({
             ) : null}
             {/* Without topes BudgetProgress renders no income lines: show the plan's here. */}
             {!hasTopes && planShare && <BudgetIncomeSummary share={null} plan={planShare} />}
-            <GoalPlanProgress data={planStatus} />
+            <GoalPlanProgress data={planStatus} displayCurrency={currency} />
             {goalHistory && onSelectMonth && (
               <GoalPlanHistory
                 lines={goalHistory.lines}
-                currency={currency}
+                currency={planCurrency}
+                displayCurrency={currency}
                 selectedMonth={period === "todo" ? null : viewedMonth}
                 endMonth={viewedMonth}
                 onSelectMonth={onSelectMonth}

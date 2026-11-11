@@ -11,10 +11,10 @@ const COLLAPSED_COUNT = 4;
 
 /** Two lines per goal. Saving colours are inverted vs spending: never red; green
  *  once the plan is reached, the brand tone otherwise. */
-function PlanRow({ status: s }: { status: GoalPlanStatus }) {
+function PlanRow({ status: s, currency }: { status: GoalPlanStatus; currency: string }) {
   const fill = planFill(s);
-  const saved = formatMoney(s.contributed_gross, s.currency);
-  const planned = formatMoney(s.effective_planned, s.currency);
+  const saved = formatMoney(s.contributed_gross, currency);
+  const planned = formatMoney(s.effective_planned, currency);
   const withdrawn = Number(s.withdrawn);
   return (
     <li>
@@ -42,7 +42,7 @@ function PlanRow({ status: s }: { status: GoalPlanStatus }) {
           />
         </div>
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-ink">
-          {s.is_met ? "✓ cumplido" : `faltan ${formatMoney(s.remaining, s.currency)}`}
+          {s.is_met ? "✓ cumplido" : `faltan ${formatMoney(s.remaining, currency)}`}
         </span>
         {s.goal_completed && (
           <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-ink">
@@ -51,7 +51,7 @@ function PlanRow({ status: s }: { status: GoalPlanStatus }) {
         )}
         {withdrawn > 0 && (
           <span className="text-xs text-muted">
-            retiraste {formatMoney(withdrawn, s.currency)}
+            retiraste {formatMoney(withdrawn, currency)}
           </span>
         )}
       </div>
@@ -62,12 +62,23 @@ function PlanRow({ status: s }: { status: GoalPlanStatus }) {
 /** "Ahorro planificado del mes": one compact row per goal planned in the chosen
  *  month (first 4, then "Ver todas") plus a total line per currency. Renders
  *  nothing when no goal has a plan. */
-export function GoalPlanProgress({ data }: { data: GoalPlanStatusList | null }) {
+export function GoalPlanProgress({
+  data,
+  displayCurrency,
+}: {
+  data: GoalPlanStatusList | null;
+  /** The profile currency. Used for every amount when all plans share ONE
+   *  currency (a goal labelled differently is still the user's money); with
+   *  several currencies each keeps its own. */
+  displayCurrency?: string;
+}) {
   const [showAll, setShowAll] = useState(false);
   if (!data) return null;
   const plans = visiblePlans(data);
   if (plans.length === 0) return null;
   const totals = planTotals(data);
+  const single = new Set(plans.map((p) => p.currency)).size === 1;
+  const cur = (own: string): string => (single && displayCurrency ? displayCurrency : own);
   const shown = showAll ? plans : plans.slice(0, COLLAPSED_COUNT);
 
   return (
@@ -80,7 +91,7 @@ export function GoalPlanProgress({ data }: { data: GoalPlanStatusList | null }) 
       </p>
       <ul className="mt-3 flex flex-col gap-3">
         {shown.map((s) => (
-          <PlanRow key={s.goal_id} status={s} />
+          <PlanRow key={s.goal_id} status={s} currency={cur(s.currency)} />
         ))}
       </ul>
       {plans.length > COLLAPSED_COUNT && (
@@ -98,11 +109,11 @@ export function GoalPlanProgress({ data }: { data: GoalPlanStatusList | null }) 
           <p key={t.currency}>
             Planeado{" "}
             <span className="font-semibold tabular-nums text-ink">
-              {formatMoney(t.planned, t.currency)}
+              {formatMoney(t.planned, cur(t.currency))}
             </span>{" "}
             · aportado{" "}
             <span className="font-semibold tabular-nums text-ink">
-              {formatMoney(t.saved, t.currency)}
+              {formatMoney(t.saved, cur(t.currency))}
             </span>
           </p>
         ))}

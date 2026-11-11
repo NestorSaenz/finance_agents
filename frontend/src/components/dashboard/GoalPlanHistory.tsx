@@ -9,8 +9,10 @@ import type { GoalMonthLine } from "@/lib/types";
 
 interface GoalPlanHistoryProps {
   lines: GoalMonthLine[];
-  /** Profile currency: the only one summarised (currencies are never mixed). */
+  /** The one currency summarised (currencies are never mixed). */
   currency: string;
+  /** Currency the amounts are shown in (the profile's); defaults to `currency`. */
+  displayCurrency?: string;
   /** "YYYY-MM" marked as the viewed month; null with "Todo" (none marked). */
   selectedMonth: string | null;
   /** Last month of the window (the chosen month, or the current one). */
@@ -24,6 +26,7 @@ interface GoalPlanHistoryProps {
 export function GoalPlanHistory({
   lines,
   currency,
+  displayCurrency = currency,
   selectedMonth,
   endMonth,
   onSelectMonth,
@@ -69,8 +72,8 @@ export function GoalPlanHistory({
                     }`}
                   >
                     <span className="text-ink">
-                      {monthLabel(m.month)} · aportado {formatMoney(m.saved, currency)} de{" "}
-                      {formatMoney(m.planned, currency)} · {m.met}/{m.total} cumplidas
+                      {monthLabel(m.month)} · aportado {formatMoney(m.saved, displayCurrency)} de{" "}
+                      {formatMoney(m.planned, displayCurrency)} · {m.met}/{m.total} cumplidas
                     </span>
                     <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-slate-100">
                       <span

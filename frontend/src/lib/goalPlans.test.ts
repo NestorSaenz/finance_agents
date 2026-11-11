@@ -8,7 +8,9 @@ import {
   monthSummaries,
   pendingSavingFor,
   planFill,
+  planCurrencies,
   planTotals,
+  resolveCurrency,
   plannedSavingFor,
   selectedMonth,
   visiblePlans,
@@ -185,5 +187,37 @@ describe("planIncomeShare", () => {
     expect(planIncomeShare(1000, 300, 800)?.exceedsIncome).toBe(true);
     expect(planIncomeShare(1000, 300, 1200)?.exceedsIncome).toBe(false);
     expect(planIncomeShare(1000, 1200, 0)?.exceedsIncome).toBe(true);
+  });
+});
+
+describe("resolveCurrency", () => {
+  it("prefers the profile currency when any data uses it", () => {
+    expect(resolveCurrency(["COP", "MXN"], "COP")).toBe("COP");
+    expect(resolveCurrency(["COP"], "COP")).toBe("COP");
+  });
+
+  it("adopts the single other currency (goals mislabelled MXN for a COP user)", () => {
+    expect(resolveCurrency(["MXN", "MXN", "MXN"], "COP")).toBe("MXN");
+  });
+
+  it("keeps the profile currency when several foreign currencies exist (no mixing)", () => {
+    expect(resolveCurrency(["MXN", "USD"], "COP")).toBe("COP");
+  });
+
+  it("returns the profile currency when there is no data", () => {
+    expect(resolveCurrency([], "COP")).toBe("COP");
+  });
+
+  it("planCurrencies gathers plan-status and history currencies", () => {
+    const l = list({
+      statuses: [status({ currency: "MXN" })],
+      total_effective_planned: { MXN: "1" },
+    });
+    expect(planCurrencies(l, { lines: [line({ currency: "USD" })] }).sort()).toEqual([
+      "MXN",
+      "MXN",
+      "USD",
+    ]);
+    expect(planCurrencies(null, null)).toEqual([]);
   });
 });

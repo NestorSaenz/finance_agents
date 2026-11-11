@@ -263,3 +263,133 @@ describe("SummaryContent - 'Por aportar' (pending plan)", () => {
     expect(within(gastosCard()).queryByText(/por aportar/)).toBeNull();
   });
 });
+
+describe("SummaryContent - goals labelled with another currency (Astrid: MXN goals, COP profile)", () => {
+  const mxnPlan = (currencies: [string, string, string] = ["MXN", "MXN", "MXN"]): GoalPlanStatusList => {
+    const amounts = ["300000", "400000", "500000"];
+    return {
+      statuses: amounts.map((a, i) => ({
+        goal_id: `g${i}`,
+        goal_name: `Meta ${i}`,
+        currency: currencies[i] ?? "MXN",
+        month: "2026-10",
+        planned: a,
+        effective_planned: a,
+        contributed_gross: "0",
+        withdrawn: "0",
+        remaining: a,
+        percentage: 0,
+        is_met: false,
+        goal_completed: false,
+      })),
+      total_planned: { MXN: "1200000" },
+      total_effective_planned: { MXN: "1200000" },
+      total_saved: { MXN: "0" },
+      total_withdrawn: { MXN: "0" },
+    };
+  };
+
+  const topes = {
+    statuses: [
+      {
+        budget: { id: "b1", name: "Mercado", category: "mercado", amount: "12700353" },
+        spent: "0",
+        remaining: "12700353",
+        percentage: 0,
+        alert_triggered: false,
+        period_start: "2026-10-01",
+        period_end: "2026-10-31",
+      },
+    ],
+    total_budgeted: "12700353",
+    total_spent: "0",
+  };
+
+  const astrid = {
+    profile: { ...PROFILE, monthly_income: "14350000" },
+    summary: summary({ total_income: "14350000" }),
+  };
+
+  it("shows plan % of income, Topes + metas, 'Por aportar' and the history", () => {
+    renderSummary({
+      ...astrid,
+      budget: topes,
+      planStatus: mxnPlan(),
+      goalHistory: {
+        lines: [
+          {
+            goal_id: "g0",
+            goal_name: "Meta 0",
+            currency: "MXN",
+            month: "2026-10",
+            planned: "300000",
+            saved: "0",
+            withdrawn: "0",
+            cumulative: "0",
+          },
+        ],
+      },
+      onSelectMonth: () => {},
+    });
+    const planLine = screen.getByText(/Ahorro planificado del mes.+ingreso/);
+    expect(planLine.textContent).toContain(money(1200000));
+    expect(planLine.textContent).toContain("8,4%");
+    const combined = screen.getByText(/Topes \+ metas/);
+    expect(combined.textContent).toContain(money(12700353 + 1200000));
+    expect(screen.getByText(/Por aportar a tus metas este mes/).textContent).toContain(
+      money(1200000),
+    );
+    expect(screen.getByRole("button", { name: /Historial de planes/ })).toBeInTheDocument();
+    // The plan block shows the amounts in the profile currency, not MXN.
+    expect(screen.getByText(text(`${money(0)} / ${money(300000)}`))).toBeInTheDocument();
+  });
+
+  it("with a COP profile and COP goals nothing changes", () => {
+    renderSummary({
+      ...astrid,
+      budget: topes,
+      planStatus: {
+        ...mxnPlan(["COP", "COP", "COP"]),
+        total_effective_planned: { COP: "1200000" },
+        total_planned: { COP: "1200000" },
+        total_saved: { COP: "0" },
+        total_withdrawn: { COP: "0" },
+      },
+    });
+    expect(screen.getByText(/Ahorro planificado del mes.+ingreso/).textContent).toContain("8,4%");
+  });
+
+  it("with COP and MXN goals only COP counts (no mixing)", () => {
+    renderSummary({
+      ...astrid,
+      planStatus: {
+        ...mxnPlan(["COP", "MXN", "MXN"]),
+        total_effective_planned: { COP: "300000", MXN: "900000" },
+        total_planned: { COP: "300000", MXN: "900000" },
+        total_saved: { COP: "0", MXN: "0" },
+        total_withdrawn: { COP: "0", MXN: "0" },
+      },
+    });
+    expect(screen.getByText(/Ahorro planificado del mes.+ingreso/).textContent).toContain(
+      money(300000),
+    );
+    expect(screen.getByText(/Por aportar a tus metas este mes/).textContent).toContain(
+      money(300000),
+    );
+  });
+
+  it("with two foreign currencies and none the profile's, no plan line is invented", () => {
+    renderSummary({
+      ...astrid,
+      planStatus: {
+        ...mxnPlan(["MXN", "USD", "USD"]),
+        total_effective_planned: { MXN: "300000", USD: "900000" },
+        total_planned: { MXN: "300000", USD: "900000" },
+        total_saved: { MXN: "0", USD: "0" },
+        total_withdrawn: { MXN: "0", USD: "0" },
+      },
+    });
+    expect(screen.queryByText(/Ahorro planificado del mes.+ingreso/)).toBeNull();
+    expect(screen.queryByText(/Por aportar a tus metas/)).toBeNull();
+  });
+});

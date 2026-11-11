@@ -25,6 +25,35 @@ export function planTotals(list: GoalPlanStatusList): PlanTotals[] {
     }));
 }
 
+/**
+ * Which currency the plan lines are summarised in. Goals may carry a different
+ * currency than the profile shows (e.g. goals created with a default "MXN" for a
+ * user whose dashboard is in COP): the app is single-currency per user and never
+ * converts, so
+ *  - the profile currency wins when any data uses it;
+ *  - otherwise, exactly ONE other currency is assumed to be the user's own;
+ *  - with several currencies and none of them the profile's, nothing is mixed
+ *    (the profile currency is returned, matching nothing).
+ */
+export function resolveCurrency(currencies: ReadonlyArray<string>, profileCurrency: string): string {
+  const distinct = [...new Set(currencies)];
+  if (distinct.includes(profileCurrency)) return profileCurrency;
+  const [only] = distinct;
+  return distinct.length === 1 && only !== undefined ? only : profileCurrency;
+}
+
+/** Every currency present in the month's plans and in the history lines. */
+export function planCurrencies(
+  list: GoalPlanStatusList | null | undefined,
+  history: { lines: ReadonlyArray<GoalMonthLine> } | null | undefined,
+): string[] {
+  return [
+    ...Object.keys(list?.total_effective_planned ?? {}),
+    ...(list?.statuses ?? []).map((s) => s.currency),
+    ...(history?.lines ?? []).map((l) => l.currency),
+  ];
+}
+
 /** The month's effective planned saving in `currency` (0 when none). */
 export function plannedSavingFor(
   list: GoalPlanStatusList | null | undefined,
