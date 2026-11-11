@@ -28,7 +28,7 @@ import { Section } from "./summary/Section";
 import { StatCard } from "./summary/StatCard";
 import { SurplusCard } from "./summary/SurplusCard";
 
-interface SummaryContentProps {
+export interface SummaryContentProps {
   summary: SpendingSummary;
   budget: BudgetStatusList | null;
   /** Expenses that IMPACT this period's budget (by=budget_date) — used to list
@@ -159,21 +159,7 @@ export function SummaryContent({
       </div>
 
       {figures.hasCashFlow && (
-        <CashFlowCard
-          income={income}
-          cashExpenses={figures.cashExpenses}
-          cardPayments={figures.cardPayments}
-          goalSaved={goalSaved}
-          goalWithdrawn={goalWithdrawn}
-          hasGoalFlow={figures.hasGoalFlow}
-          afterSpending={figures.afterSpending}
-          cashAvailable={figures.cashAvailable}
-          pending={pending}
-          hasPending={hasPending}
-          afterPending={figures.afterPending}
-          totalSpent={totalSpent}
-          note={figures.cashFlowNote}
-        />
+        <CashFlowCard goalSaved={goalSaved} goalWithdrawn={goalWithdrawn} figures={figures} />
       )}
 
       <SurplusCard accumulatedSurplus={accumulatedSurplus} />

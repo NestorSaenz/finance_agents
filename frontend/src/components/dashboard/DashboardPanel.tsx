@@ -7,6 +7,7 @@ import { ApiError, api } from "@/lib/api";
 import { currentMonthKey } from "@/lib/format";
 import { historyTo } from "@/lib/goalPlans";
 import { goalFlows } from "@/lib/movements";
+import { useNewDesign } from "@/lib/useNewDesign";
 import { useAuth } from "@/context/AuthContext";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import type {
@@ -27,6 +28,7 @@ import type {
 import { Spinner } from "@/components/ui/Spinner";
 import { MovementsList } from "./MovementsList";
 import { SummaryContent } from "./SummaryContent";
+import { SummaryContentV2 } from "./summary/SummaryContentV2";
 
 type DashboardView = "resumen" | "movimientos";
 
@@ -64,6 +66,9 @@ interface DashboardPanelProps {
 
 export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanelProps) {
   const { token } = useAuth();
+  // ?nuevo=1: the redesigned summary and 44px touch targets (off by default).
+  const newDesign = useNewDesign();
+  const touch = newDesign ? " min-h-11" : "";
   const [period, setPeriod] = useState<string>("este_mes");
   const [view, setView] = useState<DashboardView>("resumen");
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
@@ -188,6 +193,8 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
     if (open) void load();
   }, [open, load, refreshKey]);
 
+  const SummaryComponent = newDesign ? SummaryContentV2 : SummaryContent;
+
   return (
     <CurrencyProvider currency={profile?.currency ?? "COP"}>
       {/* Backdrop (mobile / tablet) */}
@@ -217,7 +224,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
             <button
               onClick={() => void load()}
               disabled={loading}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink disabled:opacity-50"
+              className={`inline-flex ${newDesign ? "h-11 w-11" : "h-9 w-9"} items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink disabled:opacity-50`}
               aria-label="Actualizar resumen"
             >
               <RefreshCw
@@ -227,7 +234,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
             </button>
             <button
               onClick={onClose}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink"
+              className={`inline-flex ${newDesign ? "h-11 w-11" : "h-9 w-9"} items-center justify-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink`}
               aria-label="Cerrar resumen"
             >
               <X className="h-5 w-5" aria-hidden />
@@ -245,7 +252,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               key={v.value}
               aria-pressed={view === v.value}
               onClick={() => setView(v.value)}
-              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors${touch} ${
                 view === v.value
                   ? "bg-ink text-white"
                   : "bg-slate-100 text-muted hover:text-ink"
@@ -262,7 +269,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               key={p.value}
               aria-pressed={period === p.value}
               onClick={() => setPeriod(p.value)}
-              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors${touch} ${
                 period === p.value
                   ? "bg-brand-600 text-white"
                   : "bg-slate-100 text-muted hover:text-ink"
@@ -285,7 +292,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               // The current month behaves like the "Este mes" tab (live view).
               if (value) selectMonth(value);
             }}
-            className={`w-full rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+            className={`w-full rounded-lg border px-3 py-1.5 text-sm transition-colors${touch} ${
               MONTH_OPTIONS.some((m) => m.value === period)
                 ? "border-brand-400 bg-brand-50 font-medium text-brand-700"
                 : "border-line bg-surface text-muted"
@@ -324,7 +331,7 @@ export function DashboardPanel({ open, onClose, refreshKey = 0 }: DashboardPanel
               goalSpendingFrom={summary?.goal_spending_from}
             />
           ) : summary ? (
-            <SummaryContent
+            <SummaryComponent
               summary={summary}
               budget={budget}
               budgetTransactions={budgetTransactions}

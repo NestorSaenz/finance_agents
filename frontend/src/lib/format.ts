@@ -87,6 +87,22 @@ export function formatPercent(pct: number): string {
   return `${percentFormatter.format(pct)}%`;
 }
 
+/** Spanish month names, lowercase, January first. */
+export const MONTHS_ES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+] as const;
+
 /** Format an ISO date (YYYY-MM-DD) as a short "3 jul" label. */
 export function formatDayMonth(iso: string): string {
   const date = new Date(`${iso}T00:00:00`);

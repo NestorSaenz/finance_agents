@@ -1,42 +1,44 @@
 "use client";
 
 import { useMoney } from "@/context/CurrencyContext";
+import type { SummaryFigures } from "@/lib/summary";
 
 interface CashFlowCardProps {
-  income: number;
-  cashExpenses: number;
-  cardPayments: number;
   /** Gross aportes / retiros of the period (never netted). */
   goalSaved: number;
   goalWithdrawn: number;
-  hasGoalFlow: boolean;
-  afterSpending: number;
-  cashAvailable: number;
-  /** Plan still to contribute this month (informational) and the figures it implies. */
-  pending: number;
-  hasPending: boolean;
-  afterPending: number;
-  totalSpent: number;
-  note: string;
+  figures: Pick<
+    SummaryFigures,
+    | "income"
+    | "cashExpenses"
+    | "cardPayments"
+    | "hasGoalFlow"
+    | "afterSpending"
+    | "cashAvailable"
+    | "pending"
+    | "hasPending"
+    | "afterPending"
+    | "totalSpent"
+    | "cashFlowNote"
+  >;
 }
 
 /** "Flujo de caja": income minus what really left the pocket, goals apart, and the
  *  informational "Por aportar" lines. All values arrive already computed. */
-export function CashFlowCard({
-  income,
-  cashExpenses,
-  cardPayments,
-  goalSaved,
-  goalWithdrawn,
-  hasGoalFlow,
-  afterSpending,
-  cashAvailable,
-  pending,
-  hasPending,
-  afterPending,
-  totalSpent,
-  note,
-}: CashFlowCardProps) {
+export function CashFlowCard({ goalSaved, goalWithdrawn, figures }: CashFlowCardProps) {
+  const {
+    income,
+    cashExpenses,
+    cardPayments,
+    hasGoalFlow,
+    afterSpending,
+    cashAvailable,
+    pending,
+    hasPending,
+    afterPending,
+    totalSpent,
+    cashFlowNote: note,
+  } = figures;
   const money = useMoney();
   return (
     <div className="rounded-xl border border-line bg-surface p-4">

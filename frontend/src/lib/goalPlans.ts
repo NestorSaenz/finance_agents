@@ -1,4 +1,4 @@
-import { currentMonthKey } from "@/lib/format";
+import { currentMonthKey, MONTHS_ES } from "@/lib/format";
 import type {
   GoalMonthLine,
   GoalPlanStatus,
@@ -76,10 +76,8 @@ export function visiblePlans(list: GoalPlanStatusList | null | undefined): GoalP
   );
 }
 
-const MONTH_NAMES = [
-  "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-  "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
-];
+// "enero" -> "Ene": the first three letters, capitalised.
+const MONTH_NAMES = MONTHS_ES.map((m) => m.charAt(0).toUpperCase() + m.slice(1, 3));
 
 /** "2026-11" -> "Nov 2026" (the raw string when malformed). */
 export function monthLabel(month: string): string {
